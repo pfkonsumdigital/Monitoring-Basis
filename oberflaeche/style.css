@@ -121,6 +121,7 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .kopf h1 span { font-size: 0.75rem; font-weight: 400; }
 #updates-oeffnen { position: relative; }
 .hinweis-punkt { position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--warnung); border: 2px solid var(--flaeche); }
+.kachel .name .hinweis-punkt { position: static; display: inline-block; margin-left: 8px; vertical-align: middle; }
 .upd-meldung { margin: 8px 0; }
 .upd-meldung:empty { display: none; }
 .upd-meldung[data-art="fehler"] { color: var(--fehler); }
@@ -172,6 +173,15 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .feld.schalter input { grid-column: 1; grid-row: 1; width: 18px; height: 18px; }
 .feld.schalter small { grid-column: 1 / -1; }
 .feldfehler { color: var(--fehler); }
+.mupd { margin: 14px 0 6px; padding-top: 10px; border-top: 1px solid var(--rand); }
+.mupd pre { white-space: pre-wrap; font-size: 0.88em; max-height: 220px; overflow: auto; }
+.mupd details { margin: 6px 0; }
+.liste-rahmen { display: grid; gap: 8px; justify-items: start; overflow-x: auto; max-width: 100%; }
+.liste-tabelle { border-collapse: collapse; }
+.liste-tabelle th { text-align: left; font-size: 0.85em; font-weight: 600; padding: 0 6px 4px 0; white-space: nowrap; }
+.liste-tabelle td { padding: 0 6px 6px 0; vertical-align: middle; }
+.liste-tabelle input:not([type="checkbox"]), .liste-tabelle select { font: inherit; padding: 6px 8px; border: 1px solid var(--rand); border-radius: 6px; background: var(--hintergrund); color: var(--text); min-width: 90px; }
+.liste-tabelle input[type="checkbox"] { width: 18px; height: 18px; }
 .feldfehler:empty { display: none; }
 #details-admin { margin: 8px 0; }
 #details-admin[hidden] { display: none; }

@@ -47,6 +47,13 @@ export class Modulverwaltung {
 
   aktiv(modul) { return this.zustand[modul.id]?.aktiv ?? modul.aktiv; }
 
+  // Führt arbeit aus, während kein Takt läuft (z. B. Austausch eines Modulordners beim Update).
+  async gesperrt(arbeit) {
+    while (this.beschaeftigt) await new Promise((r) => setTimeout(r, 50));
+    this.beschaeftigt = true;
+    try { return await arbeit(); } finally { this.beschaeftigt = false; }
+  }
+
   // Liest den Modulordner neu ein und meldet Änderungen.
   async einlesen() {
     const neu = await ladeModule(this.moduleOrdner);

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ORDNER = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const STANDARD = { max_alter_stunden: 2, leer_ist_fehler: false, takt_minuten: 5 };
 const BEFEHL = path.join(ORDNER, 'befehl.json');
 
@@ -56,7 +56,9 @@ async function pruefen(e) {
   return { status: 'ok', zusammenfassung: `${dateien} Dateien, alle aktuell.`, messwerte };
 }
 
-async function lauf() {
+// dauerbetrieb: Liegt ein Befehl zum Beenden vor, wird keine status.json mehr geschrieben (null zurück),
+// sonst hielte die Basis das Modul wieder für laufend.
+async function lauf({ dauerbetrieb = false } = {}) {
   const e = await einstellungen();
   const beginn = new Date();
   let ergebnis;
@@ -64,6 +66,7 @@ async function lauf() {
   catch (f) { ergebnis = { status: 'fehler', zusammenfassung: `Unerwarteter Fehler: ${f.message}` }; }
   const ende = new Date();
   const taktMs = Math.max(1, Number(e.takt_minuten) || 5) * 60_000;
+  if (dauerbetrieb && await beendenAngefordert()) return null;
   await statusSchreiben({
     ...ergebnis,
     zeit: ende.toISOString(),
@@ -83,7 +86,9 @@ if (process.argv.includes('--einmal')) {
   // Dauerbetrieb: Takt wird bei jedem Lauf neu aus den Einstellungen gelesen.
   // Zwischen den Läufen alle 2 Sekunden nachsehen, ob die Basis das Beenden angefordert hat.
   warten: for (;;) {
-    const taktMs = await lauf().catch(() => 60_000);
+    if (await beendenAngefordert()) break;
+    const taktMs = await lauf({ dauerbetrieb: true }).catch(() => 60_000);
+    if (taktMs === null) break;
     for (let gewartet = 0; gewartet < taktMs; gewartet += 2000) {
       if (await beendenAngefordert()) break warten;
       await new Promise((r) => setTimeout(r, Math.min(2000, taktMs - gewartet)));

@@ -57,6 +57,7 @@ function kachelBauen(m) {
   const kachel = $('kachel-vorlage').content.firstElementChild.cloneNode(true);
   kachel.dataset.status = m.anzeige;
   kachel.querySelector('.name').textContent = m.name;
+  if (m.updateVerfuegbar) kachel.querySelector('.name').append(el('span', { className: 'hinweis-punkt', title: 'Update verfügbar' }));
   const pill = kachel.querySelector('.status');
   pill.textContent = STATUS_TEXT[m.anzeige] ?? m.anzeige;
   pill.dataset.status = m.anzeige;
@@ -165,6 +166,8 @@ async function detailsFuellen(m) {
     beendenKnopf.dataset.bestaetigen = '';
     modulAktion(m, 'beenden', beendenKnopf);
   };
+  $('mupd').hidden = !istAdmin || !m.repo || Boolean(m.fehler);
+  if (!$('mupd').hidden) modulUpdateLaden(m.id);
   $('details-starten').hidden = !m.kannStarten;
   $('details-starten').onclick = () => modulAktion(m, 'starten', $('details-starten'));
   const messwerte = Object.entries(l?.messwerte ?? {});
@@ -180,6 +183,64 @@ async function detailsFuellen(m) {
     li.dataset.status = e.status;
     return li;
   }));
+}
+
+// ---- Modul-Updates (nur Admins, nur Module mit „repo“) ----
+const MUPD_PHASEN = { suche: 'Suche nach Updates …', herunterladen: 'Paket wird heruntergeladen …', pruefen: 'Prüfsumme wird kontrolliert …', entpacken: 'Paket wird entpackt …', beenden: 'Modul wird beendet …', austauschen: 'Neue Version wird eingesetzt …', starten: 'Modul wird gestartet …' };
+let mupdTimer = null;
+const mupdMeldung = (text, art = '') => { $('mupd-meldung').textContent = text; $('mupd-meldung').dataset.art = art; };
+
+function modulUpdateZeigen(st) {
+  const v = st.verfuegbar;
+  $('mupd-fakten').replaceChildren(
+    ...fakt('Installiert', st.installiert ? `v${st.installiert}` : '–'),
+    ...fakt('Verfügbar', v ? `v${v.version}${v.veroeffentlicht ? ` (${new Date(v.veroeffentlicht).toLocaleDateString('de-DE')})` : ''}` : '–'),
+    ...fakt('Zuletzt geprüft', st.letztePruefung ? relativ(st.letztePruefung) : 'noch nicht'),
+    ...fakt('Vorherige Version', st.vorherige ? `v${st.vorherige}` : null),
+  );
+  const laeuft = Boolean(MUPD_PHASEN[st.phase]);
+  if (laeuft) mupdMeldung(MUPD_PHASEN[st.phase]);
+  else if (st.fehler) mupdMeldung(st.fehler, 'fehler');
+  else if (st.hinweis) mupdMeldung(st.hinweis, 'ok');
+  else if (!st.tokenGesetzt) mupdMeldung('Kein GitHub-Token: im Dialog „Updates“ eintragen (Contents: Read-only, auch für das Modul-Repo).', 'fehler');
+  else mupdMeldung(st.updateMoeglich ? `Version ${v.version} ist verfügbar.` : v ? 'Das Modul ist aktuell.' : '');
+  $('mupd-notizen-rahmen').hidden = !(st.updateMoeglich && v?.notizen);
+  $('mupd-notizen').textContent = v?.notizen ?? '';
+  $('mupd-installieren').hidden = !st.updateMoeglich;
+  $('mupd-installieren').textContent = st.updateMoeglich ? `Version ${v.version} installieren` : 'Installieren';
+  $('mupd-installieren').onclick = () => modulUpdateAktion(st.id, 'installieren', { version: v.version });
+  $('mupd-zurueck').hidden = !st.vorherige;
+  $('mupd-zurueck').textContent = st.vorherige ? `Zurück zu v${st.vorherige}` : 'Zurück';
+  $('mupd-zurueck').onclick = () => modulUpdateAktion(st.id, 'zurueck');
+  $('mupd-suchen').onclick = () => modulUpdateAktion(st.id, 'suchen');
+  for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = laeuft;
+  clearTimeout(mupdTimer);
+  // Während eines Vorgangs jede Sekunde nachsehen; danach Kacheln auffrischen.
+  if (laeuft) mupdTimer = setTimeout(() => modulUpdateLaden(st.id, true), 1000);
+}
+
+async function modulUpdateLaden(id, nachVorgang = false) {
+  if (offenesModul !== id) return;
+  const antwort = await api(`/api/module/${encodeURIComponent(id)}/update`).catch(() => null);
+  if (!antwort?.ok || offenesModul !== id) return;
+  const st = await antwort.json();
+  modulUpdateZeigen(st);
+  if (nachVorgang && !MUPD_PHASEN[st.phase]) aktualisieren();
+}
+
+async function modulUpdateAktion(id, aktion, koerper = {}) {
+  for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = true;
+  mupdMeldung(aktion === 'suchen' ? MUPD_PHASEN.suche : 'Wird gestartet …');
+  const antwort = await senden(`/api/module/${encodeURIComponent(id)}/update/${aktion}`, koerper);
+  const daten = await antwort.json().catch(() => ({}));
+  if (!antwort.ok) {
+    if (daten.status) modulUpdateZeigen(daten.status);
+    mupdMeldung(daten.fehler || 'Nicht möglich.', 'fehler');
+    for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = false;
+    return;
+  }
+  modulUpdateZeigen(daten);
+  if (aktion === 'suchen') aktualisieren();
 }
 
 const aktionMeldung = (text, art = '') => { $('details-aktion-meldung').textContent = text; $('details-aktion-meldung').dataset.art = art; };
@@ -212,8 +273,8 @@ function detailsOeffnen(id) {
 let einstModul = null;
 const einstMeldung = (text, art = '') => { $('einst-meldung').textContent = text; $('einst-meldung').dataset.art = art; };
 
-function feldBauen(f, wert) {
-  const id = `einst-${f.schluessel}`;
+// Ein Eingabeelement für ein Feld oder eine Listenspalte.
+function eingabeBauen(f, wert, id) {
   let eingabe;
   if (f.typ === 'schalter') {
     eingabe = el('input', { type: 'checkbox', id, checked: wert === true });
@@ -221,15 +282,55 @@ function feldBauen(f, wert) {
     eingabe = el('select', { id }, ...(f.pflicht ? [] : [new Option('–', '')]), ...f.optionen.map((o) => new Option(o.text, o.wert)));
     eingabe.value = wert ?? '';
   } else {
-    eingabe = el('input', { id, type: f.typ === 'zahl' ? 'number' : f.typ === 'passwort' ? 'password' : 'text', autocomplete: f.typ === 'passwort' ? 'new-password' : 'off' });
+    eingabe = el('input', { id, type: { zahl: 'number', passwort: 'password', datum: 'date' }[f.typ] ?? 'text', autocomplete: f.typ === 'passwort' ? 'new-password' : 'off' });
     if (f.typ === 'zahl') { eingabe.step = f.ganzzahl ? '1' : 'any'; if (f.min !== null) eingabe.min = f.min; if (f.max !== null) eingabe.max = f.max; }
     if (f.typ === 'passwort') eingabe.placeholder = wert?.gesetzt ? 'gesetzt – leer lassen, um es zu behalten' : 'nicht gesetzt';
     else eingabe.value = wert ?? '';
   }
-  eingabe.dataset.schluessel = f.schluessel;
   eingabe.dataset.typ = f.typ;
+  return eingabe;
+}
+
+// Listenfeld: Tabelle mit einer Zeile je Eintrag, Zeilen hinzufügen und entfernen.
+function listeBauen(f, zeilen, id) {
+  const koerper = el('tbody');
+  const zeileBauen = (werte = {}) => {
+    const tr = el('tr');
+    for (const s of f.spalten) {
+      const eingabe = eingabeBauen(s, werte[s.schluessel] ?? (Object.keys(werte).length ? null : s.standard), '');
+      eingabe.dataset.spalte = s.schluessel;
+      eingabe.setAttribute('aria-label', s.bezeichnung);
+      tr.append(el('td', {}, eingabe));
+    }
+    const weg = el('button', { type: 'button', className: 'zweitrangig', textContent: '✕', title: 'Zeile entfernen' });
+    weg.setAttribute('aria-label', 'Zeile entfernen');
+    weg.addEventListener('click', () => { tr.remove(); knopf.disabled = koerper.rows.length >= f.maxZeilen; });
+    tr.append(el('td', {}, weg));
+    koerper.append(tr);
+    knopf.disabled = koerper.rows.length >= f.maxZeilen;
+  };
+  const knopf = el('button', { type: 'button', className: 'zweitrangig', textContent: 'Zeile hinzufügen' });
+  knopf.addEventListener('click', () => zeileBauen());
+  for (const z of zeilen ?? []) zeileBauen(z);
+  const kopf = el('thead', {}, el('tr', {}, ...f.spalten.map((s) => el('th', { textContent: s.bezeichnung + (s.pflicht ? ' *' : ''), title: s.beschreibung ?? '' })), el('th')));
+  const tabelle = el('table', { className: 'liste-tabelle', id }, kopf, koerper);
+  tabelle.dataset.schluessel = f.schluessel;
+  tabelle.dataset.typ = 'liste';
+  return el('div', { className: 'liste-rahmen' }, tabelle, knopf);
+}
+
+function listeLesen(tabelle) {
+  return [...tabelle.tBodies[0].rows].map((tr) => Object.fromEntries([...tr.querySelectorAll('[data-spalte]')]
+    .map((e) => [e.dataset.spalte, e.dataset.typ === 'schalter' ? e.checked : e.value])));
+}
+
+function feldBauen(f, wert) {
+  const id = `einst-${f.schluessel}`;
+  const eingabe = f.typ === 'liste' ? listeBauen(f, wert, id) : eingabeBauen(f, wert, id);
+  if (f.typ !== 'liste') eingabe.dataset.schluessel = f.schluessel;
   const label = el('label', { htmlFor: id, textContent: f.bezeichnung + (f.pflicht ? ' *' : '') });
-  const hilfe = el('small', { className: 'leise', textContent: f.beschreibung + (f.standard !== undefined && f.typ !== 'schalter' ? `${f.beschreibung ? ' · ' : ''}Standard: ${f.standard}` : '') });
+  const standard = f.standard === undefined || f.typ === 'schalter' || f.typ === 'liste' ? '' : `Standard: ${f.standard}`;
+  const hilfe = el('small', { className: 'leise', textContent: [f.beschreibung, standard].filter(Boolean).join(' · ') });
   const fehler = el('small', { className: 'feldfehler', id: `${id}-fehler` });
   return el('div', { className: `feld ${f.typ}` }, label, eingabe, hilfe, fehler);
 }
@@ -251,7 +352,7 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
   const werte = {};
   for (const e of $('einst-felder').querySelectorAll('[data-schluessel]')) {
-    werte[e.dataset.schluessel] = e.dataset.typ === 'schalter' ? e.checked : e.value;
+    werte[e.dataset.schluessel] = e.dataset.typ === 'schalter' ? e.checked : e.dataset.typ === 'liste' ? listeLesen(e) : e.value;
   }
   for (const f of $('einst-felder').querySelectorAll('.feldfehler')) f.textContent = '';
   $('einst-speichern').disabled = true;
@@ -549,6 +650,6 @@ $('beenden-ja').addEventListener('click', async () => {
 });
 
 $('details-schliessen').addEventListener('click', () => $('details').close());
-$('details').addEventListener('close', () => { offenesModul = null; });
+$('details').addEventListener('close', () => { offenesModul = null; clearTimeout(mupdTimer); });
 aktualisieren();
 const aktualisierer = setInterval(aktualisieren, 10_000);

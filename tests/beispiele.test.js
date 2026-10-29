@@ -46,7 +46,7 @@ test('Eigenständiges Beispielmodul: liest Einstellungen, schreibt gültige stat
     assert.equal(eintrag.status, 'warnung');
     assert.deepEqual(eintrag.messwerte, { dateien: 2, veraltet: 1 });
     assert.match(eintrag.details[0], /^alt\.csv/);
-    assert.equal(eintrag.version, '1.1.0');
+    assert.equal(eintrag.version, '1.1.1');
     assert.ok(Math.abs(Date.parse(eintrag.naechsterLauf) - Date.parse(eintrag.ende) - 10 * 60_000) < 1000);
   } finally {
     await rm(ordner, { recursive: true, force: true });

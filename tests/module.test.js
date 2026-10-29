@@ -426,3 +426,61 @@ test('Module beenden: von der Basis gestartetes Modul wird abgebrochen und pausi
     await rm(u.wurzel, { recursive: true, force: true });
   }
 });
+
+const ORDNER_LISTE = {
+  schluessel: 'ordner', bezeichnung: 'Ordner', typ: 'liste', pflicht: true, max_zeilen: 3,
+  spalten: [
+    { schluessel: 'pfad', bezeichnung: 'Ordner', typ: 'text', pflicht: true },
+    { schluessel: 'max_alter', bezeichnung: 'Max. Alter (h)', typ: 'zahl', min: 0.1, max: 720, standard: 2 },
+    { schluessel: 'ab', bezeichnung: 'Nur Dateien ab', typ: 'datum' },
+    { schluessel: 'zeitstempel', bezeichnung: 'Zeitstempel', typ: 'auswahl', optionen: ['create', 'modify'] },
+    { schluessel: 'leer_ok', bezeichnung: 'Leer ist ok', typ: 'schalter' },
+  ],
+  standard: [{ pfad: 'files', max_alter: 2 }],
+};
+
+test('Einstellungsfeld Liste: Spalten, Datum, Zeilenprüfung, leere Zeilen, Grenzen', () => {
+  const { felder, fehler } = pruefeFelder([ORDNER_LISTE]);
+  assert.equal(fehler, undefined);
+  const [f] = felder;
+  assert.equal(f.maxZeilen, 3);
+  assert.deepEqual(f.standard, [{ pfad: 'files', max_alter: 2 }]);
+  assert.match(pruefeFelder([{ ...ORDNER_LISTE, spalten: [{ schluessel: 'pw', bezeichnung: 'PW', typ: 'passwort' }] }]).fehler, /spalten\[0\]\.typ muss text, zahl, schalter, auswahl, datum sein/);
+  assert.match(pruefeFelder([{ ...ORDNER_LISTE, spalten: [{ schluessel: 'x', bezeichnung: 'X', typ: 'liste', spalten: [] }] }]).fehler, /spalten\[0\]\.typ/);
+  assert.match(pruefeFelder([{ ...ORDNER_LISTE, spalten: [] }]).fehler, /spalten fehlt/);
+  assert.match(pruefeFelder([{ ...ORDNER_LISTE, max_zeilen: 0 }]).fehler, /max_zeilen/);
+  assert.match(pruefeFelder([{ ...ORDNER_LISTE, standard: [{ max_alter: 3 }] }]).fehler, /standard: Zeile 1: Ordner fehlt/);
+
+  // Werte aus dem Formular kommen als Text; leere Zeilen fallen weg.
+  assert.deepEqual(pruefeWert(f, [{ pfad: ' export ', max_alter: '24', ab: '2026-11-01', zeitstempel: 'modify', leer_ok: true }, { pfad: '', max_alter: '', ab: '', leer_ok: false }]),
+    { wert: [{ pfad: 'export', max_alter: 24, ab: '2026-11-01', zeitstempel: 'modify', leer_ok: true }] });
+  assert.deepEqual(pruefeWert(f, []), { wert: [] });
+  assert.equal(pruefeWert(f, [{ pfad: 'a', max_alter: '9999' }]).fehler, 'Zeile 1, Max. Alter (h): höchstens 720');
+  assert.equal(pruefeWert(f, [{ pfad: 'a' }, { max_alter: 3 }]).fehler, 'Zeile 2: Ordner fehlt');
+  assert.equal(pruefeWert(f, [{ pfad: 'a', ab: '2026-02-30' }]).fehler, 'Zeile 1, Nur Dateien ab: kein gültiges Datum (JJJJ-MM-TT)');
+  assert.equal(pruefeWert(f, [{ pfad: 'a', zeitstempel: 'atime' }]).fehler, 'Zeile 1, Zeitstempel: keine erlaubte Auswahl');
+  assert.equal(pruefeWert(f, [{ pfad: 'a' }, { pfad: 'b' }, { pfad: 'c' }, { pfad: 'd' }]).fehler, 'höchstens 3 Zeilen');
+  assert.equal(pruefeWert(f, 'files').fehler, 'muss eine Liste sein');
+  assert.equal(pruefeWert(f, ['files']).fehler, 'Zeile 1 ist ungültig');
+  assert.deepEqual(pruefeWert(f, [{ pfad: 'a', unbekannt: 'x' }]), { wert: [{ pfad: 'a' }] }, 'unbekannte Spalten fallen weg');
+  assert.deepEqual(pruefeWert({ typ: 'datum' }, '2026-10-27'), { wert: '2026-10-27' });
+  assert.equal(pruefeWert({ typ: 'datum' }, '27.10.2026').fehler, 'kein gültiges Datum (JJJJ-MM-TT)');
+});
+
+test('Einstellungsfeld Liste: speichern, Standard, Pflicht, Ansicht', async () => {
+  const ordner = await temp();
+  try {
+    const { felder } = pruefeFelder([ORDNER_LISTE, { schluessel: 'server', bezeichnung: 'Server', typ: 'text' }]);
+    const modul = { id: 'ftp', ordner, felder, einstellungen: {} };
+    assert.deepEqual((await ansicht(modul)).werte.ordner, [{ pfad: 'files', max_alter: 2 }], 'ohne Speicherung gilt der Standard');
+    assert.deepEqual((await speichern(modul, { ordner: [] })).feldfehler, { ordner: 'mindestens eine Zeile' });
+    const ok = await speichern(modul, { ordner: [{ pfad: 'files', max_alter: '2' }, { pfad: 'export', max_alter: '24', ab: '2026-11-01' }] });
+    assert.deepEqual(ok, { geaendert: ['ordner'] });
+    assert.deepEqual(JSON.parse(await readFile(path.join(ordner, 'einstellungen.json'), 'utf8')).ordner[1], { pfad: 'export', max_alter: 24, ab: '2026-11-01' });
+    assert.deepEqual(await speichern(modul, { ordner: [{ pfad: 'files', max_alter: 2 }, { pfad: 'export', max_alter: 24, ab: '2026-11-01' }] }), { geaendert: [] }, 'gleiche Werte: keine Änderung');
+    assert.deepEqual((await speichern(modul, { ordner: [{ pfad: 'a', max_alter: 'x' }] })).feldfehler, { ordner: 'Zeile 1, Max. Alter (h): keine gültige Zahl' });
+    assert.equal((await wirksameWerte(modul)).ordner.length, 2, 'Fehler ändert nichts');
+  } finally {
+    await rm(ordner, { recursive: true, force: true });
+  }
+});

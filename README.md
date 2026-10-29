@@ -282,7 +282,9 @@ Rückfrage):
 - **`befehl.json`** sieht so aus: `{"befehl": "beenden", "zeit": "2026-10-29T15:00:00Z", "von": "patrick"}`.
   Das Modul prüft regelmäßig (die Vorlage alle 2 Sekunden), ob die Datei da
   ist, löscht sie und beendet sich. **Beim Start eine vorhandene `befehl.json`
-  löschen** – ein alter Befehl gilt nicht.
+  löschen** – ein alter Befehl gilt nicht. **Liegt `befehl.json` vor, keine
+  `status.json` mehr schreiben** (direkt vor dem Schreiben nachsehen), sonst
+  gilt das Modul in der Basis wieder als laufend.
 
 ### Einstellungsfelder
 
@@ -290,7 +292,7 @@ Rückfrage):
 | --- | --- |
 | `schluessel` | Name in `einstellungen.json` (Kleinbuchstaben, Ziffern, `_`) |
 | `bezeichnung`, `beschreibung` | Beschriftung und Hilfetext im Formular |
-| `typ` | `text`, `zahl` (mit `min`, `max`, `ganzzahl`), `schalter`, `auswahl` (mit `optionen`), `passwort` |
+| `typ` | `text`, `zahl` (mit `min`, `max`, `ganzzahl`), `schalter`, `auswahl` (mit `optionen`), `passwort`, `datum` (Wert `JJJJ-MM-TT`), `liste` (mit `spalten`, siehe unten) |
 | `pflicht` | Feld muss ausgefüllt sein |
 | `standard` | Wert, solange nichts gespeichert ist (nicht bei Passwörtern) |
 
@@ -309,6 +311,60 @@ gestartete Module laufen dann nicht; eigenständige Module werden nicht mehr
 eine Prüfung, bricht „Prüfung abbrechen“ in den Details sie ab und pausiert
 das Modul. Der Lauf erscheint als Warnung „Prüfung wurde über die Basis
 beendet.“
+
+**Listen:** Ein Feld mit `"typ": "liste"` erscheint als Tabelle, in der
+Admins Zeilen hinzufügen und entfernen. `spalten` beschreibt die Spalten wie
+normale Felder (`text`, `zahl`, `schalter`, `auswahl`, `datum`; keine
+Passwörter, keine Listen in Listen), `max_zeilen` begrenzt die Anzahl
+(Standard 50, höchstens 200), `pflicht: true` verlangt mindestens eine Zeile.
+`standard` ist eine Liste von Zeilen. Ganz leere Zeilen fallen beim Speichern
+weg. In `einstellungen.json` steht eine Liste von Objekten:
+
+```json
+{
+  "schluessel": "ordner", "bezeichnung": "Ordner", "typ": "liste", "pflicht": true,
+  "spalten": [
+    { "schluessel": "pfad", "bezeichnung": "Ordner", "typ": "text", "pflicht": true },
+    { "schluessel": "max_alter", "bezeichnung": "Max. Alter (h)", "typ": "zahl", "min": 0.1, "standard": 2 },
+    { "schluessel": "ab", "bezeichnung": "Nur Dateien ab", "typ": "datum" }
+  ],
+  "standard": [{ "pfad": "files", "max_alter": 2 }]
+}
+```
+
+ergibt zum Beispiel `"ordner": [{ "pfad": "files", "max_alter": 2, "ab": "2026-10-27" }]`.
+
+### Module über die Basis aktualisieren
+
+Module mit `"repo": "besitzer/name"` und `"version": "X.Y.Z"` in
+`module.json` lassen sich wie die Basis aktualisieren: Details des Moduls →
+**Updates** → „Nach Updates suchen“ → „Version … installieren“. Die Basis sucht
+zusätzlich einmal täglich und zeigt einen Punkt an der Kachel; installiert wird
+nur auf Knopfdruck eines Admins. Es gilt derselbe GitHub-Token wie für die
+Basis – er braucht **Contents: Read-only** auch für das Modul-Repo.
+
+Das Release im Modul-Repo hat den Tag `vX.Y.Z` und die Dateien
+`<id>-X.Y.Z.tar.gz` und `<id>-X.Y.Z.tar.gz.sha256`. Im Paket liegt der Inhalt
+des Modulordners (`module.json` oben, mit derselben `id` und der Version
+`X.Y.Z`, keine Verknüpfungen).
+
+Ablauf der Installation:
+
+1. Paket herunterladen, Prüfsumme und Inhalt prüfen.
+2. Modul beenden: Windows-Dienst stoppen (`dienst`), `befehl.json` ablegen
+   (`befehlsdatei`) oder – bei von der Basis gestarteten Modulen – pausieren.
+   Eigenständige Module ohne `dienst`/`befehlsdatei` lassen sich nicht über die
+   Basis aktualisieren.
+3. Den Modulordner nach `data\modul-versionen\<id>\` sichern und die neue
+   Version einsetzen. `einstellungen.json` und `status.json` bleiben erhalten,
+   aus dem Paket werden sie nie übernommen.
+4. Modul wieder starten (Dienst starten bzw. Pause aufheben). Module ohne
+   Dienst startest du auf dem Worker; bis sie sich melden, stehen sie auf
+   „Beendet“.
+
+„Zurück zu vX.Y.Z“ tauscht genauso mit der zuletzt gesicherten Version (die
+aktuellen Einstellungen bleiben). Aufbewahrt werden die zwei neuesten
+Sicherungen je Modul. `data\` muss auf demselben Laufwerk liegen wie `modules\`.
 
 ### Von der Basis gestartet: Programm (beliebige Sprache)
 

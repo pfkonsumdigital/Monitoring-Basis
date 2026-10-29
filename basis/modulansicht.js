@@ -100,6 +100,7 @@ export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeu
     betriebsart: eigenstaendig ? 'eigenstaendig' : 'basis',
     typ: modul.typ ?? null,
     version: modul.version ?? letztes?.version ?? null,
+    repo: modul.repo ?? null,
     aktiv,
     intervallMinuten: modul.intervallMinuten ?? null,
     fehler: modul.fehler ?? null,

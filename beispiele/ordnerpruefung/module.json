@@ -2,7 +2,7 @@
   "id": "ordnerpruefung",
   "name": "Beispiel: Ordner auf veraltete Dateien prüfen",
   "beschreibung": "Eigenständiges Beispielmodul. Prüft, ob die Dateien in einem Ordner jünger als eine einstellbare Anzahl Stunden sind. Vorlage für eigene Module.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "typ": "eigenstaendig",
   "intervall_minuten": 5,
   "befehlsdatei": true,

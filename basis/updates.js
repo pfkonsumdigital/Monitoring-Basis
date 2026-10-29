@@ -48,8 +48,10 @@ async function atomarSchreiben(datei, wert) {
   await rename(temp, datei);
 }
 const existiert = (p) => access(p).then(() => true, () => false);
+// Unter Windows immer das tar.exe des Systems (versteht .tar.gz und lehnt absolute Pfade und „..“ ab).
+export const tarProgramm = () => (process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar');
 
-function prozess(spawnImpl, befehl, argumente, timeoutMs) {
+export function prozess(spawnImpl, befehl, argumente, timeoutMs) {
   return new Promise((resolve) => {
     let ausgabe = '';
     let kind;
@@ -221,8 +223,7 @@ export class Updateverwaltung {
       try {
         await mkdir(temp, { recursive: true });
         await writeFile(paketDatei, daten);
-        const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-        const entpackt = await prozess(this.spawn, tar, ['-xzf', paketDatei, '-C', temp], 120_000);
+        const entpackt = await prozess(this.spawn, tarProgramm(), ['-xzf', paketDatei, '-C', temp], 120_000);
         if (entpackt.code !== 0) throw new BasisFehler(`Das Paket konnte nicht entpackt werden: ${entpackt.ausgabe}`);
         const paketJson = await jsonLesen(path.join(temp, 'package.json'));
         if (paketJson?.version !== version || !(await existiert(path.join(temp, 'basis', 'main.js')))) {

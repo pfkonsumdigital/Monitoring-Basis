@@ -14,6 +14,7 @@ import { Ergebnisspeicher } from './speicher.js';
 import { Planer } from './planer.js';
 import { Modulverwaltung } from './modulverwaltung.js';
 import { Benachrichtigung } from './benachrichtigung.js';
+import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
@@ -112,8 +113,9 @@ async function starten(konfig, configDatei, protokoll) {
     setTimeout(() => process.exit(NEUSTART_CODE), 300);
   };
   await updates.starten();
+  const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -121,6 +123,7 @@ async function starten(konfig, configDatei, protokoll) {
   zertifikate.automatischErneuern(server);
   planer.start();
   updates.taeglichPruefen();
+  modulupdates.taeglichPruefen();
   process.send?.({ typ: 'bereit', version: updates.installiert });
   if (intern) {
     log(`Monitoring-Basis ${updates.installiert} läuft: http://<IP-Adresse dieses Rechners>:${konfig.port}/`);

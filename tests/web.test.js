@@ -572,3 +572,54 @@ test('Webserver: Basis und Module beenden nur für Admins mit Schutzkopf', async
     ohne.close();
   }
 });
+
+test('Webserver: Modul-Updates nur für Admins mit Schutzkopf', async () => {
+  const http = await import('node:http');
+  const aufrufe = [];
+  const module = {
+    ansichten: () => [{ id: 'ftp', repo: 'a/b' }, { id: 'ohne', repo: null }],
+    finde: (id) => (['ftp', 'ohne'].includes(id) ? { id } : null),
+  };
+  const modulupdates = {
+    verfuegbar: (id) => id === 'ftp',
+    status: async (id) => ({ id, phase: 'bereit' }),
+    suchen: async (id) => { aufrufe.push(['suchen', id]); return { id, verfuegbar: { version: '1.1.0' } }; },
+    installieren: async (id, version, benutzer) => { aufrufe.push(['installieren', id, version, benutzer]); if (version === '9.9.9') throw new Error('Bitte zuerst nach Updates suchen.'); return { id, phase: 'herunterladen' }; },
+    zurueck: async (id, benutzer) => { aufrufe.push(['zurueck', id, benutzer]); return { id, phase: 'beenden' }; },
+  };
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module, modulupdates, anmeldung, sitzungMs: 60_000, verschluesselt: false }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    assert.deepEqual((await hole('GET', '/api/status', chef)).json().module, [{ id: 'ftp', repo: 'a/b', updateVerfuegbar: true }, { id: 'ohne', repo: null }]);
+    assert.deepEqual((await hole('GET', '/api/status', gast)).json().module, [{ id: 'ftp', repo: 'a/b' }, { id: 'ohne', repo: null }], 'Nicht-Admins sehen keinen Update-Hinweis');
+    assert.equal((await hole('GET', '/api/module/ftp/update', gast)).status, 403);
+    assert.equal((await hole('POST', '/api/module/ftp/update/suchen', { ...gast, ...schutz })).status, 403);
+    assert.equal((await hole('POST', '/api/module/ftp/update/suchen', chef)).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole('GET', '/api/module/gibtsnicht/update', chef)).status, 404);
+    assert.equal((await hole('GET', '/api/module/ftp/update/suchen', chef)).status, 404);
+    assert.deepEqual((await hole('GET', '/api/module/ftp/update', chef)).json(), { id: 'ftp', phase: 'bereit' });
+    assert.equal((await hole('POST', '/api/module/ftp/update/suchen', { ...chef, ...schutz })).status, 200);
+    assert.equal((await hole('POST', '/api/module/ftp/update/installieren', { ...chef, ...schutz }, '{"version":"1.1.0"}')).status, 202);
+    const fehler = await hole('POST', '/api/module/ftp/update/installieren', { ...chef, ...schutz }, '{"version":"9.9.9"}');
+    assert.deepEqual([fehler.status, fehler.json().fehler, fehler.json().status], [409, 'Bitte zuerst nach Updates suchen.', { id: 'ftp', phase: 'bereit' }]);
+    assert.equal((await hole('POST', '/api/module/ftp/update/installieren', { ...chef, ...schutz }, 'kaputt')).status, 400);
+    assert.equal((await hole('POST', '/api/module/ftp/update/zurueck', { ...chef, ...schutz })).status, 202);
+    assert.deepEqual(aufrufe, [['suchen', 'ftp'], ['installieren', 'ftp', '1.1.0', 'chef'], ['installieren', 'ftp', '9.9.9', 'chef'], ['zurueck', 'ftp', 'chef']]);
+  } finally {
+    server.close();
+  }
+});

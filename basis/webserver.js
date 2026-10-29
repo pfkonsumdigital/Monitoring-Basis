@@ -62,7 +62,7 @@ export function istInterneAdresse(adresse) {
 
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -123,7 +123,8 @@ export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, 
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), beendenMoeglich: Boolean(sitzung.admin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.ansichten() });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), beendenMoeglich: Boolean(sitzung.admin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
+          module: module.ansichten().map((m) => (sitzung.admin && modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m)) });
       }
       if (weg === '/api/beenden') {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
@@ -206,6 +207,27 @@ export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, 
           return json(res, aktion === 'suchen' ? 200 : 202, await (aktion === 'installieren' ? updates.installieren(String(version)) : updates[aktion]()));
         } catch (fehler) {
           return json(res, 409, { fehler: fehler.message, status: updates.status() });
+        }
+      }
+
+      const upd = /^\/api\/module\/([a-z0-9-]+)\/update(?:\/(suchen|installieren|zurueck))?$/.exec(weg);
+      if (upd) {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!modulupdates || !module.finde(upd[1])) return json(res, 404, { fehler: 'Modul unbekannt.' });
+        if (!upd[2] && req.method === 'GET') return json(res, 200, await modulupdates.status(upd[1]));
+        if (!upd[2] || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let version;
+        if (upd[2] === 'installieren') {
+          try { ({ version } = JSON.parse(await koerperLesen(req))); } catch { return json(res, 400, { fehler: 'Version fehlt.' }); }
+        }
+        try {
+          const st = upd[2] === 'suchen' ? await modulupdates.suchen(upd[1])
+            : upd[2] === 'installieren' ? await modulupdates.installieren(upd[1], String(version), sitzung.benutzer)
+              : await modulupdates.zurueck(upd[1], sitzung.benutzer);
+          return json(res, upd[2] === 'suchen' ? 200 : 202, st);
+        } catch (fehler) {
+          return json(res, 409, { fehler: fehler.message, status: await modulupdates.status(upd[1]) });
         }
       }
 

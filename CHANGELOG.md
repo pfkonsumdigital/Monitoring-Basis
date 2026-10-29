@@ -1,5 +1,29 @@
 # Änderungen
 
+## 0.8.0
+
+### Neu
+
+- **Einstellungsfeld „Liste“:** Module können eine Tabelle anbieten, in der Admins Zeilen hinzufügen und entfernen (z. B. Ordner mit eigener Altersgrenze, Datumsgrenze und Zeitstempel). Spalten wie normale Felder; Prüfung je Zeile mit verständlicher Meldung („Zeile 2, Max. Alter (h): höchstens 720“); `max_zeilen`, `pflicht` = mindestens eine Zeile.
+- Neuer Feldtyp **„datum“** (Datumsauswahl, gespeichert als `JJJJ-MM-TT`), auch als Listenspalte.
+- **Updates für Module** wie bei der Basis: Bereich „Updates“ in den Details (Admins), Suche nach dem neuesten Release im Modul-Repo (`repo` in `module.json`), Änderungsnotizen, Installation auf Knopfdruck, „Zurück zur vorherigen Version“, tägliche Suche mit Hinweis an der Kachel. Bei der Installation wird das Modul beendet (Dienst, `befehl.json` oder Pause), gesichert, ausgetauscht und wieder gestartet; Einstellungen und Status bleiben.
+- Andockvertrag (abwärtskompatibel erweitert): Release-Dateien `<id>-X.Y.Z.tar.gz` + `.sha256`, Feldtypen `liste` und `datum`.
+
+### Geändert
+
+- Beispielmodul `ordnerpruefung` 1.1.1: prüft `befehl.json` auch vor jedem Lauf und direkt vor dem Schreiben von `status.json`. README: Liegt `befehl.json` vor, keine `status.json` mehr schreiben.
+
+### Behoben
+
+- Ein eigenständiges Modul, das kurz nach dem Befehl zum Beenden noch eine `status.json` schrieb, galt in der Basis wieder als laufend (Beispielmodul angepasst, Regel im Andockvertrag ergänzt).
+
+### Prüfung
+
+- `npm test`: 92 Tests, neu u. a. Listenfeld (Spalten, Datum, leere Zeilen, Grenzen, Pflicht, Speichern, keine Änderung bei gleichen Werten), Modul-Updates mit simuliertem GitHub und echten Paketen (Suche, Installation mit Dienst, Einstellungen bleiben, Zurück, falsche Prüfsumme/Version/id, Verknüpfung im Paket, kein Repo/Token, Dienst nicht beendbar, Modul mit `befehl.json`, von der Basis gestartetes Modul), Admin-Endpunkte mit Schutzkopf.
+- Gegenprobe: Tests schlagen fehl, wenn Einstellungen nicht erhalten bleiben oder Verknüpfungen durchgelassen werden.
+- Browsertest mit echter Basis und laufendem Beispielmodul, simuliertes GitHub: Liste bearbeiten (Fehler je Zeile, Speichern), Update suchen und installieren (Modul beendet sich, „Beendet“ bis zum Neustart, danach OK mit v1.2.0), Zurück auf v1.1.1.
+- Noch auf dem Worker zu prüfen: Update eines Moduls mit Windows-Dienst (`sc.exe`), sobald das FTP-Modul da ist.
+
 ## 0.7.1
 
 ### Behoben

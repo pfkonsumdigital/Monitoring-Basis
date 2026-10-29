@@ -7,24 +7,27 @@ import path from 'node:path';
 // Das Modul liest diese Datei bei jedem Lauf. Die Basis braucht das Modul dafür nicht.
 
 export const DATEI = 'einstellungen.json';
-const TYPEN = ['text', 'zahl', 'schalter', 'auswahl', 'passwort'];
+const TYPEN = ['text', 'zahl', 'schalter', 'auswahl', 'passwort', 'datum', 'liste'];
+const SPALTEN_TYPEN = ['text', 'zahl', 'schalter', 'auswahl', 'datum'];
+const MAX_ZEILEN = 200;
 const SCHLUESSEL = /^[a-z][a-z0-9_]{0,63}$/;
 const istText = (w) => typeof w === 'string' && w.trim() !== '';
 const MAX_TEXT = 2000;
 
 // Prüft die Feldliste aus module.json. Liefert { felder } oder { fehler }.
-export function pruefeFelder(roh) {
+// spalten: Spalten eines Listenfelds (gleiche Regeln, aber ohne Passwort und ohne verschachtelte Listen).
+export function pruefeFelder(roh, { wo: basis = 'einstellungsfelder', typen = TYPEN, max = 50 } = {}) {
   if (roh === undefined) return { felder: [] };
-  if (!Array.isArray(roh) || roh.length > 50) return { fehler: 'einstellungsfelder muss eine Liste (höchstens 50 Felder) sein' };
+  if (!Array.isArray(roh) || roh.length > max) return { fehler: `${basis} muss eine Liste (höchstens ${max} Felder) sein` };
   const felder = [];
   const gesehen = new Set();
   for (const [i, f] of roh.entries()) {
-    const wo = `einstellungsfelder[${i}]`;
+    const wo = `${basis}[${i}]`;
     if (!f || typeof f !== 'object' || Array.isArray(f)) return { fehler: `${wo} muss ein Objekt sein` };
     if (!SCHLUESSEL.test(f.schluessel ?? '')) return { fehler: `${wo}.schluessel: nur Kleinbuchstaben, Ziffern und _ (beginnt mit Buchstabe)` };
     if (gesehen.has(f.schluessel)) return { fehler: `${wo}.schluessel „${f.schluessel}“ kommt doppelt vor` };
     gesehen.add(f.schluessel);
-    if (!TYPEN.includes(f.typ)) return { fehler: `${wo}.typ muss ${TYPEN.join(', ')} sein` };
+    if (!typen.includes(f.typ)) return { fehler: `${wo}.typ muss ${typen.join(', ')} sein` };
     if (!istText(f.bezeichnung) || f.bezeichnung.length > 100) return { fehler: `${wo}.bezeichnung fehlt oder ist zu lang` };
     if (f.beschreibung !== undefined && (typeof f.beschreibung !== 'string' || f.beschreibung.length > 500)) return { fehler: `${wo}.beschreibung ist ungültig` };
     if (f.pflicht !== undefined && typeof f.pflicht !== 'boolean') return { fehler: `${wo}.pflicht muss true oder false sein` };
@@ -39,6 +42,14 @@ export function pruefeFelder(roh) {
       const optionen = f.optionen.map((o) => (typeof o === 'string' ? { wert: o, text: o } : o));
       if (optionen.some((o) => !o || !istText(o.wert) || !istText(o.text ?? o.wert))) return { fehler: `${wo}.optionen ist ungültig` };
       feld.optionen = optionen.map((o) => ({ wert: o.wert, text: o.text ?? o.wert }));
+    }
+    if (f.typ === 'liste') {
+      const spalten = pruefeFelder(f.spalten, { wo: `${wo}.spalten`, typen: SPALTEN_TYPEN, max: 10 });
+      if (spalten.fehler) return spalten;
+      if (!spalten.felder.length) return { fehler: `${wo}.spalten fehlt` };
+      const maxZeilen = f.max_zeilen ?? 50;
+      if (!Number.isInteger(maxZeilen) || maxZeilen < 1 || maxZeilen > MAX_ZEILEN) return { fehler: `${wo}.max_zeilen muss zwischen 1 und ${MAX_ZEILEN} liegen` };
+      Object.assign(feld, { spalten: spalten.felder, maxZeilen });
     }
     if (f.standard !== undefined) {
       if (f.typ === 'passwort') return { fehler: `${wo}: Passwortfelder haben keinen Standardwert` };
@@ -55,6 +66,14 @@ export function pruefeFelder(roh) {
 export function pruefeWert(feld, wert) {
   if (wert === null || wert === undefined || wert === '') return { wert: null };
   switch (feld.typ) {
+    case 'datum': {
+      // Kalenderdatum JJJJ-MM-TT (wie <input type="date">); die Uhrzeit legt das Modul fest.
+      const t = typeof wert === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(wert.trim()) : null;
+      const d = t ? new Date(Date.UTC(+t[1], t[2] - 1, +t[3])) : null;
+      if (!d || d.getUTCMonth() !== t[2] - 1 || d.getUTCDate() !== +t[3]) return { fehler: 'kein gültiges Datum (JJJJ-MM-TT)' };
+      return { wert: wert.trim() };
+    }
+    case 'liste': return pruefeListe(feld, wert);
     case 'text':
     case 'passwort':
       if (typeof wert !== 'string' || wert.length > MAX_TEXT || /[\0]/.test(wert)) return { fehler: 'ungültiger Text' };
@@ -76,6 +95,27 @@ export function pruefeWert(feld, wert) {
     default:
       return { fehler: 'unbekannter Typ' };
   }
+}
+
+// Eine Liste ist ein Array von Zeilen (Objekte mit den Spaltenschlüsseln). Ganz leere Zeilen fallen weg.
+function pruefeListe(feld, wert) {
+  if (!Array.isArray(wert)) return { fehler: 'muss eine Liste sein' };
+  const zeilen = [];
+  for (const [i, roh] of wert.entries()) {
+    if (!roh || typeof roh !== 'object' || Array.isArray(roh)) return { fehler: `Zeile ${i + 1} ist ungültig` };
+    const zeile = {};
+    for (const s of feld.spalten) {
+      const { wert: w, fehler } = pruefeWert(s, roh[s.schluessel]);
+      if (fehler) return { fehler: `Zeile ${i + 1}, ${s.bezeichnung}: ${fehler}` };
+      if (w !== null) zeile[s.schluessel] = w;
+    }
+    if (!feld.spalten.some((s) => s.typ !== 'schalter' && s.schluessel in zeile)) continue;
+    const fehlt = feld.spalten.find((s) => s.pflicht && !(s.schluessel in zeile));
+    if (fehlt) return { fehler: `Zeile ${i + 1}: ${fehlt.bezeichnung} fehlt` };
+    zeilen.push(zeile);
+  }
+  if (zeilen.length > feld.maxZeilen) return { fehler: `höchstens ${feld.maxZeilen} Zeilen` };
+  return { wert: zeilen };
 }
 
 export async function leseDatei(modulOrdner) {
@@ -124,7 +164,7 @@ export async function speichern(modul, eingabe) {
   }
   for (const f of felder) {
     const wert = f.schluessel in neu ? neu[f.schluessel] : f.standard ?? modul.einstellungen?.[f.schluessel];
-    if (f.pflicht && !feldfehler[f.schluessel] && (wert === undefined || wert === null || wert === '')) feldfehler[f.schluessel] = 'Pflichtfeld';
+    if (f.pflicht && !feldfehler[f.schluessel] && (wert === undefined || wert === null || wert === '' || (Array.isArray(wert) && !wert.length))) feldfehler[f.schluessel] = f.typ === 'liste' ? 'mindestens eine Zeile' : 'Pflichtfeld';
   }
   if (Object.keys(feldfehler).length) return { feldfehler };
   if (JSON.stringify(neu) !== JSON.stringify(bisher)) await schreibeAtomar(path.join(modul.ordner, DATEI), neu);
