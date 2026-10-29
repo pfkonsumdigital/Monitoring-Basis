@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoring</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header class="kopf">
+  <h1>Monitoring</h1>
+  <div class="kopf-rechts">
+    <span id="benutzer" class="leise"></span>
+    <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
+  </div>
+</header>
+<main>
+  <section class="uebersicht" aria-label="Zusammenfassung">
+    <div class="zaehler" data-status="ok"><span id="anzahl-ok">–</span>OK</div>
+    <div class="zaehler" data-status="warnung"><span id="anzahl-warnung">–</span>Warnung</div>
+    <div class="zaehler" data-status="fehler"><span id="anzahl-fehler">–</span>Fehler</div>
+    <p id="stand" class="leise"></p>
+  </section>
+  <p id="verbindung" class="meldung" role="alert" hidden></p>
+  <section id="kacheln" class="kacheln" aria-live="polite"></section>
+  <p id="leer" class="leer" hidden>Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an und starte die Basis neu.</p>
+</main>
+<dialog id="details">
+  <div class="dialog-kopf">
+    <h2 id="details-titel"></h2>
+    <button type="button" id="details-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p id="details-zusammenfassung"></p>
+  <dl id="details-messwerte" class="messwerte"></dl>
+  <ul id="details-liste" class="details-liste"></ul>
+  <pre id="details-ausgabe" hidden></pre>
+  <h3>Verlauf</h3>
+  <ol id="details-verlauf" class="verlauf"></ol>
+</dialog>
+<template id="kachel-vorlage">
+  <article class="kachel">
+    <div class="kachel-kopf">
+      <h2 class="name"></h2>
+      <span class="status"></span>
+    </div>
+    <p class="zusammenfassung"></p>
+    <p class="zeiten leise"></p>
+    <div class="aktionen">
+      <button type="button" class="pruefen">Jetzt prüfen</button>
+      <button type="button" class="zweitrangig mehr">Details</button>
+    </div>
+  </article>
+</template>
+</body>
+</html>

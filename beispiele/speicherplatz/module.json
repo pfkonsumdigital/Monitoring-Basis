@@ -1,0 +1,13 @@
+{
+  "id": "speicherplatz",
+  "name": "Freier Speicherplatz C:",
+  "typ": "plugin",
+  "einstieg": "index.js",
+  "intervall_minuten": 15,
+  "timeout_sekunden": 30,
+  "einstellungen": {
+    "pfad": "C:\\",
+    "warnung_unter_prozent": 15,
+    "fehler_unter_prozent": 5
+  }
+}

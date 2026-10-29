@@ -1,0 +1,8 @@
+node_modules/
+config.json
+config.json.backup-*
+data/
+logs/
+modules/*
+!modules/.gitkeep
+*.tmp

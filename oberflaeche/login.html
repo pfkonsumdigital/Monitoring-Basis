@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anmelden – Monitoring</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-seite">
+<main class="login-karte">
+  <h1>Monitoring</h1>
+  <p class="unterzeile">Bitte anmelden</p>
+  <p class="meldung" role="alert">{{meldung}}</p>
+  <form method="post" action="/login">
+    <label>Benutzername<input name="benutzer" autocomplete="username" required autofocus></label>
+    <label>Passwort<input name="passwort" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Anmelden</button>
+  </form>
+</main>
+</body>
+</html>

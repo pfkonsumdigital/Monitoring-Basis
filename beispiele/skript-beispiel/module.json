@@ -1,0 +1,9 @@
+{
+  "id": "skript-beispiel",
+  "name": "Beispiel: eigenes Skript",
+  "typ": "programm",
+  "befehl": "cmd.exe",
+  "argumente": ["/d", "/c", "pruefen.cmd"],
+  "intervall_minuten": 60,
+  "timeout_sekunden": 30
+}

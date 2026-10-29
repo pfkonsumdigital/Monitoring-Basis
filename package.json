@@ -1,0 +1,15 @@
+{
+  "name": "monitoring-basis",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Erweiterbare Monitoring-Basis: HTTPS-Oberfläche, Zeitplan und andockbare Module",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node basis/main.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "acme-client": "5.4.0"
+  }
+}
