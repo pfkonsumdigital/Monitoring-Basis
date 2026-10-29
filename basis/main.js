@@ -108,7 +108,8 @@ async function starten(konfig, configDatei, protokoll) {
     setTimeout(() => process.exit(NEUSTART_CODE), 300);
   };
   await updates.starten();
-  const anwendung = erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, log });
+  const intern = konfig.tls.modus === 'aus';
+  const anwendung = erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -117,7 +118,12 @@ async function starten(konfig, configDatei, protokoll) {
   planer.start();
   updates.taeglichPruefen();
   process.send?.({ typ: 'bereit', version: updates.installiert });
-  log(`Monitoring-Basis ${updates.installiert} läuft: https://${konfig.hostname}:${konfig.port}/`);
+  if (intern) {
+    log(`Monitoring-Basis ${updates.installiert} läuft: http://<IP-Adresse dieses Rechners>:${konfig.port}/`);
+    melde(log, 'warnung', 'Basis', 'Unverschlüsselt (HTTP, tls.modus "aus") – nur im internen Netz verwenden. Zugriffe von außerhalb privater Netze werden abgewiesen.');
+  } else {
+    log(`Monitoring-Basis ${updates.installiert} läuft: https://${konfig.hostname}:${konfig.port}/`);
+  }
 
   const beenden = () => {
     log('Monitoring-Basis wird beendet.');

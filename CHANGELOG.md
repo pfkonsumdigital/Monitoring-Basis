@@ -1,5 +1,27 @@
 # Änderungen
 
+## 0.4.0
+
+### Neu
+
+- **Interner Betrieb ohne Zertifikat:** `"tls": { "modus": "aus" }` startet die Basis per HTTP, erreichbar über `http://<IP>:<Port>/`. Kein Hostname, kein Zertifikat, kein Cloudflare-Token nötig.
+- In diesem Modus werden nur Anfragen aus privaten Netzen (10.x, 172.16–31.x, 192.168.x, 127.x, lokale IPv6) angenommen; andere Adressen erhalten 403 und werden einmal je Adresse im Fehlerprotokoll vermerkt.
+- Beim Start ohne Verschlüsselung steht eine Warnung im Fehlerprotokoll.
+
+### Geändert
+
+- `hostname` ist bei `tls.modus` `"aus"` optional.
+- Ohne Verschlüsselung erhält das Anmelde-Cookie kein `Secure` und es wird kein HSTS-Kopf gesendet; die Herkunftsprüfung erwartet dann `http://`.
+- Start.exe öffnet bei `tls.modus` `"aus"` `http://localhost:<Port>/` und braucht keinen `hostname`. **Start.exe ändert sich – für diese Version das Windows-ZIP neu entpacken** (ein Online-Update ersetzt Start.exe nicht).
+- `config.example.json` ist jetzt für den internen Betrieb (HTTP, Port 8080) eingestellt; die HTTPS-Varianten stehen in der README.
+- README: Hinweis, unter „Assets“ das Windows-ZIP und nicht „Source code“ zu laden; Firewall-Befehl für den Port.
+
+### Prüfung
+
+- `npm test`: 45 Tests, neu: Konfiguration mit `tls.modus` `"aus"`, HTTP-Login mit Cookie ohne `Secure` und ohne HSTS, Herkunftsprüfung mit `http://`, Erkennung interner Adressen, Abweisung externer Adressen mit einmaliger Meldung.
+- `go test` für Start.exe (Adresse und Konfiguration ohne TLS) und Windows-Build.
+- Noch auf dem Worker zu prüfen: Aufruf über `http://<IP>:8080/` von einem anderen Rechner im Netz.
+
 ## 0.3.0
 
 ### Neu

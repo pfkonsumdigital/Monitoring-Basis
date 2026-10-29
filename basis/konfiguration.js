@@ -8,17 +8,21 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) throw new BasisFehler('config.json muss ein JSON-Objekt sein.');
   const port = roh.port ?? 8443;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new BasisFehler('Ungültiger Port in config.json.');
-  if (!istText(roh.hostname)) throw new BasisFehler('hostname fehlt in config.json (z. B. monitoring.firma.de).');
   const verlauf = roh.verlauf_anzahl ?? 200;
   if (!Number.isInteger(verlauf) || verlauf < 1 || verlauf > 10000) throw new BasisFehler('verlauf_anzahl muss zwischen 1 und 10000 liegen.');
   const stunden = roh.sitzung_stunden ?? 12;
   if (typeof stunden !== 'number' || !(stunden > 0) || stunden > 720) throw new BasisFehler('sitzung_stunden muss zwischen 0 und 720 liegen.');
 
   const tls = roh.tls;
-  if (!tls || !['letsencrypt', 'dateien'].includes(tls.modus)) throw new BasisFehler('tls.modus muss "letsencrypt" oder "dateien" sein.');
+  if (!tls || !['letsencrypt', 'dateien', 'aus'].includes(tls.modus)) throw new BasisFehler('tls.modus muss "letsencrypt", "dateien" oder "aus" sein.');
+  // Ohne Verschlüsselung (nur internes Netz) wird kein Hostname gebraucht; Zugriff dann per IP und Port.
+  if (tls.modus !== 'aus' && !istText(roh.hostname)) throw new BasisFehler('hostname fehlt in config.json (z. B. monitoring.firma.de).');
+  if (roh.hostname !== undefined && !istText(roh.hostname)) throw new BasisFehler('hostname muss ein Text sein.');
   const ordner = (wert) => path.resolve(basisOrdner, wert);
   let tlsGeprueft;
-  if (tls.modus === 'dateien') {
+  if (tls.modus === 'aus') {
+    tlsGeprueft = { modus: 'aus' };
+  } else if (tls.modus === 'dateien') {
     if (!istText(tls.zertifikat) || !istText(tls.schluessel)) throw new BasisFehler('Für tls.modus "dateien" werden tls.zertifikat und tls.schluessel benötigt.');
     tlsGeprueft = { modus: 'dateien', zertifikat: ordner(tls.zertifikat), schluessel: ordner(tls.schluessel) };
   } else {
@@ -49,7 +53,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   return {
     host: istText(roh.host) ? roh.host : '0.0.0.0',
     port,
-    hostname: roh.hostname,
+    hostname: roh.hostname ?? null,
     moduleOrdner: ordner(roh.module_ordner ?? 'modules'),
     datenOrdner: ordner(roh.daten_ordner ?? 'data'),
     verlaufAnzahl: verlauf,

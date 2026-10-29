@@ -109,8 +109,10 @@ export class Zertifikatsverwaltung {
 
   datei(name) { return path.join(this.ordner, name); }
 
+  // Liefert Schlüssel und Zertifikat; bei tls.modus "aus" null (Server läuft dann per HTTP).
   async laden() {
     const tls = this.konfig.tls;
+    if (tls.modus === 'aus') return null;
     if (tls.modus === 'dateien') {
       const [key, cert] = await Promise.all([lesen(tls.schluessel), lesen(tls.zertifikat)]);
       if (!key || !cert) throw new BasisFehler('Zertifikat- oder Schlüsseldatei nicht gefunden. Pfade unter tls in config.json prüfen.');

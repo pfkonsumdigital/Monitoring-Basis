@@ -1,19 +1,5 @@
 {
-  "hostname": "monitoring.konsum-weimar.de",
-  "port": 8443,
-  "host": "0.0.0.0",
-  "module_ordner": "modules",
-  "daten_ordner": "data",
-  "verlauf_anzahl": 200,
-  "sitzung_stunden": 12,
-  "tls": {
-    "modus": "letsencrypt",
-    "email": "it@konsum-weimar.de",
-    "cloudflare_token": "HIER-CLOUDFLARE-API-TOKEN",
-    "staging": true
-  },
-  "benutzer": {},
-  "updates": {
-    "github_token": "HIER-GITHUB-TOKEN (nur Contents: Read-only)"
-  }
+  "port": 8080,
+  "tls": { "modus": "aus" },
+  "benutzer": {}
 }

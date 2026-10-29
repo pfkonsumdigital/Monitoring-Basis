@@ -1,3 +1,4 @@
+import http from 'node:http';
 import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -12,7 +13,6 @@ const DATEIEN = {
 };
 const SICHERHEIT = {
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-  'Strict-Transport-Security': 'max-age=31536000',
   'X-Content-Type-Options': 'nosniff',
   // same-origin statt no-referrer: sonst senden Browser bei Formularen "Origin: null"
   // und die Herkunftsprüfung würde jede Anmeldung ablehnen.
@@ -49,8 +49,16 @@ function koerperLesen(req, max = 10_000) {
   });
 }
 
-// Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
-const herkunftOk = (req) => !req.headers.origin || req.headers.origin === `https://${req.headers.host}`;
+// Private und lokale Adressen (IPv4 und IPv6, auch als ::ffff:a.b.c.d).
+export function istInterneAdresse(adresse) {
+  const a = String(adresse ?? '').toLowerCase().replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, '');
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(a);
+  if (v4) {
+    const [x, y] = [Number(v4[1]), Number(v4[2])];
+    return x === 10 || x === 127 || (x === 172 && y >= 16 && y <= 31) || (x === 192 && y === 168) || (x === 169 && y === 254);
+  }
+  return a === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(a) || /^fe[89ab][0-9a-f]?:/.test(a);
+}
 
 function modulAnsicht(modul, planer, speicher) {
   return {
@@ -62,7 +70,14 @@ function modulAnsicht(modul, planer, speicher) {
   };
 }
 
-export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart, sitzungMs, log = () => {} }) {
+// verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
+// und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
+export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+  const schema = verschluesselt ? 'https' : 'http';
+  const sicher = verschluesselt ? ' Secure;' : '';
+  // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
+  const herkunftOk = (req) => !req.headers.origin || req.headers.origin === `${schema}://${req.headers.host}`;
+  const abgewiesen = new Set();
   const seiteCache = new Map();
   const seite = async (name) => {
     if (!seiteCache.has(name)) seiteCache.set(name, await readFile(path.join(OEFFENTLICH, name), 'utf8'));
@@ -71,6 +86,15 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
 
   return async function verarbeiten(req, res) {
     try {
+      if (verschluesselt) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+      if (nurIntern && !istInterneAdresse(req.socket.remoteAddress)) {
+        // Jede fremde Adresse nur einmal melden, damit Scans das Protokoll nicht fluten.
+        if (abgewiesen.size < 1000 && !abgewiesen.has(req.socket.remoteAddress)) {
+          abgewiesen.add(req.socket.remoteAddress);
+          melde(log, 'warnung', 'Webserver', `Zugriff von externer Adresse ${req.socket.remoteAddress} abgewiesen (nur internes Netz erlaubt).`);
+        }
+        return senden(res, 403, 'Zugriff nur aus dem internen Netz.');
+      }
       const url = new URL(req.url, 'https://basis.invalid');
       const weg = url.pathname;
 
@@ -91,7 +115,7 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
         if (ergebnis === 'gesperrt') { melde(log, 'warnung', 'Anmeldung', `Anmeldung nach zu vielen Fehlversuchen gesperrt (Adresse ${req.socket.remoteAddress}, Benutzer ${JSON.stringify(String(felder.get('benutzer') ?? '').slice(0, 64))}).`); return weiter(res, '/login?fehler=gesperrt'); }
         if (!ergebnis) { log(`Fehlgeschlagene Anmeldung von ${req.socket.remoteAddress}.`); return weiter(res, '/login?fehler=1'); }
         log(`Anmeldung: ${felder.get('benutzer')} von ${req.socket.remoteAddress}.`);
-        return weiter(res, '/', { 'Set-Cookie': `${COOKIE}=${ergebnis}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}` });
+        return weiter(res, '/', { 'Set-Cookie': `${COOKIE}=${ergebnis}; Path=/; HttpOnly;${sicher} SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}` });
       }
 
       const token = cookieLesen(req);
@@ -104,7 +128,7 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
       if (weg === '/logout' && req.method === 'POST') {
         if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
         anmeldung.abmelden(token);
-        return weiter(res, '/login', { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0` });
+        return weiter(res, '/login', { 'Set-Cookie': `${COOKIE}=; Path=/; HttpOnly;${sicher} SameSite=Strict; Max-Age=0` });
       }
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
@@ -178,9 +202,10 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
   };
 }
 
+// Ohne tls (null) läuft der Server per HTTP.
 export function starteServer({ anwendung, tls, host, port }) {
   return new Promise((resolve, reject) => {
-    const server = https.createServer({ key: tls.key, cert: tls.cert, minVersion: 'TLSv1.2' }, anwendung);
+    const server = tls ? https.createServer({ key: tls.key, cert: tls.cert, minVersion: 'TLSv1.2' }, anwendung) : http.createServer(anwendung);
     server.headersTimeout = 15_000;
     server.requestTimeout = 30_000;
     server.once('error', reject);

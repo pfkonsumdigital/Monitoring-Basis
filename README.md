@@ -32,24 +32,29 @@ Einzige Programm-Abhängigkeit ist `acme-client` für Let's Encrypt.
 
 ## Einrichten unter Windows
 
-Aus dem neuesten GitHub-Release das Paket
-`monitoring-basis-<version>-windows-x64.zip` laden. Es bringt Start.exe, alle
+Aus dem neuesten GitHub-Release unter **Assets** das Paket
+`monitoring-basis-<version>-windows-x64.zip` laden – nicht „Source code“, das
+enthält nur den Quelltext ohne Start.exe. Es bringt Start.exe, alle
 Abhängigkeiten und eine fest eingestellte Node.js-Laufzeit (`runtime\node.exe`)
 mit. Auf dem Worker muss also nichts installiert werden.
 
 1. ZIP nach `C:\` entpacken (ergibt `C:\monitoring-basis`) oder in einen
-   anderen festen Ordner. Den gesamten Ordner behalten.
-2. In PowerShell im Ordner:
+   anderen festen Ordner, nicht auf den Desktop oder in OneDrive. Den
+   gesamten Ordner behalten.
+2. In PowerShell (als Administrator) im Ordner:
 
    ```powershell
    copy config.example.json config.json
-   notepad config.json
    .\runtime\node.exe basis\main.js --benutzer-anlegen patrick --admin
-   .\runtime\node.exe basis\main.js --zertifikat
+   netsh advfirewall firewall add rule name="Monitoring-Basis" dir=in action=allow protocol=TCP localport=8080 profile=domain,private
    ```
 
+   Die mitgelieferte `config.example.json` ist für den **internen Betrieb ohne
+   Zertifikat** eingestellt (HTTP, Port 8080, siehe „Interner Betrieb ohne
+   Zertifikat“). Für HTTPS siehe „HTTPS-Zertifikat“.
 3. **Start.exe doppelklicken.** Die Basis startet unsichtbar im Hintergrund und
-   die Seite öffnet sich im Browser.
+   die Seite öffnet sich im Browser. Von anderen Rechnern im Firmennetz:
+   `http://<IP-Adresse des Workers>:8080/`.
 
 ### Start.exe
 
@@ -81,25 +86,45 @@ node basis/main.js --benutzer-anlegen patrick --admin
 node start.js
 ```
 
-Danach im Browser `https://<hostname>:<port>/` öffnen und anmelden.
+Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
+`https://<hostname>:<port>/`) und anmelden.
 
 ### config.json
 
 | Feld | Bedeutung | Standard |
 | --- | --- | --- |
-| `hostname` | Name, unter dem die Seite erreichbar ist, z. B. `monitoring.konsum-weimar.de`. Muss zum Zertifikat passen. | – |
-| `port` | HTTPS-Port | `8443` |
+| `hostname` | Name, unter dem die Seite erreichbar ist, z. B. `monitoring.konsum-weimar.de`. Muss zum Zertifikat passen. Bei `tls.modus` `"aus"` nicht nötig. | – |
+| `port` | Port der Seite | `8443` |
 | `host` | Netzwerkadresse, auf der gelauscht wird. `0.0.0.0` bedeutet alle Netzwerkkarten. | `0.0.0.0` |
 | `module_ordner`, `daten_ordner` | Ordner, relativ zur config.json | `modules`, `data` |
 | `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `200` |
 | `sitzung_stunden` | Dauer, bis eine erneute Anmeldung nötig ist | `12` |
-| `tls` | Zertifikat, siehe unten | – |
+| `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, sonst Zertifikat, siehe unten | – |
 | `benutzer` | wird von `--benutzer-anlegen` gepflegt; `"admin": true` über `--admin` | – |
 | `updates` | optional, siehe „Updates“ | aus |
 
-`config.json` enthält Passwort-Hashes und den Cloudflare-Token. Die Datei
+`config.json` enthält Passwort-Hashes und gegebenenfalls Tokens. Die Datei
 deshalb per Windows-Dateirechten auf das Dienstkonto beschränken und niemals
 committen.
+
+## Interner Betrieb ohne Zertifikat
+
+```json
+{ "port": 8080, "tls": { "modus": "aus" }, "benutzer": {} }
+```
+
+- Die Basis läuft per **HTTP** und ist über `http://<IP-Adresse>:<port>/`
+  erreichbar. Kein Hostname, kein Zertifikat, kein Cloudflare-Token nötig.
+- **Nur internes Netz:** Anfragen von Adressen außerhalb privater Netze
+  (10.x, 172.16–31.x, 192.168.x, 127.x und lokale IPv6-Adressen) werden mit
+  „Zugriff nur aus dem internen Netz“ abgewiesen und einmal je Adresse im
+  Fehlerprotokoll vermerkt.
+- Passwort und Sitzung gehen **unverschlüsselt** durch das Firmennetz. Das ist
+  als Übergang gedacht; beim Start steht deshalb eine Warnung im Protokoll.
+  Später auf HTTPS umstellen (nächster Abschnitt).
+- In der Windows-Firewall den Port nur für Domänen- und private Netzwerke
+  freigeben (Befehl siehe „Einrichten unter Windows“) und im Router **keine**
+  Portweiterleitung einrichten.
 
 ## HTTPS-Zertifikat
 

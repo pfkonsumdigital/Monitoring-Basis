@@ -161,3 +161,14 @@ test('Konfiguration: Admin-Flag und Update-Abschnitt', () => {
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, updates: { github_token: 'T', repo: 'kaputt' } }, '/app'), /besitzer\/repo/);
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, benutzer: { a: { hash: 'x', admin: 'ja' } } }, '/app'), /admin/);
 });
+
+test('Konfiguration: tls.modus "aus" ohne Hostname und Token', () => {
+  const k = pruefeKonfiguration({ port: 8080, tls: { modus: 'aus' } }, '/app');
+  assert.deepEqual(k.tls, { modus: 'aus' });
+  assert.equal(k.hostname, null);
+  assert.equal(k.port, 8080);
+  assert.equal(pruefeKonfiguration({ hostname: 'm', tls: { modus: 'aus' } }, '/app').hostname, 'm');
+  assert.throws(() => pruefeKonfiguration({ hostname: 3, tls: { modus: 'aus' } }, '/app'), /hostname/);
+  assert.throws(() => pruefeKonfiguration({ tls: { modus: 'http' } }, '/app'), /"aus"/);
+  assert.throws(() => pruefeKonfiguration({ tls: { modus: 'letsencrypt', email: 'a@b.de', cloudflare_token: 'T' } }, '/app'), /hostname/);
+});

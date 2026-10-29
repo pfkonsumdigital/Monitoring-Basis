@@ -292,3 +292,57 @@ test('Webserver: Fehlerprotokoll und Neustart nur für Admins; 500er landen im P
     await rm(ordner, { recursive: true, force: true });
   }
 });
+
+test('Interne Adressen erkennen', async () => {
+  const { istInterneAdresse } = await import('../basis/webserver.js');
+  for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.178.20', '169.254.1.1', '::1', '::ffff:192.168.1.5', 'fd12:3456::1', 'fe80::1'])
+    assert.equal(istInterneAdresse(a), true, a);
+  for (const a of ['8.8.8.8', '172.32.0.1', '172.15.0.1', '192.169.0.1', '::ffff:8.8.8.8', '2001:db8::1', '', undefined, 'fe80', '11.0.0.1'])
+    assert.equal(istInterneAdresse(a), false, String(a));
+});
+
+test('Webserver ohne Verschlüsselung: HTTP-Login, Cookie ohne Secure, kein HSTS, nur internes Netz', async () => {
+  const http = await import('node:http');
+  const meldungen = [];
+  const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
+  const anmeldung = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const planer = { laeuft: () => false, naechster: () => null };
+  const anwendung = erstelleAnwendung({ module: [], planer, speicher: { letztes: () => null }, anmeldung, sitzungMs: 60_000, verschluesselt: false, nurIntern: true, log });
+  const server = await starteServer({ anwendung, tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `192.168.1.10:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, kopf: res.headers, text: daten }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  try {
+    const start = await hole('GET', '/');
+    assert.equal(start.status, 303);
+    assert.equal(start.kopf['strict-transport-security'], undefined);
+    const form = { 'content-type': 'application/x-www-form-urlencoded' };
+    assert.equal((await hole('POST', '/login', { ...form, origin: `https://192.168.1.10:${port}` }, 'benutzer=anna&passwort=geheim-geheim')).status, 403);
+    const ok = await hole('POST', '/login', { ...form, origin: `http://192.168.1.10:${port}` }, 'benutzer=anna&passwort=geheim-geheim');
+    assert.equal(ok.kopf.location, '/');
+    const cookie = ok.kopf['set-cookie'][0];
+    assert.match(cookie, /HttpOnly; SameSite=Strict/);
+    assert.doesNotMatch(cookie, /Secure/);
+    const status = await hole('GET', '/api/status', { cookie: cookie.split(';')[0] });
+    assert.equal(JSON.parse(status.text).benutzer, 'anna');
+  } finally {
+    server.close();
+  }
+
+  // Externe Adresse: abgewiesen und einmalig gemeldet.
+  const antwort = () => {
+    const r = { kopf: {}, status: 0, text: '', setHeader(n, w) { this.kopf[n] = w; }, writeHead(s, k) { this.status = s; Object.assign(this.kopf, k); }, end(t) { this.text = String(t ?? ''); }, headersSent: false };
+    return r;
+  };
+  for (let i = 0; i < 2; i++) {
+    const res = antwort();
+    await anwendung({ method: 'GET', url: '/login', headers: {}, socket: { remoteAddress: '::ffff:8.8.8.8' } }, res);
+    assert.equal(res.status, 403);
+    assert.match(res.text, /internen Netz/);
+  }
+  assert.equal(meldungen.filter(([s, m]) => s === 'warnung' && m.includes('8.8.8.8')).length, 1);
+});

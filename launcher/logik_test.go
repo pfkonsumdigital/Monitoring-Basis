@@ -28,6 +28,18 @@ func TestLadeKonfig(t *testing.T) {
 	if _, err := ladeKonfig(datei); err == nil {
 		t.Fatal("hostname fehlt muss Fehler sein")
 	}
+	os.WriteFile(datei, []byte(`{"port":8080,"tls":{"modus":"aus"}}`), 0o644)
+	if k, err := ladeKonfig(datei); err != nil || k.adresse() != "http://localhost:8080/" {
+		t.Fatalf("ohne TLS: %v %s", err, k.adresse())
+	}
+	os.WriteFile(datei, []byte(`{"port":80,"hostname":"m.firma.de","tls":{"modus":"aus"}}`), 0o644)
+	if k, _ := ladeKonfig(datei); k.adresse() != "http://localhost/" {
+		t.Fatalf("ohne TLS Port 80: %s", k.adresse())
+	}
+	os.WriteFile(datei, []byte(`{"tls":{"modus":"letsencrypt"}}`), 0o644)
+	if _, err := ladeKonfig(datei); err == nil {
+		t.Fatal("mit TLS ohne hostname muss Fehler sein")
+	}
 	os.WriteFile(datei, []byte(`{kaputt`), 0o644)
 	if _, err := ladeKonfig(datei); err == nil || !strings.Contains(err.Error(), "JSON") {
 		t.Fatalf("kaputtes JSON: %v", err)

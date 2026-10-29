@@ -16,9 +16,15 @@ const aufgabeName = "Monitoring-Basis"
 type konfig struct {
 	Hostname string `json:"hostname"`
 	Port     int    `json:"port"`
+	TLS      struct {
+		Modus string `json:"modus"`
+	} `json:"tls"`
 }
 
-// ladeKonfig liest hostname und port aus config.json (port Standard 8443).
+// ohneTLS: tls.modus "aus" – die Basis läuft per HTTP im internen Netz.
+func (k konfig) ohneTLS() bool { return k.TLS.Modus == "aus" }
+
+// ladeKonfig liest hostname, port und tls.modus aus config.json (port Standard 8443).
 func ladeKonfig(datei string) (konfig, error) {
 	var k konfig
 	daten, err := os.ReadFile(datei)
@@ -35,13 +41,20 @@ func ladeKonfig(datei string) (konfig, error) {
 	if k.Port < 1 || k.Port > 65535 {
 		return k, fmt.Errorf("ungültiger Port in config.json: %d", k.Port)
 	}
-	if strings.TrimSpace(k.Hostname) == "" {
+	if !k.ohneTLS() && strings.TrimSpace(k.Hostname) == "" {
 		return k, fmt.Errorf("hostname fehlt in config.json")
 	}
 	return k, nil
 }
 
 func (k konfig) adresse() string {
+	if k.ohneTLS() {
+		// Auf dem Worker selbst immer über localhost öffnen.
+		if k.Port == 80 {
+			return "http://localhost/"
+		}
+		return fmt.Sprintf("http://localhost:%d/", k.Port)
+	}
 	if k.Port == 443 {
 		return "https://" + k.Hostname + "/"
 	}
