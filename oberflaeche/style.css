@@ -113,3 +113,27 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .bestaetigen { border: 1px solid var(--warnung); background: var(--warnung-flaeche); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
 .bestaetigen p { margin: 0 0 8px; }
 #updates .aktionen { flex-wrap: wrap; margin-top: 12px; }
+
+dialog.breit { width: min(960px, calc(100vw - 32px)); }
+.filter { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
+.filter label { display: grid; gap: 2px; font-size: 0.85em; color: var(--leise); }
+.filter select { font: inherit; color: var(--text); background: var(--hintergrund); border: 1px solid var(--rand); border-radius: 6px; padding: 5px 8px; }
+.knopf-link { font-size: 15px; color: var(--text); border: 1px solid var(--rand); border-radius: 6px; padding: 6px 12px; text-decoration: none; }
+.knopf-link:focus-visible { outline: 2px solid var(--akzent); outline-offset: 2px; }
+.protokoll-liste { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.protokoll-liste li { border: 1px solid var(--rand); border-left: 4px solid var(--warnung); border-radius: 6px; padding: 6px 10px; font-size: 0.9em; }
+.protokoll-liste li[data-stufe="fehler"] { border-left-color: var(--fehler); }
+.protokoll-liste .kopfzeile { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.protokoll-liste .quelle { font-weight: 600; }
+.protokoll-liste .prot-meldung { overflow-wrap: anywhere; }
+.protokoll-liste details { margin-top: 4px; }
+.protokoll-liste summary { cursor: pointer; color: var(--leise); }
+.protokoll-liste pre { margin: 4px 0 0; }
+
+.kopf { flex-wrap: wrap; }
+.kopf-rechts { flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+@media (max-width: 600px) {
+  .kopf { padding: 10px 12px; }
+  .kopf-rechts { width: 100%; justify-content: flex-start; }
+  .kopf-rechts button { padding: 5px 10px; }
+}

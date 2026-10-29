@@ -2,6 +2,7 @@ import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { melde } from './protokoll.js';
 
 const OEFFENTLICH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'oberflaeche');
 const DATEIEN = {
@@ -61,7 +62,7 @@ function modulAnsicht(modul, planer, speicher) {
   };
 }
 
-export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, sitzungMs, log = () => {} }) {
+export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart, sitzungMs, log = () => {} }) {
   const seiteCache = new Map();
   const seite = async (name) => {
     if (!seiteCache.has(name)) seiteCache.set(name, await readFile(path.join(OEFFENTLICH, name), 'utf8'));
@@ -87,8 +88,8 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
         if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
         const felder = new URLSearchParams(await koerperLesen(req));
         const ergebnis = await anmeldung.anmelden(felder.get('benutzer') ?? '', felder.get('passwort') ?? '', req.socket.remoteAddress);
-        if (ergebnis === 'gesperrt') { log(`Anmeldung gesperrt für ${req.socket.remoteAddress}.`); return weiter(res, '/login?fehler=gesperrt'); }
-        if (!ergebnis) return weiter(res, '/login?fehler=1');
+        if (ergebnis === 'gesperrt') { melde(log, 'warnung', 'Anmeldung', `Anmeldung nach zu vielen Fehlversuchen gesperrt (Adresse ${req.socket.remoteAddress}, Benutzer ${JSON.stringify(String(felder.get('benutzer') ?? '').slice(0, 64))}).`); return weiter(res, '/login?fehler=gesperrt'); }
+        if (!ergebnis) { log(`Fehlgeschlagene Anmeldung von ${req.socket.remoteAddress}.`); return weiter(res, '/login?fehler=1'); }
         log(`Anmeldung: ${felder.get('benutzer')} von ${req.socket.remoteAddress}.`);
         return weiter(res, '/', { 'Set-Cookie': `${COOKIE}=${ergebnis}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}` });
       }
@@ -108,8 +109,32 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.map((m) => modulAnsicht(m, planer, speicher)) });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.map((m) => modulAnsicht(m, planer, speicher)) });
       }
+      if (weg === '/api/protokoll' || weg === '/api/protokoll/download' || weg === '/api/neustart') {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (weg === '/api/neustart') {
+          if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+          if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+          if (!neustart) return json(res, 409, { fehler: 'Die Basis wurde nicht über den Starter gestartet und kann sich nicht selbst neu starten.' });
+          log(`Neustart angefordert durch ${sitzung.benutzer}.`);
+          setTimeout(neustart, 200);
+          return json(res, 202, { neustart: true });
+        }
+        if (req.method !== 'GET' || !protokoll) return json(res, 404, { fehler: 'Nicht gefunden.' });
+        const stufe = ['warnung', 'fehler'].includes(url.searchParams.get('stufe')) ? url.searchParams.get('stufe') : undefined;
+        const quelle = url.searchParams.get('quelle')?.slice(0, 100) || undefined;
+        if (weg === '/api/protokoll/download') {
+          const text = protokoll.lesen({ anzahl: 10_000, stufe, quelle }).reverse()
+            .map((e) => `${e.zeit} [${e.stufe.toUpperCase()}] [${e.quelle}] ${e.meldung}${e.details ? `\n    ${e.details.replace(/\n/g, '\n    ')}` : ''}`).join('\n');
+          return senden(res, 200, text + '\n', 'text/plain; charset=utf-8', { 'Content-Disposition': 'attachment; filename="fehlerprotokoll.txt"' });
+        }
+        const anzahl = Math.min(Math.max(Number.parseInt(url.searchParams.get('anzahl') ?? '200', 10) || 200, 1), 1000);
+        const eintraege = protokoll.lesen({ anzahl, stufe, quelle });
+        const quellen = [...new Set(protokoll.lesen({ anzahl: 2000 }).map((e) => String(e.quelle).replace(/^Modul .*/, 'Modul')))].sort();
+        return json(res, 200, { eintraege, quellen });
+      }
+
       if (weg.startsWith('/api/updates')) {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
         if (!updates) return json(res, 404, { fehler: 'Updates nicht verfügbar.' });
@@ -146,7 +171,7 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
       }
       return senden(res, 404, 'Nicht gefunden.');
     } catch (fehler) {
-      log(`Fehler bei ${req.method} ${req.url}: ${fehler?.message || fehler}`);
+      melde(log, 'fehler', 'Webserver', `Interner Fehler bei ${req.method} ${new URL(req.url, 'https://x').pathname}: ${fehler?.message || fehler}`, fehler);
       if (!res.headersSent) senden(res, 500, 'Interner Fehler.');
       else res.destroy();
     }

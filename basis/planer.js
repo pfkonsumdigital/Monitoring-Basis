@@ -1,3 +1,5 @@
+import { melde } from './protokoll.js';
+
 // Startet Module nach ihrem Intervall und auf Knopfdruck. Ein Modul läuft nie doppelt.
 export class Planer {
   constructor({ module, ausfuehren, speichern, log = () => {}, jetzt = () => Date.now() }) {
@@ -47,7 +49,7 @@ export class Planer {
         await this.speichern(id, ergebnis);
         this.log(`Modul ${id}: ${ergebnis.status} – ${ergebnis.zusammenfassung}`);
       } catch (fehler) {
-        this.log(`Modul ${id}: Ergebnis konnte nicht gespeichert werden (${fehler?.code || fehler?.message || fehler}).`);
+        melde(this.log, 'fehler', `Modul ${id}`, `Ergebnis konnte nicht gespeichert werden (${fehler?.code || fehler?.message || fehler}).`, fehler);
       } finally {
         this.laufend.delete(id);
         // Nächster Lauf zählt ab Ende dieses Laufs, damit sich Läufe nie überschneiden.

@@ -4,7 +4,7 @@
 // Version, startet nach einem Update neu und schaltet automatisch auf die vorherige Version
 // zurück, wenn eine frisch installierte Version nicht hochkommt.
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,6 +29,9 @@ export async function starter({
   installOrdner, configDatei = path.join(installOrdner, 'config.json'), log, bereitMs = 60_000, pauseMs = 10_000,
   spawnImpl = spawn, signale = process,
 }) {
+  // log(text) für Infos; log.warnung/log.fehler (falls vorhanden) zusätzlich fürs Fehlerprotokoll.
+  const warnung = (text) => (log.warnung ?? log)(text);
+  const fehler = (text) => (log.fehler ?? log)(text);
   let beenden = false, kind = null;
   const stopp = () => { beenden = true; kind?.kill('SIGTERM'); };
   signale.once?.('SIGINT', stopp);
@@ -41,12 +44,12 @@ export async function starter({
 
     let bereit = false;
     const code = await new Promise((resolve) => {
-      if (!existsSync(programm)) { log(`Programm fehlt: ${programm}`); resolve(-1); return; }
+      if (!existsSync(programm)) { fehler(`Programm fehlt: ${programm}`); resolve(-1); return; }
       kind = spawnImpl(process.execPath, [programm, '--config', configDatei], {
         cwd: installOrdner, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: true,
         env: { ...process.env, MONITOR_STARTER: '1', MONITOR_INSTALL_ORDNER: installOrdner },
       });
-      const timer = stand.probe ? setTimeout(() => { if (!bereit) { log(`Neue Version meldet sich nicht innerhalb von ${bereitMs / 1000} s.`); kind.kill('SIGKILL'); } }, bereitMs) : null;
+      const timer = stand.probe ? setTimeout(() => { if (!bereit) { fehler(`Neue Version meldet sich nicht innerhalb von ${bereitMs / 1000} s.`); kind.kill('SIGKILL'); } }, bereitMs) : null;
       kind.on('message', (nachricht) => {
         if (nachricht?.typ !== 'bereit' || bereit) return;
         bereit = true;
@@ -56,7 +59,7 @@ export async function starter({
           log(`Neue Version läuft (${nachricht.version ?? stand.aktiv}).`);
         }
       });
-      kind.once('error', (fehler) => { clearTimeout(timer); log(`Start fehlgeschlagen: ${fehler.message}`); resolve(-1); });
+      kind.once('error', (f) => { clearTimeout(timer); fehler(`Start fehlgeschlagen: ${f.message}`); resolve(-1); });
       kind.once('exit', (exitcode) => { clearTimeout(timer); resolve(exitcode ?? -1); });
     });
     kind = null;
@@ -66,13 +69,13 @@ export async function starter({
     if (stand.probe && !bereit) {
       if (stand.vorher) {
         schreibeAktiv(installOrdner, { aktiv: stand.vorher, vorher: null, probe: false });
-        log(`Neue Version ${stand.aktiv} ist fehlgeschlagen (Code ${code}). Automatisch zurück auf ${stand.vorher}.`);
+        fehler(`Neue Version ${stand.aktiv} ist fehlgeschlagen (Code ${code}). Automatisch zurück auf ${stand.vorher}.`);
         continue;
       }
       schreibeAktiv(installOrdner, { ...stand, probe: false });
     }
     if (code === 0) break;
-    log(`Basis beendet mit Code ${code}. Neuer Start in ${pauseMs / 1000} s.`);
+    warnung(`Basis beendet mit Code ${code}. Neuer Start in ${pauseMs / 1000} s.`);
     await new Promise((r) => setTimeout(r, pauseMs));
   }
   signale.off?.('SIGINT', stopp);
@@ -86,10 +89,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const configDatei = configIndex > 0 ? path.resolve(process.argv[configIndex + 1]) : path.join(installOrdner, 'config.json');
   const logOrdner = path.join(path.dirname(configDatei), 'logs');
   mkdirSync(logOrdner, { recursive: true });
-  const log = (text) => {
-    const zeile = `${new Date().toISOString()} [Starter] ${text}`;
-    console.log(zeile);
-    try { appendFileSync(path.join(logOrdner, 'basis.log'), zeile + '\n'); } catch { /* Protokoll ist ergänzend */ }
+  const schreibe = (stufe, text) => {
+    const zeit = new Date().toISOString();
+    const zeile = `${zeit} ${stufe === 'info' ? '' : `[${stufe.toUpperCase()}] `}[Starter] ${text}`;
+    (stufe === 'info' ? console.log : console.error)(zeile);
+    try {
+      appendFileSync(path.join(logOrdner, 'basis.log'), zeile + '\n');
+      if (stufe !== 'info') appendFileSync(path.join(logOrdner, 'fehler.log'), JSON.stringify({ zeit, stufe, quelle: 'Starter', meldung: text }) + '\n');
+    } catch { /* Protokoll ist ergänzend */ }
   };
-  process.exitCode = await starter({ installOrdner, configDatei, log });
+  const log = (text) => schreibe('info', text);
+  log.warnung = (text) => schreibe('warnung', text);
+  log.fehler = (text) => schreibe('fehler', text);
+  // PID-Datei: Start.exe erkennt daran einen laufenden Starter und kann ihn samt Basis und Modulen beenden.
+  const pidDatei = path.join(installOrdner, 'starter.pid');
+  writeFileSync(pidDatei, String(process.pid));
+  try {
+    process.exitCode = await starter({ installOrdner, configDatei, log });
+  } finally {
+    rmSync(pidDatei, { force: true });
+  }
 }

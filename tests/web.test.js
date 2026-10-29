@@ -245,3 +245,50 @@ test('Webserver: Updates nur für Admins und nur mit Schutzkopf', async () => {
     server.close();
   }
 });
+
+test('Webserver: Fehlerprotokoll und Neustart nur für Admins; 500er landen im Protokoll', async () => {
+  const { Protokoll } = await import('../basis/protokoll.js');
+  const { mkdtemp: mkd } = await import('node:fs/promises');
+  const ordner = await mkd(path.join(tmpdir(), 'mb-webprot-'));
+  const tls = await testZertifikat();
+  const protokoll = new Protokoll({ ordner, konsole: false });
+  protokoll.warnung('Modul ftp', 'zu alt');
+  protokoll.fehler('Zertifikat', 'Erneuerung fehlgeschlagen', 'Details hier');
+  let neugestartet = 0;
+  const benutzer = { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } };
+  const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
+  const kaputt = { laeuft: () => { throw new Error('Planer kaputt'); }, naechster: () => null };
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: [{ id: 'x', name: 'x' }], planer: kaputt, speicher: { letztes: () => null }, anmeldung, protokoll, neustart: () => { neugestartet++; }, sitzungMs: 60_000, log: protokoll.alsFunktion() }), tls, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const ca = tls.cert;
+  const form = { 'content-type': 'application/x-www-form-urlencoded' };
+  const sitzung = async (name) => ({ cookie: (await anfrage(port, ca, 'POST', '/login', { kopf: form, koerper: `benutzer=${name}&passwort=geheim-geheim` })).kopf['set-cookie'][0].split(';')[0] });
+  try {
+    const gast = await sitzung('gast');
+    const chef = await sitzung('chef');
+    assert.equal((await anfrage(port, ca, 'GET', '/api/protokoll', { kopf: gast })).status, 403);
+    assert.equal((await anfrage(port, ca, 'GET', '/api/protokoll/download', { kopf: gast })).status, 403);
+    assert.equal((await anfrage(port, ca, 'POST', '/api/neustart', { kopf: { ...gast, 'x-monitor-anfrage': '1' } })).status, 403);
+
+    // /api/status wirft hier absichtlich (Planer kaputt) → 500 und Eintrag im Fehlerprotokoll
+    assert.equal((await anfrage(port, ca, 'GET', '/api/status', { kopf: chef })).status, 500);
+    const daten = JSON.parse((await anfrage(port, ca, 'GET', '/api/protokoll', { kopf: chef })).text);
+    assert.deepEqual(daten.eintraege.map((e) => e.quelle), ['Webserver', 'Zertifikat', 'Modul ftp']);
+    assert.match(daten.eintraege[0].meldung, /Interner Fehler bei GET \/api\/status: Planer kaputt/);
+    assert.deepEqual(daten.quellen, ['Modul', 'Webserver', 'Zertifikat']);
+    const nurWarnung = JSON.parse((await anfrage(port, ca, 'GET', '/api/protokoll?stufe=warnung', { kopf: chef })).text);
+    assert.deepEqual(nurWarnung.eintraege.map((e) => e.meldung), ['zu alt']);
+    const download = await anfrage(port, ca, 'GET', '/api/protokoll/download?quelle=Zertifikat', { kopf: chef });
+    assert.match(download.kopf['content-disposition'], /fehlerprotokoll\.txt/);
+    assert.match(download.text, /\[FEHLER\] \[Zertifikat\] Erneuerung fehlgeschlagen\n    Details hier/);
+    assert.doesNotMatch(download.text, /Modul ftp/);
+
+    assert.equal((await anfrage(port, ca, 'POST', '/api/neustart', { kopf: chef })).status, 403, 'ohne Schutzkopf');
+    assert.equal((await anfrage(port, ca, 'POST', '/api/neustart', { kopf: { ...chef, 'x-monitor-anfrage': '1' } })).status, 202);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(neugestartet, 1);
+  } finally {
+    server.close();
+    await rm(ordner, { recursive: true, force: true });
+  }
+});

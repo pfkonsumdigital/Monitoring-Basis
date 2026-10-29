@@ -11,12 +11,14 @@
   welche Fehler behoben wurden. Relevante Prüfungen im Committext nennen.
 - `CHANGELOG.md` bei jedem Update ergänzen. Neue Funktionen, Änderungen und
   Fehlerbehebungen klar unterscheiden; die Benutzerdokumentation aktuell halten.
-- Bei Programmänderungen `npm test` ausführen.
+- Bei Programmänderungen `npm test` ausführen, bei Änderungen in `launcher/`
+  zusätzlich `go test ./...` und einen Windows-Build (`GOOS=windows`).
 - Eine neue Version wird erst durch einen Tag `vX.Y.Z` als Update angeboten.
   Vorher Version in `package.json`/`package-lock.json` und einen passenden
   Abschnitt `## X.Y.Z` in `CHANGELOG.md` anlegen. Tags nur nach ausdrücklicher
   Anweisung setzen.
-- `start.js` wird durch Online-Updates nicht ersetzt. Änderungen daran müssen
+- `start.js`, `Start.exe` (Quellcode in `launcher/`, Go) und `runtime\node.exe`
+  werden durch Online-Updates nicht ersetzt. Änderungen daran müssen
   mit älteren und neueren Versionen der Basis zusammenarbeiten und erfordern
   eine manuelle Übernahme auf dem Worker (in CHANGELOG/README vermerken).
 - Zugangsdaten, `config.json`, `data/`, `logs/` und eigene Module unter

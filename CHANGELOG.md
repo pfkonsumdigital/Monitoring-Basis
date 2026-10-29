@@ -1,5 +1,35 @@
 # Änderungen
 
+## 0.3.0
+
+### Neu
+
+- **Start.exe** für Windows: Doppelklick startet die Basis unsichtbar im Hintergrund und öffnet die Seite im Browser; läuft sie schon, öffnet sich nur der Browser. Fehler erscheinen als Meldungsfenster mit den letzten Protokolleinträgen.
+- `Start.exe --autostart` / `--kein-autostart`: automatischer Start beim Hochfahren über den Aufgabenplaner (SYSTEM, ohne Zeitlimit, mit Wiederholung bei Fehlern).
+- `Start.exe --neustart` und `--stop`: beenden Starter, Basis und alle laufenden Module (Prozessbaum) und starten bei Bedarf neu.
+- **Windows-Paket** `monitoring-basis-<version>-windows-x64.zip` im Release: Start.exe, fest eingestellte Node.js-Laufzeit 22.23.4 (Prüfsumme kontrolliert) und Programm mit allen Abhängigkeiten. Auf dem Worker ist keine Installation nötig.
+- **Fehlerprotokoll**: Stufen Info/Warnung/Fehler mit Quelle; `logs\fehler.log` mit Details; Erfassung von Modulfehlern, Serverfehlern, Zertifikats- und Update-Fehlern, Anmeldesperren, Abstürzen der Basis, Rückfällen des Starters und Fehlern von Start.exe. Je Datei höchstens 5 MB, fünf ältere Dateien werden aufbewahrt.
+- Ansicht **„Protokoll“** für Admins mit Filter nach Stufe und Quelle, aufklappbaren Details und Download.
+- Knopf **„Neu starten“** für Admins: startet Basis und alle Module neu; laufende Prüfungen werden sauber abgebrochen.
+
+### Geändert
+
+- Geheimnisse (Passwort-Hashes, GitHub- und Cloudflare-Token, typische Token-Formate) werden aus Protokollen und gespeicherten Modulergebnissen entfernt.
+- `start.js` schreibt `starter.pid` und meldet Rückfälle und Abstürze ins Fehlerprotokoll. Wie in AGENTS.md beschrieben, kommt diese Fassung nur mit dem vollständigen Windows-Paket, nicht per Online-Update.
+- Kopfzeile bricht auf schmalen Bildschirmen um.
+
+### Behoben
+
+- Nach einem Update wurde auf `/login?update=1` umgeleitet; der Hinweis „Bitte erneut anmelden“ erschien dadurch nicht. Jetzt `/login?fehler=update`.
+
+### Prüfung
+
+- `npm test`: 42 Tests, neu u. a. Protokoll-Stufen, Rotation, Geheimnisfilter, robuste Schreibfehler, Abbruch laufender Module, Protokoll- und Neustart-API nur für Admins, 500er im Protokoll.
+- `go test` für Start.exe (Konfiguration, Optionen, Aufgabenplaner-XML, UTF-16, Protokoll, PID) und Windows-Build (GUI-Programm, x64).
+- Paketbau lokal mit Platzhalter-Laufzeit; Ablehnung einer Laufzeit mit falscher Prüfsumme.
+- Gesamttest im Browser: Protokollansicht mit Filter, Details und Download, Neustart über den Knopf, Handy-Ansicht; Absturz der Basis wird vom Starter protokolliert und behoben.
+- Noch auf dem Worker zu prüfen: Start.exe (Start, Browser, Meldungsfenster), Autostart im Aufgabenplaner, `--stop`/`--neustart` unter SYSTEM.
+
 ## 0.2.0
 
 ### Neu

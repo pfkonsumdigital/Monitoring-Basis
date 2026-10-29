@@ -12,6 +12,8 @@
 <header class="kopf">
   <h1>Monitoring <span id="version" class="leise"></span></h1>
   <div class="kopf-rechts">
+    <button type="button" id="protokoll-oeffnen" class="zweitrangig" hidden>Protokoll</button>
+    <button type="button" id="neustart-oeffnen" class="zweitrangig" hidden>Neu starten</button>
     <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <span id="benutzer" class="leise"></span>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
@@ -63,6 +65,40 @@
     <button type="button" id="upd-suchen" class="zweitrangig">Nach Updates suchen</button>
     <button type="button" id="upd-installieren" hidden>Updaten</button>
     <button type="button" id="upd-zurueck" class="zweitrangig" hidden>Vorherige Version wiederherstellen</button>
+  </div>
+</dialog>
+<dialog id="protokoll" class="breit">
+  <div class="dialog-kopf">
+    <h2>Fehlerprotokoll</h2>
+    <button type="button" id="protokoll-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <div class="filter">
+    <label>Stufe
+      <select id="prot-stufe">
+        <option value="">Fehler und Warnungen</option>
+        <option value="fehler">Nur Fehler</option>
+        <option value="warnung">Nur Warnungen</option>
+      </select>
+    </label>
+    <label>Quelle
+      <select id="prot-quelle"><option value="">Alle</option></select>
+    </label>
+    <button type="button" id="prot-aktualisieren" class="zweitrangig">Aktualisieren</button>
+    <a id="prot-download" class="knopf-link" href="/api/protokoll/download" download>Herunterladen</a>
+  </div>
+  <p id="prot-leer" class="leise" hidden>Keine Einträge – alles in Ordnung.</p>
+  <ol id="prot-liste" class="protokoll-liste"></ol>
+</dialog>
+<dialog id="neustart">
+  <div class="dialog-kopf">
+    <h2>Neu starten</h2>
+    <button type="button" id="neustart-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p>Die Basis und alle Module werden neu gestartet. Gerade laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt. Danach ist eine neue Anmeldung nötig.</p>
+  <p id="neustart-meldung" class="upd-meldung" role="status"></p>
+  <div class="aktionen">
+    <button type="button" id="neustart-ja">Jetzt neu starten</button>
+    <button type="button" id="neustart-nein" class="zweitrangig">Abbrechen</button>
   </div>
 </dialog>
 <template id="kachel-vorlage">

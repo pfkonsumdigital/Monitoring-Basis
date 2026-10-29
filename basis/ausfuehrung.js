@@ -47,17 +47,26 @@ function beende(kind) {
   }
 }
 
+// Gerade laufende Modulprozesse, damit Neustart und Beenden sie mitnehmen können.
+const laufende = new Set();
+
+export function beendeLaufendeModule() {
+  for (const kind of laufende) beende(kind);
+  return laufende.size;
+}
+
 function starte(befehl, argumente, { cwd, env, timeoutMs, spawnImpl }) {
   return new Promise((resolve) => {
     let stdout = '', stderr = '', zeitUeberschritten = false;
     let kind;
     try { kind = spawnImpl(befehl, argumente, { cwd, env, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (fehler) { resolve({ startFehler: fehler }); return; }
+    laufende.add(kind);
     const timer = setTimeout(() => { zeitUeberschritten = true; beende(kind); }, timeoutMs);
     kind.stdout.on('data', (teil) => { if (stdout.length < MAX_AUSGABE) stdout += teil; });
     kind.stderr.on('data', (teil) => { if (stderr.length < MAX_AUSGABE) stderr += teil; });
-    kind.once('error', (fehler) => { clearTimeout(timer); resolve({ startFehler: fehler }); });
-    kind.once('close', (code) => { clearTimeout(timer); resolve({ code, stdout, stderr, zeitUeberschritten }); });
+    kind.once('error', (fehler) => { laufende.delete(kind); clearTimeout(timer); resolve({ startFehler: fehler }); });
+    kind.once('close', (code) => { laufende.delete(kind); clearTimeout(timer); resolve({ code, stdout, stderr, zeitUeberschritten }); });
   });
 }
 

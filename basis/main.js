@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFile, mkdir, readFile, rename, writeFile, copyFile } from 'node:fs/promises';
+import { readFile, rename, writeFile, copyFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -16,6 +16,8 @@ import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
+import { bereinige, melde, Protokoll } from './protokoll.js';
+import { beendeLaufendeModule } from './ausfuehrung.js';
 
 const APP_ORDNER = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HILFE = `Monitoring-Basis
@@ -30,13 +32,6 @@ node basis/main.js --selbsttest                  Konfiguration, Module und Progr
 
 Standard für --config: config.json im Programmordner.`;
 
-function erstelleLog(datei) {
-  return (text) => {
-    const zeile = `${new Date().toISOString()} ${text}`;
-    console.log(zeile);
-    appendFile(datei, zeile + '\n').catch(() => {});
-  };
-}
 
 // Stellt mehrere Fragen über eine einzige Eingabe; Antworten werden nicht angezeigt.
 function verdeckteFragen(fragen) {
@@ -73,14 +68,27 @@ async function benutzerAnlegen(configDatei, name, admin) {
   console.log(`Benutzer ${name}${istAdmin ? ' (Admin)' : ''} gespeichert. Eine laufende Basis übernimmt die Änderung nach einem Neustart.`);
 }
 
-async function starten(konfig, configDatei, log) {
+async function starten(konfig, configDatei, protokoll) {
+  const log = protokoll.alsFunktion();
   const module = await ladeModule(konfig.moduleOrdner);
-  for (const m of module) log(m.fehler ? `Modul ${m.name} fehlerhaft: ${m.fehler}` : `Modul ${m.id} (${m.typ}) geladen${m.aktiv ? '' : ', inaktiv'}.`);
+  for (const m of module) {
+    if (m.fehler) melde(log, 'fehler', `Modul ${m.name}`, `Modul fehlerhaft: ${m.fehler}`);
+    else log(`Modul ${m.id} (${m.typ}) geladen${m.aktiv ? '' : ', inaktiv'}.`);
+  }
   if (!Object.keys(konfig.benutzer).length) throw new BasisFehler('Es ist noch kein Benutzer angelegt. Zuerst: node basis/main.js --benutzer-anlegen <Name>');
 
   const speicher = new Ergebnisspeicher(konfig.datenOrdner, konfig.verlaufAnzahl);
   await speicher.laden(module.filter((m) => !m.fehler).map((m) => m.id));
-  const planer = new Planer({ module, ausfuehren: (m) => fuehreAus(m), speichern: (id, e) => speicher.hinzufuegen(id, e), log });
+  const planer = new Planer({
+    module, ausfuehren: (m) => fuehreAus(m), log,
+    speichern: async (id, roh) => {
+      // Geheimnisse der Basis (Tokens, Hashes) nie in gespeicherten oder angezeigten Ergebnissen.
+      const e = { ...roh, zusammenfassung: bereinige(roh.zusammenfassung, protokoll.geheimnisse), details: (roh.details ?? []).map((d) => bereinige(d, protokoll.geheimnisse)), ...(roh.fehlerausgabe ? { fehlerausgabe: bereinige(roh.fehlerausgabe, protokoll.geheimnisse) } : {}) };
+      await speicher.hinzufuegen(id, e);
+      // Auffällige Ergebnisse zusätzlich ins Fehlerprotokoll, mit Fehlerausgabe des Moduls als Details.
+      if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
+    },
+  });
   const anmeldung = new Anmeldung({ benutzer: konfig.benutzer, sitzungMs: konfig.sitzungMs });
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
@@ -89,10 +97,18 @@ async function starten(konfig, configDatei, log) {
     installOrdner: process.env.MONITOR_INSTALL_ORDNER || path.dirname(configDatei), programmOrdner: APP_ORDNER, configDatei,
     updates: konfig.updates, installiert: await versionLesen(APP_ORDNER), log,
     viaStarter: typeof process.send === 'function' && process.env.MONITOR_STARTER === '1',
-    neustart: () => { planer.stop(); server?.close(); setTimeout(() => process.exit(NEUSTART_CODE), 300); },
+    neustart: () => neustarten(),
   });
+  // Neustart der Basis samt aller Module: Zeitplan anhalten, laufende Prüfungen beenden, Starter startet neu.
+  const neustarten = () => {
+    log('Neustart der Basis und aller Module.');
+    planer.stop();
+    beendeLaufendeModule();
+    server?.close();
+    setTimeout(() => process.exit(NEUSTART_CODE), 300);
+  };
   await updates.starten();
-  const anwendung = erstelleAnwendung({ module, planer, speicher, anmeldung, updates, sitzungMs: konfig.sitzungMs, log });
+  const anwendung = erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -106,6 +122,7 @@ async function starten(konfig, configDatei, log) {
   const beenden = () => {
     log('Monitoring-Basis wird beendet.');
     planer.stop();
+    beendeLaufendeModule();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
   };
@@ -132,9 +149,18 @@ export async function main(args = process.argv.slice(2)) {
       console.log(`Selbsttest bestanden (Version ${await versionLesen(APP_ORDNER)}).`);
       return 0;
     }
-    const logOrdner = path.join(path.dirname(configDatei), 'logs');
-    await mkdir(logOrdner, { recursive: true });
-    const log = erstelleLog(path.join(logOrdner, 'basis.log'));
+    const protokoll = new Protokoll({
+      ordner: path.join(path.dirname(configDatei), 'logs'),
+      geheimnisse: [konfig.tls.cloudflareToken, konfig.updates?.githubToken, ...Object.values(konfig.benutzer).map((b) => b.hash)],
+    });
+    const log = protokoll.alsFunktion();
+    // Unerwartete Fehler festhalten. Bei einer nicht abgefangenen Ausnahme beendet sich die Basis;
+    // der Starter startet sie nach kurzer Pause neu.
+    process.on('unhandledRejection', (grund) => protokoll.fehler('Basis', `Unbehandelter Fehler: ${grund?.message ?? grund}`, grund));
+    process.on('uncaughtException', (fehler) => {
+      protokoll.fehler('Basis', `Absturz: ${fehler?.message ?? fehler}`, fehler);
+      process.exit(1);
+    });
 
     if (values['module-pruefen']) {
       const module = await ladeModule(konfig.moduleOrdner);
@@ -144,10 +170,12 @@ export async function main(args = process.argv.slice(2)) {
     }
     if (values.zertifikat) {
       if (konfig.tls.modus !== 'letsencrypt') throw new BasisFehler('--zertifikat ist nur bei tls.modus "letsencrypt" nötig.');
-      await new Zertifikatsverwaltung({ konfig, log }).erneuern();
+      try { await new Zertifikatsverwaltung({ konfig, log }).erneuern(); }
+      catch (fehler) { protokoll.fehler('Zertifikat', fehler.message, fehler instanceof BasisFehler ? undefined : fehler); throw fehler; }
       return 0;
     }
-    await starten(konfig, configDatei, log);
+    try { await starten(konfig, configDatei, protokoll); }
+    catch (fehler) { protokoll.fehler('Basis', `Start fehlgeschlagen: ${fehler.message}`, fehler instanceof BasisFehler ? undefined : fehler); throw fehler; }
     return null;
   } catch (fehler) {
     console.error(fehler instanceof BasisFehler ? fehler.message : `Unerwarteter Fehler: ${fehler?.message || fehler}`);

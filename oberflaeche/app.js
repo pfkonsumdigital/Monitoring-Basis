@@ -54,6 +54,8 @@ async function aktualisieren() {
     $('benutzer').textContent = daten.benutzer;
     $('version').textContent = daten.version ? `v${daten.version}` : '';
     $('updates-oeffnen').hidden = !daten.admin;
+    $('protokoll-oeffnen').hidden = !daten.admin;
+    $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
     const zaehler = { ok: 0, warnung: 0, fehler: 0 };
     for (const m of daten.module) {
@@ -157,21 +159,21 @@ async function updateAktion(weg, koerper) {
 }
 
 // Wartet auf den Neustart. Nach dem Neustart ist die alte Sitzung ungültig (401) – dann neu anmelden.
-async function aufNeustartWarten() {
-  updateMeldung(PHASEN.neustart);
+async function aufNeustartWarten(zeige = updateMeldung) {
+  zeige(PHASEN.neustart);
   const start = Date.now();
   while (Date.now() - start < 180_000) {
     await new Promise((r) => setTimeout(r, 2000));
     try {
-      const antwort = await fetch('/api/updates', { credentials: 'same-origin' });
-      if (antwort.status === 401) { location.href = '/login?update=1'; return; }
-      if (antwort.ok) {
-        const st = await antwort.json();
+      const antwort = await fetch('/api/status', { credentials: 'same-origin' });
+      if (antwort.status === 401) { location.href = '/login?fehler=update'; return; }
+      if (antwort.ok && zeige === updateMeldung) {
+        const st = await (await fetch('/api/updates', { credentials: 'same-origin' })).json();
         if (st.phase !== 'neustart') { updateZeigen(st); return; }
       }
     } catch { /* Server startet gerade neu */ }
   }
-  updateMeldung('Die Basis meldet sich nicht zurück. Bitte logs\\basis.log auf dem Worker prüfen.', 'fehler');
+  zeige('Die Basis meldet sich nicht zurück. Bitte logs\\basis.log auf dem Worker prüfen.', 'fehler');
 }
 
 async function updatesOeffnen() {
@@ -208,6 +210,61 @@ $('upd-ja').addEventListener('click', async () => {
 });
 $('upd-zurueck').addEventListener('click', async () => {
   if (await updateAktion('zurueck')) await aufNeustartWarten();
+});
+
+// ---- Fehlerprotokoll (nur Admins) ----
+async function protokollLaden() {
+  const parameter = new URLSearchParams();
+  if ($('prot-stufe').value) parameter.set('stufe', $('prot-stufe').value);
+  if ($('prot-quelle').value) parameter.set('quelle', $('prot-quelle').value);
+  $('prot-download').href = `/api/protokoll/download?${parameter}`;
+  const antwort = await api(`/api/protokoll?${parameter}`);
+  if (!antwort.ok) return;
+  const { eintraege, quellen } = await antwort.json();
+  const gewaehlt = $('prot-quelle').value;
+  $('prot-quelle').replaceChildren(new Option('Alle', ''), ...quellen.map((q) => new Option(q, q)));
+  $('prot-quelle').value = quellen.includes(gewaehlt) ? gewaehlt : '';
+  $('prot-leer').hidden = eintraege.length > 0;
+  $('prot-liste').replaceChildren(...eintraege.map((e) => {
+    const li = document.createElement('li');
+    li.dataset.stufe = e.stufe;
+    const kopf = document.createElement('div'); kopf.className = 'kopfzeile';
+    const zeitEl = document.createElement('span'); zeitEl.className = 'leise'; zeitEl.textContent = zeit(e.zeit);
+    const stufeEl = document.createElement('span'); stufeEl.className = 'status'; stufeEl.dataset.status = e.stufe; stufeEl.textContent = e.stufe === 'fehler' ? 'Fehler' : 'Warnung';
+    const quelleEl = document.createElement('span'); quelleEl.className = 'quelle'; quelleEl.textContent = e.quelle;
+    kopf.append(zeitEl, stufeEl, quelleEl);
+    const meldung = document.createElement('div'); meldung.className = 'prot-meldung'; meldung.textContent = e.meldung;
+    li.append(kopf, meldung);
+    if (e.details) {
+      const d = document.createElement('details');
+      const s = document.createElement('summary'); s.textContent = 'Details';
+      const pre = document.createElement('pre'); pre.textContent = e.details;
+      d.append(s, pre); li.append(d);
+    }
+    return li;
+  }));
+}
+$('protokoll-oeffnen').addEventListener('click', async () => { $('protokoll').showModal(); await protokollLaden(); });
+$('protokoll-schliessen').addEventListener('click', () => $('protokoll').close());
+$('prot-aktualisieren').addEventListener('click', protokollLaden);
+$('prot-stufe').addEventListener('change', protokollLaden);
+$('prot-quelle').addEventListener('change', protokollLaden);
+
+// ---- Neustart (nur Admins) ----
+const neustartMeldung = (text, art = '') => { $('neustart-meldung').textContent = text; $('neustart-meldung').dataset.art = art; };
+$('neustart-oeffnen').addEventListener('click', () => { neustartMeldung(''); $('neustart-ja').disabled = false; $('neustart').showModal(); });
+$('neustart-schliessen').addEventListener('click', () => $('neustart').close());
+$('neustart-nein').addEventListener('click', () => $('neustart').close());
+$('neustart-ja').addEventListener('click', async () => {
+  $('neustart-ja').disabled = true;
+  const antwort = await api('/api/neustart', { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } });
+  if (!antwort.ok) {
+    const { fehler } = await antwort.json().catch(() => ({}));
+    neustartMeldung(fehler || 'Neustart nicht möglich.', 'fehler');
+    $('neustart-ja').disabled = false;
+    return;
+  }
+  await aufNeustartWarten(neustartMeldung);
 });
 
 $('details-schliessen').addEventListener('click', () => $('details').close());

@@ -9,3 +9,5 @@ modules/*
 dist/
 aktiv.json
 versionen/
+starter.pid
+build-cache/

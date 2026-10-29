@@ -3,6 +3,7 @@ import { randomUUID, X509Certificate } from 'node:crypto';
 import path from 'node:path';
 import acme from 'acme-client';
 import { BasisFehler } from './fehler.js';
+import { melde } from './protokoll.js';
 
 const ERNEUERN_VOR_MS = 30 * 24 * 3_600_000;
 const PRUEFINTERVALL_MS = 12 * 3_600_000;
@@ -113,7 +114,7 @@ export class Zertifikatsverwaltung {
     if (tls.modus === 'dateien') {
       const [key, cert] = await Promise.all([lesen(tls.schluessel), lesen(tls.zertifikat)]);
       if (!key || !cert) throw new BasisFehler('Zertifikat- oder Schlüsseldatei nicht gefunden. Pfade unter tls in config.json prüfen.');
-      if (brauchtErneuerung(cert, this.konfig.hostname)) this.log('Hinweis: Das Zertifikat läuft in weniger als 30 Tagen ab oder passt nicht zum hostname.');
+      if (brauchtErneuerung(cert, this.konfig.hostname)) melde(this.log, 'warnung', 'Zertifikat', 'Das Zertifikat läuft in weniger als 30 Tagen ab oder passt nicht zum hostname.');
       return { key, cert };
     }
     const [key, cert] = await Promise.all([lesen(this.datei('schluessel.pem')), lesen(this.datei('zertifikat.pem'))]);
@@ -123,7 +124,7 @@ export class Zertifikatsverwaltung {
     } catch (fehler) {
       // Ein noch gültiges Zertifikat weiterverwenden, statt die Basis gar nicht zu starten.
       if (key && nochGueltig(cert, this.konfig.hostname)) {
-        this.log(`Erneuerung fehlgeschlagen (${fehler.message}); das bisherige Zertifikat wird weiterverwendet.`);
+        melde(this.log, 'warnung', 'Zertifikat', `Erneuerung fehlgeschlagen (${fehler.message}); das bisherige Zertifikat wird weiterverwendet.`);
         return { key, cert };
       }
       throw fehler;
@@ -160,7 +161,7 @@ export class Zertifikatsverwaltung {
         },
         challengeRemoveFn: async (authz, challenge, schluesselAutorisierung) => {
           const eintrag = eintraege.get(schluesselAutorisierung);
-          if (eintrag) await this.dns.txtLoeschen(eintrag).catch(() => this.log('Hinweis: TXT-Eintrag konnte nicht gelöscht werden; bitte in Cloudflare entfernen.'));
+          if (eintrag) await this.dns.txtLoeschen(eintrag).catch(() => melde(this.log, 'warnung', 'Zertifikat', 'TXT-Eintrag konnte nicht gelöscht werden; bitte in Cloudflare entfernen.'));
         },
       });
     } catch (fehler) {
@@ -184,7 +185,7 @@ export class Zertifikatsverwaltung {
         server.setSecureContext(await this.erneuern());
         this.log('Neues Zertifikat ist aktiv.');
       } catch (fehler) {
-        this.log(`Zertifikatserneuerung fehlgeschlagen: ${fehler.message}. Neuer Versuch in 12 Stunden.`);
+        melde(this.log, 'fehler', 'Zertifikat', `Zertifikatserneuerung fehlgeschlagen: ${fehler.message}. Neuer Versuch in 12 Stunden.`);
       }
     }, PRUEFINTERVALL_MS);
     timer.unref();

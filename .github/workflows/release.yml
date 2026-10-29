@@ -22,9 +22,14 @@ jobs:
       - run: npm test
       - run: npm ci --omit=dev
       - run: node scripts/paket-bauen.js
+      - name: Start.exe testen
+        working-directory: launcher
+        run: go test ./...
+      - name: Windows-Paket mit Start.exe und Node-Laufzeit bauen
+        run: node scripts/windows-paket.js
       - name: Release mit Paket und Prüfsumme anlegen
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 \
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.sha256 \
             --title "Monitoring-Basis ${GITHUB_REF_NAME#v}" --notes-file dist/notizen.md

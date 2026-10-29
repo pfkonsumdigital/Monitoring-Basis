@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { access, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BasisFehler } from './fehler.js';
+import { melde } from './protokoll.js';
 
 const MAX_PAKET = 200 * 1024 * 1024;
 const BEHALTEN = 3;
@@ -113,7 +114,7 @@ export class Updateverwaltung {
     } catch (fehler) {
       this.zustand.phase = 'fehler';
       this.zustand.fehler = fehler instanceof BasisFehler ? fehler.message : `Unerwarteter Fehler: ${fehler?.message || fehler}`;
-      this.log(`Update: ${this.zustand.fehler}`);
+      melde(this.log, 'fehler', 'Update', this.zustand.fehler, fehler instanceof BasisFehler ? undefined : fehler);
       throw fehler instanceof BasisFehler ? fehler : new BasisFehler(this.zustand.fehler);
     }
   }

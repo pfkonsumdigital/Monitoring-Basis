@@ -13,34 +13,71 @@ eigenständigen Modulen, die nur an die Basis andocken.
 
 ```
 Monitoring-Basis/
+  Start.exe      Windows-Start per Doppelklick, Autostart, Neustart, Stopp (nur im Windows-Paket)
+  runtime/       mitgelieferte Node.js-Laufzeit (nur im Windows-Paket)
   start.js       fester Starter (Neustart nach Updates, automatischer Rückfall)
+  launcher/      Quellcode von Start.exe (Go)
   basis/         Server, Zeitplan, Ausführung, Speicher, Zertifikat, Updates
   oberflaeche/   HTML, CSS, JavaScript der Weboberfläche
   modules/       eigene Module (nicht im Git)
   beispiele/     Beispielmodule zum Kopieren
   data/          Verlauf und Zertifikat (nicht im Git, automatisch angelegt)
-  logs/          basis.log (nicht im Git)
+  logs/          basis.log, fehler.log (nicht im Git)
   config.json    eigene Einstellungen (nicht im Git)
   versionen/     per Update installierte Versionen (nicht im Git)
   aktiv.json     welche Version läuft (nicht im Git)
 ```
 
-Voraussetzung: Node.js 22 oder neuer. Einzige Abhängigkeit ist `acme-client`
-für Let's Encrypt.
+Einzige Programm-Abhängigkeit ist `acme-client` für Let's Encrypt.
 
-## Einrichten
+## Einrichten unter Windows
 
-Für den Worker das Paket `monitoring-basis-<version>.tar.gz` aus dem neuesten
-GitHub-Release nach `C:\MonitoringBasis` entpacken. `node_modules` ist darin
-bereits enthalten, `npm ci` ist deshalb nicht nötig:
+Aus dem neuesten GitHub-Release das Paket
+`monitoring-basis-<version>-windows-x64.zip` laden. Es bringt Start.exe, alle
+Abhängigkeiten und eine fest eingestellte Node.js-Laufzeit (`runtime\node.exe`)
+mit. Auf dem Worker muss also nichts installiert werden.
 
-```powershell
-cd C:\MonitoringBasis
-tar -xzf monitoring-basis-0.2.0.tar.gz
-copy config.example.json config.json
-notepad config.json
+1. ZIP nach `C:\` entpacken (ergibt `C:\monitoring-basis`) oder in einen
+   anderen festen Ordner. Den gesamten Ordner behalten.
+2. In PowerShell im Ordner:
+
+   ```powershell
+   copy config.example.json config.json
+   notepad config.json
+   .\runtime\node.exe basis\main.js --benutzer-anlegen patrick --admin
+   .\runtime\node.exe basis\main.js --zertifikat
+   ```
+
+3. **Start.exe doppelklicken.** Die Basis startet unsichtbar im Hintergrund und
+   die Seite öffnet sich im Browser.
+
+### Start.exe
+
+| Aufruf | Wirkung |
+| --- | --- |
+| Doppelklick | Startet die Basis im Hintergrund (ohne Konsolenfenster) und öffnet die Seite im Browser. Läuft sie schon, wird nur der Browser geöffnet. Fehler erscheinen als Meldungsfenster mit den letzten Einträgen aus dem Fehlerprotokoll. |
+| `Start.exe --autostart` | Richtet den automatischen Start beim Hochfahren ein: Aufgabe „Monitoring-Basis“ im Aufgabenplaner, Konto SYSTEM, auch ohne angemeldeten Benutzer, ohne Zeitlimit. Fragt nach Administratorrechten. |
+| `Start.exe --kein-autostart` | Entfernt den automatischen Start wieder. |
+| `Start.exe --neustart` | Beendet Starter, Basis und alle laufenden Module und startet neu. |
+| `Start.exe --stop` | Beendet Starter, Basis und alle laufenden Module. |
+| `Start.exe --dienst` | Läuft im Vordergrund. Wird vom Aufgabenplaner genutzt. |
+
+Für die Optionen eine Verknüpfung anlegen und die Option im Feld „Ziel“
+anhängen, zum Beispiel `"C:\monitoring-basis\Start.exe" --neustart`. Ausgaben
+der Basis stehen in `logs\starter-ausgabe.log`. Läuft die Basis als Autostart
+unter SYSTEM, fragen `--stop` und `--neustart` nach Administratorrechten.
+
+Start.exe ist nicht digital signiert. Je nach Unternehmensrichtlinie muss sie
+freigegeben werden.
+
+### Ohne Windows-Paket (Entwicklung, andere Systeme)
+
+Voraussetzung ist Node.js 22 oder neuer:
+
+```sh
+npm ci
+cp config.example.json config.json
 node basis/main.js --benutzer-anlegen patrick --admin
-node basis/main.js --zertifikat
 node start.js
 ```
 
@@ -222,19 +259,47 @@ bzw. `release-assets.githubusercontent.com` (Download).
    inklusive `node_modules` und Prüfsumme und legt das Release an. Als
    Release-Notizen dient der CHANGELOG-Abschnitt.
 
-Lokal lässt sich das Paket mit `npm ci --omit=dev && node scripts/paket-bauen.js`
-nach `dist/` bauen.
+Lokal lassen sich die Pakete nach `dist/` bauen:
 
-## Dauerbetrieb unter Windows
+- Update-Paket: `npm ci --omit=dev && node scripts/paket-bauen.js`
+- Windows-Paket: zusätzlich `node scripts/windows-paket.js`. Braucht `go`, `zip` und `unzip` und lädt die Node-Laufzeit mit festgelegter Prüfsumme von nodejs.org.
 
-Im Aufgabenplaner eine Aufgabe **„Beim Start“** unter einem eigenen
-Dienstkonto anlegen, unabhängig von der Benutzeranmeldung:
+Online-Updates tauschen nur das Programm aus. `Start.exe`, `start.js` und
+`runtime\node.exe` bleiben unverändert. Neue Fassungen davon kommen nur mit
+dem vollständigen Windows-Paket.
 
-- Programm: `node.exe`
-- Argumente: `start.js`
-- Starten in: `C:\MonitoringBasis`
+## Dauerbetrieb, Neustart und Fehlerprotokoll
 
-Der Starter startet die Basis nach einem Absturz nach 10 Sekunden neu.
+**Dauerbetrieb:** `Start.exe --autostart` einmal ausführen. Der Starter
+startet die Basis nach einem Absturz nach 10 Sekunden neu.
+
+**Neustart:** Admins finden oben den Knopf **„Neu starten“**. Er startet die
+Basis und alle Module neu, laufende Prüfungen werden dabei abgebrochen. Danach
+ist eine neue Anmeldung nötig. Alternativ `Start.exe --neustart`.
+
+**Fehlerprotokoll:** Die Basis schreibt zwei Dateien in `logs\`:
+
+| Datei | Inhalt |
+| --- | --- |
+| `basis.log` | Alles (Info, Warnung, Fehler) als lesbarer Text mit Zeit, Stufe und Quelle |
+| `fehler.log` | Nur Warnungen und Fehler, mit Details (z. B. Fehlerausgabe eines Moduls oder Stacktrace) |
+
+Erfasst werden:
+
+- Module mit Status Fehler oder Warnung, Zeitüberschreitung, Startproblem oder fehlerhafter `module.json`
+- interne Serverfehler
+- Zertifikats- und Update-Fehler
+- Anmeldesperren
+- Abstürze der Basis und automatische Rückfälle des Starters
+- Fehler von Start.exe
+
+Jede Datei ist auf 5 MB begrenzt. Danach wird sie umbenannt (`.1` bis `.5`),
+ältere Dateien werden gelöscht. Passwort-Hashes, der GitHub- und der
+Cloudflare-Token sowie typische Token-Formate werden vor dem Schreiben durch
+`***` ersetzt. Das gilt auch für gespeicherte Modulergebnisse.
+
+Admins sehen das Protokoll über den Knopf **„Protokoll“**: filterbar nach
+Stufe und Quelle, mit aufklappbaren Details und einem Download als Textdatei.
 
 In der Windows-Firewall eingehend TCP auf den gewählten Port nur aus dem
 Firmennetz freigeben.
