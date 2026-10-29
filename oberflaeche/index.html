@@ -10,8 +10,9 @@
 </head>
 <body>
 <header class="kopf">
-  <h1>Monitoring</h1>
+  <h1>Monitoring <span id="version" class="leise"></span></h1>
   <div class="kopf-rechts">
+    <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <span id="benutzer" class="leise"></span>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
   </div>
@@ -38,6 +39,31 @@
   <pre id="details-ausgabe" hidden></pre>
   <h3>Verlauf</h3>
   <ol id="details-verlauf" class="verlauf"></ol>
+</dialog>
+<dialog id="updates">
+  <div class="dialog-kopf">
+    <h2>Updates</h2>
+    <button type="button" id="updates-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <dl class="messwerte">
+    <dt>Installiert</dt><dd id="upd-installiert">–</dd>
+    <dt>Verfügbar</dt><dd id="upd-verfuegbar">–</dd>
+    <dt>Zuletzt geprüft</dt><dd id="upd-geprueft">–</dd>
+  </dl>
+  <p id="upd-meldung" class="upd-meldung" role="status"></p>
+  <pre id="upd-notizen" hidden></pre>
+  <div id="upd-bestaetigen" class="bestaetigen" hidden>
+    <p>Jetzt auf Version <strong id="upd-bestaetigen-version"></strong> aktualisieren? Die Basis startet dabei neu; laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt.</p>
+    <div class="aktionen">
+      <button type="button" id="upd-ja">Ja, jetzt updaten</button>
+      <button type="button" id="upd-nein" class="zweitrangig">Abbrechen</button>
+    </div>
+  </div>
+  <div class="aktionen">
+    <button type="button" id="upd-suchen" class="zweitrangig">Nach Updates suchen</button>
+    <button type="button" id="upd-installieren" hidden>Updaten</button>
+    <button type="button" id="upd-zurueck" class="zweitrangig" hidden>Vorherige Version wiederherstellen</button>
+  </div>
 </dialog>
 <template id="kachel-vorlage">
   <article class="kachel">

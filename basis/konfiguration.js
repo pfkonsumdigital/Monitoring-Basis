@@ -32,6 +32,18 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   if (typeof benutzer !== 'object' || Array.isArray(benutzer)) throw new BasisFehler('benutzer muss ein Objekt sein.');
   for (const [name, eintrag] of Object.entries(benutzer)) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || !istText(eintrag?.hash)) throw new BasisFehler(`Ungültiger Benutzereintrag: ${name}.`);
+    if (eintrag.admin !== undefined && typeof eintrag.admin !== 'boolean') throw new BasisFehler(`benutzer.${name}.admin muss true oder false sein.`);
+  }
+
+  // Optional: Updates aus einem privaten GitHub-Repo. Ohne Angabe ist die Update-Funktion aus.
+  let updates = null;
+  if (roh.updates !== undefined) {
+    const u = roh.updates;
+    if (!u || typeof u !== 'object') throw new BasisFehler('updates muss ein Objekt sein.');
+    const repo = u.repo ?? 'pfkonsumdigital/Monitoring-Basis';
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new BasisFehler('updates.repo muss die Form "besitzer/repo" haben.');
+    if (!istText(u.github_token)) throw new BasisFehler('updates.github_token fehlt (Fine-grained Token, nur Lesezugriff „Contents“ auf das Repo).');
+    updates = { repo, githubToken: u.github_token };
   }
 
   return {
@@ -44,6 +56,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     sitzungMs: stunden * 3_600_000,
     tls: tlsGeprueft,
     benutzer,
+    updates,
   };
 }
 

@@ -197,3 +197,51 @@ test('Zertifikatsverwaltung: Ablauf mit Let\'s Encrypt (simuliert) und Wiederver
     await assert.rejects(kaputt.laden(), /rateLimited/);
   } finally { await rm(daten, { recursive: true, force: true }); }
 });
+
+test('Webserver: Updates nur für Admins und nur mit Schutzkopf', async () => {
+  const tls = await testZertifikat();
+  const aufrufe = [];
+  const updates = {
+    installiert: '0.2.0',
+    status: () => ({ eingerichtet: true, installiert: '0.2.0', phase: 'bereit', updateMoeglich: true }),
+    suchen: async () => { aufrufe.push('suchen'); return { phase: 'bereit' }; },
+    installieren: async (v) => { aufrufe.push(`installieren ${v}`); return { phase: 'neustart' }; },
+    zurueck: async () => { throw new Error('Es gibt keine vorherige Version.'); },
+  };
+  const benutzer = { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } };
+  const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
+  const planer = { laeuft: () => false, naechster: () => null };
+  const speicher = { letztes: () => null };
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: [], planer, speicher, anmeldung, updates, sitzungMs: 60_000 }), tls, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const ca = tls.cert;
+  const form = { 'content-type': 'application/x-www-form-urlencoded' };
+  const sitzung = async (name) => ({ cookie: (await anfrage(port, ca, 'POST', '/login', { kopf: form, koerper: `benutzer=${name}&passwort=geheim-geheim` })).kopf['set-cookie'][0].split(';')[0] });
+  try {
+    const gast = await sitzung('gast');
+    const chef = await sitzung('chef');
+    const gastStatus = JSON.parse((await anfrage(port, ca, 'GET', '/api/status', { kopf: gast })).text);
+    assert.equal(gastStatus.admin, false);
+    assert.equal(gastStatus.updateVerfuegbar, false);
+    assert.equal(gastStatus.version, '0.2.0');
+    assert.equal((await anfrage(port, ca, 'GET', '/api/updates', { kopf: gast })).status, 403);
+    assert.equal((await anfrage(port, ca, 'POST', '/api/updates/suchen', { kopf: { ...gast, 'x-monitor-anfrage': '1' } })).status, 403);
+
+    const chefStatus = JSON.parse((await anfrage(port, ca, 'GET', '/api/status', { kopf: chef })).text);
+    assert.equal(chefStatus.admin, true);
+    assert.equal(chefStatus.updateVerfuegbar, true);
+    assert.equal((await anfrage(port, ca, 'GET', '/api/updates', { kopf: chef })).status, 200);
+    assert.equal((await anfrage(port, ca, 'POST', '/api/updates/suchen', { kopf: chef })).status, 403, 'ohne Schutzkopf');
+    const schutz = { ...chef, 'x-monitor-anfrage': '1' };
+    assert.equal((await anfrage(port, ca, 'POST', '/api/updates/suchen', { kopf: schutz })).status, 200);
+    assert.equal((await anfrage(port, ca, 'POST', '/api/updates/installieren', { kopf: schutz, koerper: '{"version":"0.3.0"}' })).status, 202);
+    assert.equal((await anfrage(port, ca, 'POST', '/api/updates/installieren', { kopf: schutz, koerper: 'kaputt' })).status, 400);
+    const zurueck = await anfrage(port, ca, 'POST', '/api/updates/zurueck', { kopf: schutz });
+    assert.equal(zurueck.status, 409);
+    assert.match(JSON.parse(zurueck.text).fehler, /keine vorherige/);
+    assert.deepEqual(aufrufe, ['suchen', 'installieren 0.3.0']);
+    assert.match((await anfrage(port, ca, 'GET', '/login?fehler=update')).text, /neu gestartet/);
+  } finally {
+    server.close();
+  }
+});

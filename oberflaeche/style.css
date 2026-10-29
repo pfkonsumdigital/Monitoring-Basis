@@ -102,3 +102,14 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .login-karte label { display: grid; gap: 4px; font-size: 0.9em; }
 .login-karte input { font: inherit; padding: 8px 10px; border: 1px solid var(--rand); border-radius: 6px; background: var(--hintergrund); color: var(--text); }
 .login-karte button { padding: 9px; }
+
+.kopf h1 span { font-size: 0.75rem; font-weight: 400; }
+#updates-oeffnen { position: relative; }
+.hinweis-punkt { position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--warnung); border: 2px solid var(--flaeche); }
+.upd-meldung { margin: 8px 0; }
+.upd-meldung:empty { display: none; }
+.upd-meldung[data-art="fehler"] { color: var(--fehler); }
+.upd-meldung[data-art="ok"] { color: var(--ok); }
+.bestaetigen { border: 1px solid var(--warnung); background: var(--warnung-flaeche); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.bestaetigen p { margin: 0 0 8px; }
+#updates .aktionen { flex-wrap: wrap; margin-top: 12px; }

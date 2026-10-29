@@ -52,6 +52,9 @@ async function aktualisieren() {
     const daten = await (await api('/api/status')).json();
     $('verbindung').hidden = true;
     $('benutzer').textContent = daten.benutzer;
+    $('version').textContent = daten.version ? `v${daten.version}` : '';
+    $('updates-oeffnen').hidden = !daten.admin;
+    $('update-hinweis').hidden = !daten.updateVerfuegbar;
     const zaehler = { ok: 0, warnung: 0, fehler: 0 };
     for (const m of daten.module) {
       const s = m.fehler ? 'fehler' : m.letztes?.status;
@@ -113,6 +116,99 @@ function detailsOeffnen(modul) {
   detailsFuellen(modul);
   if (!$('details').open) $('details').showModal();
 }
+
+// ---- Updates (nur Admins) ----
+const PHASEN = { suche: 'Suche nach Updates …', herunterladen: 'Paket wird heruntergeladen …', pruefen: 'Prüfsumme wird kontrolliert …', entpacken: 'Paket wird entpackt …', selbsttest: 'Neue Version wird getestet …', neustart: 'Die Basis startet neu …' };
+let updateStatus = null;
+
+function updateMeldung(text, art = '') {
+  $('upd-meldung').textContent = text;
+  $('upd-meldung').dataset.art = art;
+}
+
+function updateZeigen(st) {
+  updateStatus = st;
+  $('upd-installiert').textContent = st.installiert ? `v${st.installiert}` : '–';
+  $('upd-verfuegbar').textContent = st.verfuegbar ? `v${st.verfuegbar.version}${st.verfuegbar.veroeffentlicht ? ` (${zeit(st.verfuegbar.veroeffentlicht)})` : ''}` : '–';
+  $('upd-geprueft').textContent = st.letztePruefung ? zeit(st.letztePruefung) : 'noch nicht';
+  $('upd-notizen').hidden = !(st.updateMoeglich && st.verfuegbar?.notizen);
+  $('upd-notizen').textContent = st.verfuegbar?.notizen ?? '';
+  const beschaeftigt = Boolean(PHASEN[st.phase]);
+  $('upd-suchen').disabled = beschaeftigt || !st.eingerichtet;
+  $('upd-installieren').hidden = !(st.updateMoeglich && st.viaStarter) || beschaeftigt;
+  $('upd-installieren').textContent = st.verfuegbar ? `Auf v${st.verfuegbar.version} updaten` : 'Updaten';
+  $('upd-zurueck').hidden = !(st.vorherige && st.viaStarter) || beschaeftigt;
+  $('upd-zurueck').textContent = st.vorherige ? `Zurück auf v${st.vorherige.version}` : 'Vorherige Version wiederherstellen';
+  if (!st.eingerichtet) updateMeldung('Updates sind nicht eingerichtet: In config.json fehlt der Abschnitt "updates" mit GitHub-Token.', 'fehler');
+  else if (beschaeftigt) updateMeldung(PHASEN[st.phase]);
+  else if (st.phase === 'fehler') updateMeldung(st.fehler, 'fehler');
+  else if (!st.viaStarter) updateMeldung('Die Basis läuft nicht über start.js. Updates können gesucht, aber nicht installiert werden.', 'fehler');
+  else if (st.verfuegbar && !st.updateMoeglich) updateMeldung('Die Basis ist auf dem neuesten Stand.', 'ok');
+  else if (st.updateMoeglich) updateMeldung(`Version ${st.verfuegbar.version} ist verfügbar.`);
+  else updateMeldung('');
+}
+
+async function updateAktion(weg, koerper) {
+  const antwort = await api(`/api/updates/${weg}`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: koerper ? JSON.stringify(koerper) : undefined });
+  const daten = await antwort.json().catch(() => ({}));
+  if (!antwort.ok) { if (daten.status) updateZeigen(daten.status); updateMeldung(daten.fehler || 'Aktion nicht möglich.', 'fehler'); return null; }
+  updateZeigen(daten);
+  return daten;
+}
+
+// Wartet auf den Neustart. Nach dem Neustart ist die alte Sitzung ungültig (401) – dann neu anmelden.
+async function aufNeustartWarten() {
+  updateMeldung(PHASEN.neustart);
+  const start = Date.now();
+  while (Date.now() - start < 180_000) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const antwort = await fetch('/api/updates', { credentials: 'same-origin' });
+      if (antwort.status === 401) { location.href = '/login?update=1'; return; }
+      if (antwort.ok) {
+        const st = await antwort.json();
+        if (st.phase !== 'neustart') { updateZeigen(st); return; }
+      }
+    } catch { /* Server startet gerade neu */ }
+  }
+  updateMeldung('Die Basis meldet sich nicht zurück. Bitte logs\\basis.log auf dem Worker prüfen.', 'fehler');
+}
+
+async function updatesOeffnen() {
+  $('upd-bestaetigen').hidden = true;
+  if (!$('updates').open) $('updates').showModal();
+  const antwort = await api('/api/updates');
+  if (antwort.ok) updateZeigen(await antwort.json());
+}
+
+$('updates-oeffnen').addEventListener('click', updatesOeffnen);
+$('updates-schliessen').addEventListener('click', () => $('updates').close());
+$('upd-suchen').addEventListener('click', async () => { updateMeldung(PHASEN.suche); $('upd-suchen').disabled = true; await updateAktion('suchen'); });
+$('upd-installieren').addEventListener('click', () => {
+  $('upd-bestaetigen-version').textContent = `v${updateStatus.verfuegbar.version}`;
+  $('upd-bestaetigen').hidden = false;
+  $('upd-installieren').hidden = true;
+});
+$('upd-nein').addEventListener('click', () => { $('upd-bestaetigen').hidden = true; updateZeigen(updateStatus); });
+$('upd-ja').addEventListener('click', async () => {
+  $('upd-bestaetigen').hidden = true;
+  $('upd-installieren').hidden = true;
+  updateMeldung(PHASEN.herunterladen);
+  const ergebnis = await updateAktion('installieren', { version: updateStatus.verfuegbar.version });
+  if (!ergebnis) return;
+  // Fortschritt anzeigen, bis die Basis neu startet.
+  while (true) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let st;
+    try { st = await (await fetch('/api/updates', { credentials: 'same-origin' })).json(); } catch { break; }
+    updateZeigen(st);
+    if (st.phase === 'neustart' || !PHASEN[st.phase]) break;
+  }
+  if (updateStatus.phase === 'neustart' || updateStatus.phase === 'herunterladen') await aufNeustartWarten();
+});
+$('upd-zurueck').addEventListener('click', async () => {
+  if (await updateAktion('zurueck')) await aufNeustartWarten();
+});
 
 $('details-schliessen').addEventListener('click', () => $('details').close());
 $('details').addEventListener('close', () => { offenesModul = null; });

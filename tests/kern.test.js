@@ -151,3 +151,13 @@ test('Konfiguration: Pflichtangaben und Pfade', () => {
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de' } }, '/app'), /cloudflare_token/);
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, benutzer: { 'a b': { hash: 'x' } } }, '/app'), /Benutzereintrag/);
 });
+
+test('Konfiguration: Admin-Flag und Update-Abschnitt', () => {
+  const tls = { modus: 'dateien', zertifikat: 'c.pem', schluessel: 'k.pem' };
+  const k = pruefeKonfiguration({ hostname: 'm', tls, updates: { github_token: 'T' }, benutzer: { patrick: { hash: 'x', admin: true } } }, '/app');
+  assert.deepEqual(k.updates, { repo: 'pfkonsumdigital/Monitoring-Basis', githubToken: 'T' });
+  assert.equal(pruefeKonfiguration({ hostname: 'm', tls }, '/app').updates, null);
+  assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, updates: {} }, '/app'), /github_token/);
+  assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, updates: { github_token: 'T', repo: 'kaputt' } }, '/app'), /besitzer\/repo/);
+  assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, benutzer: { a: { hash: 'x', admin: 'ja' } } }, '/app'), /admin/);
+});

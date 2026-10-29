@@ -61,7 +61,7 @@ function modulAnsicht(modul, planer, speicher) {
   };
 }
 
-export function erstelleAnwendung({ module, planer, speicher, anmeldung, sitzungMs, log = () => {} }) {
+export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, sitzungMs, log = () => {} }) {
   const seiteCache = new Map();
   const seite = async (name) => {
     if (!seiteCache.has(name)) seiteCache.set(name, await readFile(path.join(OEFFENTLICH, name), 'utf8'));
@@ -79,7 +79,7 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, sitzung
       }
 
       if (weg === '/login' && req.method === 'GET') {
-        const meldung = { '1': 'Benutzername oder Passwort falsch.', gesperrt: 'Zu viele Fehlversuche. Bitte 15 Minuten warten.' }[url.searchParams.get('fehler')] ?? '';
+        const meldung = { '1': 'Benutzername oder Passwort falsch.', gesperrt: 'Zu viele Fehlversuche. Bitte 15 Minuten warten.', update: 'Die Basis wurde neu gestartet. Bitte erneut anmelden.' }[url.searchParams.get('fehler')] ?? '';
         const html = (await seite('login.html')).replace('{{meldung}}', meldung);
         return senden(res, 200, html, 'text/html; charset=utf-8');
       }
@@ -108,8 +108,27 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, sitzung
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, serverZeit: new Date().toISOString(), module: module.map((m) => modulAnsicht(m, planer, speicher)) });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.map((m) => modulAnsicht(m, planer, speicher)) });
       }
+      if (weg.startsWith('/api/updates')) {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!updates) return json(res, 404, { fehler: 'Updates nicht verfügbar.' });
+        if (weg === '/api/updates' && req.method === 'GET') return json(res, 200, updates.status());
+        const aktion = { '/api/updates/suchen': 'suchen', '/api/updates/installieren': 'installieren', '/api/updates/zurueck': 'zurueck' }[weg];
+        if (!aktion || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let version;
+        if (aktion === 'installieren') {
+          try { ({ version } = JSON.parse(await koerperLesen(req))); } catch { return json(res, 400, { fehler: 'Version fehlt.' }); }
+        }
+        log(`Update-Aktion „${aktion}“ durch ${sitzung.benutzer}.`);
+        try {
+          return json(res, aktion === 'suchen' ? 200 : 202, await (aktion === 'installieren' ? updates.installieren(String(version)) : updates[aktion]()));
+        } catch (fehler) {
+          return json(res, 409, { fehler: fehler.message, status: updates.status() });
+        }
+      }
+
       const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen)$/.exec(weg);
       const modul = treffer && module.find((m) => m.id === treffer[1]);
       if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });

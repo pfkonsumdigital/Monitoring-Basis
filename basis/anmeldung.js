@@ -53,7 +53,7 @@ export class Anmeldung {
     }
     this.fehlversuche.delete(adresse);
     const token = randomBytes(32).toString('base64url');
-    this.sitzungen.set(token, { benutzer: name, bis: this.jetzt() + this.sitzungMs });
+    this.sitzungen.set(token, { benutzer: name, admin: eintrag.admin === true, bis: this.jetzt() + this.sitzungMs });
     return token;
   }
 

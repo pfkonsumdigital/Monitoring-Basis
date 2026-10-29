@@ -13,13 +13,16 @@ eigenständigen Modulen, die nur an die Basis andocken.
 
 ```
 Monitoring-Basis/
-  basis/         Server, Zeitplan, Ausführung, Speicher, Zertifikat (fest)
+  start.js       fester Starter (Neustart nach Updates, automatischer Rückfall)
+  basis/         Server, Zeitplan, Ausführung, Speicher, Zertifikat, Updates
   oberflaeche/   HTML, CSS, JavaScript der Weboberfläche
   modules/       eigene Module (nicht im Git)
   beispiele/     Beispielmodule zum Kopieren
   data/          Verlauf und Zertifikat (nicht im Git, automatisch angelegt)
   logs/          basis.log (nicht im Git)
   config.json    eigene Einstellungen (nicht im Git)
+  versionen/     per Update installierte Versionen (nicht im Git)
+  aktiv.json     welche Version läuft (nicht im Git)
 ```
 
 Voraussetzung: Node.js 22 oder neuer. Einzige Abhängigkeit ist `acme-client`
@@ -27,14 +30,18 @@ für Let's Encrypt.
 
 ## Einrichten
 
+Für den Worker das Paket `monitoring-basis-<version>.tar.gz` aus dem neuesten
+GitHub-Release nach `C:\MonitoringBasis` entpacken. `node_modules` ist darin
+bereits enthalten, `npm ci` ist deshalb nicht nötig:
+
 ```powershell
 cd C:\MonitoringBasis
-npm ci
+tar -xzf monitoring-basis-0.2.0.tar.gz
 copy config.example.json config.json
 notepad config.json
-node basis/main.js --benutzer-anlegen patrick
+node basis/main.js --benutzer-anlegen patrick --admin
 node basis/main.js --zertifikat
-node basis/main.js
+node start.js
 ```
 
 Danach im Browser `https://<hostname>:<port>/` öffnen und anmelden.
@@ -50,7 +57,8 @@ Danach im Browser `https://<hostname>:<port>/` öffnen und anmelden.
 | `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `200` |
 | `sitzung_stunden` | Dauer, bis eine erneute Anmeldung nötig ist | `12` |
 | `tls` | Zertifikat, siehe unten | – |
-| `benutzer` | wird von `--benutzer-anlegen` gepflegt | – |
+| `benutzer` | wird von `--benutzer-anlegen` gepflegt; `"admin": true` über `--admin` | – |
+| `updates` | optional, siehe „Updates“ | aus |
 
 `config.json` enthält Passwort-Hashes und den Cloudflare-Token. Die Datei
 deshalb per Windows-Dateirechten auf das Dienstkonto beschränken und niemals
@@ -167,15 +175,66 @@ export async function pruefen({ einstellungen, modulId, modulOrdner }) {
 `status` ist immer `ok`, `warnung` oder `fehler`. `details` ist eine Liste
 von Texten, `messwerte` enthält nur Zahlen.
 
+## Updates
+
+Admins finden oben rechts den Knopf **„Updates“**. Ein Punkt am Knopf zeigt an,
+dass die tägliche Prüfung eine neue Version gefunden hat.
+
+| Aktion | Wirkung |
+| --- | --- |
+| **Nach Updates suchen** | Fragt das neueste Release des GitHub-Repos ab und zeigt Version und Änderungen. |
+| **Auf vX.Y.Z updaten** | Installiert erst nach einer Bestätigung: Download, SHA-256-Prüfung, Entpacken nach `versionen\X.Y.Z`, Selbsttest mit der vorhandenen Konfiguration, danach Neustart. Nach dem Neustart ist eine neue Anmeldung nötig. |
+| **Zurück auf vX.Y.Z** | Schaltet auf die vorherige Version zurück und startet neu. |
+
+Es wird nie automatisch installiert. Ein Update ändert niemals `config.json`,
+`data`, `logs` oder `modules`. Kommt eine neue Version nicht innerhalb von
+60 Sekunden hoch, schaltet `start.js` **automatisch auf die vorherige Version
+zurück** und schreibt das in `logs\basis.log`. Aufbewahrt werden höchstens drei
+Versionen.
+
+Voraussetzungen:
+
+1. Die Basis läuft über `node start.js`, nicht direkt über `basis/main.js`.
+2. In GitHub unter **Settings → Developer settings → Fine-grained tokens** einen
+   Token anlegen:
+   - nur für das Repo `Monitoring-Basis`
+   - Recht **Contents: Read-only**
+   - mit Ablaufdatum
+3. Den Token in `config.json` eintragen:
+
+```json
+"updates": { "github_token": "github_pat_…" }
+```
+
+Optional lässt sich mit `"repo": "besitzer/name"` ein anderes Repo angeben.
+Standard ist `pfkonsumdigital/Monitoring-Basis`. Der Token steht vorerst im
+Klartext in `config.json`, die Datei deshalb über Windows-Dateirechte schützen.
+Eine Verschlüsselung mit Windows-DPAPI ist vorgesehen. Der Worker braucht
+ausgehend HTTPS zu `api.github.com` sowie zu `objects.githubusercontent.com`
+bzw. `release-assets.githubusercontent.com` (Download).
+
+### Neue Version veröffentlichen
+
+1. Version in `package.json` und `package-lock.json` erhöhen und einen Abschnitt
+   `## X.Y.Z` in `CHANGELOG.md` anlegen.
+2. Committen und einen Tag `vX.Y.Z` pushen.
+3. Der Workflow `.github/workflows/release.yml` testet den Stand, baut das Paket
+   inklusive `node_modules` und Prüfsumme und legt das Release an. Als
+   Release-Notizen dient der CHANGELOG-Abschnitt.
+
+Lokal lässt sich das Paket mit `npm ci --omit=dev && node scripts/paket-bauen.js`
+nach `dist/` bauen.
+
 ## Dauerbetrieb unter Windows
 
-Bis es ein Windows-Paket gibt: im Aufgabenplaner eine Aufgabe **„Beim
-Start“** unter einem eigenen Dienstkonto anlegen, unabhängig von der
-Benutzeranmeldung.
+Im Aufgabenplaner eine Aufgabe **„Beim Start“** unter einem eigenen
+Dienstkonto anlegen, unabhängig von der Benutzeranmeldung:
 
 - Programm: `node.exe`
-- Argumente: `basis\main.js`
+- Argumente: `start.js`
 - Starten in: `C:\MonitoringBasis`
+
+Der Starter startet die Basis nach einem Absturz nach 10 Sekunden neu.
 
 In der Windows-Firewall eingehend TCP auf den gewählten Port nur aus dem
 Firmennetz freigeben.

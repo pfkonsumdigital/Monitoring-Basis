@@ -12,5 +12,8 @@
     "cloudflare_token": "HIER-CLOUDFLARE-API-TOKEN",
     "staging": true
   },
-  "benutzer": {}
+  "benutzer": {},
+  "updates": {
+    "github_token": "HIER-GITHUB-TOKEN (nur Contents: Read-only)"
+  }
 }

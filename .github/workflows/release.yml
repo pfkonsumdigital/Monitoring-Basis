@@ -1,0 +1,30 @@
+name: Release bauen
+
+# Ein Tag wie v0.2.0 erzeugt ein geprüftes Update-Paket im GitHub-Release.
+# Die Monitoring-Basis auf dem Worker installiert ausschließlich solche Releases.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm ci --omit=dev
+      - run: node scripts/paket-bauen.js
+      - name: Release mit Paket und Prüfsumme anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 \
+            --title "Monitoring-Basis ${GITHUB_REF_NAME#v}" --notes-file dist/notizen.md

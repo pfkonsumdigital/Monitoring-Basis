@@ -6,3 +6,6 @@ logs/
 modules/*
 !modules/.gitkeep
 *.tmp
+dist/
+aktiv.json
+versionen/
