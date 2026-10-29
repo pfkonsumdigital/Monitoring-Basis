@@ -1,5 +1,20 @@
 # Änderungen
 
+## 0.7.1
+
+### Behoben
+
+- „Token prüfen“ und „Token speichern“ meldeten einen Token ohne das Recht „Contents: Read-only“ als in Ordnung; erst „Nach Updates suchen“ scheiterte dann mit einer unklaren Meldung. Die Prüfung liest jetzt zusätzlich die Releases – ein solcher Token wird nicht gespeichert, und die Meldung sagt genau, welches Recht in GitHub fehlt.
+
+### Geändert
+
+- Verweigert GitHub den Zugriff, unterscheidet die Meldung jetzt: Abruflimit (mit Uhrzeit, ab der es wieder geht), zu viele Anfragen (mit Wartezeit) oder fehlendes Recht des Tokens (mit GitHubs Begründung und dem nötigen Recht).
+- README: Hinweis, wie ein fehlendes Recht beim bestehenden Token ergänzt wird.
+
+### Prüfung
+
+- `npm test`: 85 Tests, neu bzw. erweitert: Token nur mit „Metadata“ wird abgelehnt und nicht gespeichert, Prüfung fragt Repo und Releases ab, Abruflimit mit Uhrzeit (Zeitzone Berlin), Wartezeit, fehlendes Recht mit GitHub-Begründung, Meldung kommt beim Suchen im Status an.
+
 ## 0.7.0
 
 ### Neu

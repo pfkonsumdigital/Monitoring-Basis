@@ -70,6 +70,20 @@ export async function leseAktiv(installOrdner) {
 }
 export const schreibeAktiv = (installOrdner, wert) => atomarSchreiben(path.join(installOrdner, 'aktiv.json'), wert);
 
+// 403/429 von GitHub: Abruflimit (mit Uhrzeit, ab wann es wieder geht) oder fehlendes Recht des Tokens.
+export async function zugriffVerweigert(antwort, jetzt = Date.now()) {
+  const kopf = (name) => antwort.headers.get(name);
+  const warten = Number(kopf('retry-after'));
+  if (Number.isFinite(warten) && warten > 0) return `GitHub meldet zu viele Anfragen. In ${Math.ceil(warten)} Sekunden erneut versuchen.`;
+  if (antwort.status === 429 || kopf('x-ratelimit-remaining') === '0') {
+    const ab = Number(kopf('x-ratelimit-reset')) * 1000;
+    const uhrzeit = ab > jetzt ? new Date(ab).toLocaleTimeString('de-DE', { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit' }) : null;
+    return `GitHub-Abruflimit erreicht. ${uhrzeit ? `Wieder möglich ab ${uhrzeit} Uhr.` : 'Später erneut versuchen.'}`;
+  }
+  const meldung = String((await antwort.json().catch(() => ({})))?.message ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
+  return `GitHub verweigert den Zugriff${meldung ? ` („${meldung}“)` : ''}. Dem Token fehlt ein Recht: In GitHub beim Token unter „Repository permissions“ „Contents: Read-only“ ergänzen – der Token bleibt dabei gleich.`;
+}
+
 export class Updateverwaltung {
   constructor({ installOrdner, programmOrdner, configDatei, updates, installiert, viaStarter, neustart, datenOrdner = null, geheimnisse = [], log = () => {}, fetchImpl = fetch, spawnImpl = spawn, jetzt = () => Date.now() }) {
     this.installOrdner = installOrdner;
@@ -140,7 +154,7 @@ export class Updateverwaltung {
       throw new BasisFehler('GitHub ist nicht erreichbar. Internetzugang, Proxy und Firewall des Workers prüfen.');
     }
     if (antwort.status === 401) throw new BasisFehler('GitHub hat den Token abgelehnt (abgelaufen oder falsch). Neuen Token im Dialog „Updates“ eintragen.');
-    if (antwort.status === 403 || antwort.status === 429) throw new BasisFehler('GitHub verweigert den Zugriff (Rechte des Tokens oder Abruflimit). Später erneut versuchen.');
+    if (antwort.status === 403 || antwort.status === 429) throw new BasisFehler(await zugriffVerweigert(antwort, this.jetzt()));
     if (antwort.status === 404) throw new BasisFehler('Kein Release gefunden – oder der Token hat keinen Lesezugriff auf das Repo.');
     if (!antwort.ok) throw new BasisFehler(`GitHub antwortet mit HTTP ${antwort.status}.`);
     return antwort;
@@ -286,9 +300,11 @@ export class Updateverwaltung {
   }
 
   // Prüft, ob der Token das Repo lesen darf, und merkt sich das Ablaufdatum (falls GitHub es meldet).
+  // Das Repo sehen reicht nicht: Für Releases braucht der Token „Contents: Read-only“ – das wird mitgeprüft.
   async tokenPruefen(zugang = this.updates) {
     if (!zugang?.githubToken) throw new BasisFehler('Kein GitHub-Token eingetragen.');
     const antwort = await this.github('', { zugang });
+    await this.github('/releases?per_page=1', { zugang });
     return { ablauf: ablaufLesen(antwort.headers.get('github-authentication-token-expiration')) };
   }
 

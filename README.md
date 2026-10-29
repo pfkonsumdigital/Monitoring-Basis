@@ -452,11 +452,18 @@ Voraussetzungen:
    access tokens → Fine-grained tokens → Generate new token** einen Token anlegen:
    - Resource owner `pfkonsumdigital`
    - *Only select repositories*: `Monitoring-Basis` (später auch die Modul-Repos)
-   - Recht **Contents: Read-only**
+   - Recht **Contents: Read-only** (unter „Repository permissions“; „Metadata“
+     kommt automatisch dazu, weitere Rechte sind nicht nötig)
    - mit Ablaufdatum
 3. Den Token in der Oberfläche eintragen: **„Updates“ → GitHub-Zugang → Token
-   speichern**. Die Basis prüft ihn vorher bei GitHub (abgelehnte Tokens werden
-   nicht gespeichert) und braucht keinen Neustart.
+   speichern**. Die Basis prüft vorher bei GitHub, ob der Token das Repo **und
+   dessen Releases** lesen darf (abgelehnte Tokens werden nicht gespeichert),
+   und braucht keinen Neustart.
+
+Meldet die Basis „Dem Token fehlt ein Recht“, beim Token in GitHub auf
+**Edit** klicken und bei „Repository permissions“ **Contents: Read-only**
+ergänzen – der Token bleibt dabei gleich und muss nicht neu eingetragen
+werden. „GitHub-Abruflimit erreicht“ nennt die Uhrzeit, ab der es wieder geht.
 
 Die Oberfläche zeigt, ob ein Token gesetzt ist, woher er kommt und bis wann er
 gilt. 14 Tage vor Ablauf steht täglich eine Warnung im Fehlerprotokoll. Der

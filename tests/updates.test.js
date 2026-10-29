@@ -181,7 +181,9 @@ test('GitHub-Token in der Oberfläche: prüfen, speichern, Vorrang vor config.js
     const token = opt.headers.Authorization.replace('Bearer ', '');
     gesehen.push([url, token]);
     if (token.startsWith('github_pat_falsch')) return new Response('{}', { status: 401 });
-    return new Response('{}', { status: 200, headers: { 'github-authentication-token-expiration': '2026-11-05 00:00:00 UTC' } });
+    // Token nur mit „Metadata“: Repo sichtbar, Releases nicht.
+    if (token.startsWith('github_pat_nurmeta') && url.includes('/releases')) return Response.json({ message: 'Resource not accessible by personal access token' }, { status: 403 });
+    return new Response(url.includes('/releases') ? '[]' : '{}', { status: 200, headers: { 'github-authentication-token-expiration': '2026-11-05 00:00:00 UTC' } });
   };
   const meldungen = [];
   const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
@@ -195,9 +197,11 @@ test('GitHub-Token in der Oberfläche: prüfen, speichern, Vorrang vor config.js
     await assert.rejects(ohne.tokenSpeichern('zu kurz', 'patrick'), /GitHub-Token/);
     await assert.rejects(ohne.tokenSpeichern('github_pat_falsch_1234567890abcdef', 'patrick'), /abgelehnt/);
     assert.equal(ohne.status().eingerichtet, false, 'abgelehnter Token wird nicht gespeichert');
+    await assert.rejects(ohne.tokenSpeichern('github_pat_nurmeta_1234567890abcdef', 'patrick'), /„Resource not accessible by personal access token“.*„Contents: Read-only“ ergänzen/);
+    assert.equal(ohne.status().eingerichtet, false, 'Token ohne Contents-Recht wird nicht gespeichert');
 
     const st = await ohne.tokenSpeichern('github_pat_richtig_1234567890abcdef', 'patrick');
-    assert.equal(gesehen.at(-1)[0], 'https://api.github.com/repos/pfkonsumdigital/Monitoring-Basis');
+    assert.deepEqual(gesehen.slice(-2).map(([url]) => url), ['https://api.github.com/repos/pfkonsumdigital/Monitoring-Basis', 'https://api.github.com/repos/pfkonsumdigital/Monitoring-Basis/releases?per_page=1']);
     assert.deepEqual([st.eingerichtet, st.token.quelle, st.token.ablauf, st.token.restTage, st.token.laeuftBaldAb], [true, 'oberflaeche', '2026-11-05T00:00:00.000Z', 6, true]);
     assert.doesNotMatch(JSON.stringify(st), /github_pat_richtig/, 'Token nie im Status');
     assert.ok(geheimnisse.includes('github_pat_richtig_1234567890abcdef'));
@@ -237,4 +241,24 @@ test('Speichern funktioniert auch, wenn der Datenordner noch nicht existiert (fr
   } finally {
     await weg(wurzel, { recursive: true, force: true });
   }
+});
+
+test('GitHub-Zugriff verweigert: Abruflimit mit Uhrzeit, Wartezeit oder fehlendes Recht', async () => {
+  const { zugriffVerweigert } = await import('../basis/updates.js');
+  const jetzt = Date.parse('2026-10-29T12:00:00Z');
+  const antwort = (status, kopf = {}, koerper = '{}') => new Response(koerper, { status, headers: kopf });
+  assert.equal(await zugriffVerweigert(antwort(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Date.parse('2026-10-29T12:42:00Z') / 1000) }), jetzt), 'GitHub-Abruflimit erreicht. Wieder möglich ab 13:42 Uhr.');
+  assert.equal(await zugriffVerweigert(antwort(429), jetzt), 'GitHub-Abruflimit erreicht. Später erneut versuchen.');
+  assert.equal(await zugriffVerweigert(antwort(403, { 'retry-after': '30' }), jetzt), 'GitHub meldet zu viele Anfragen. In 30 Sekunden erneut versuchen.');
+  assert.match(await zugriffVerweigert(antwort(403, {}, JSON.stringify({ message: 'Resource not accessible\nby personal access token' })), jetzt), /^GitHub verweigert den Zugriff \(„Resource not accessible by personal access token“\)\. Dem Token fehlt ein Recht: .*„Contents: Read-only“ ergänzen/);
+  assert.match(await zugriffVerweigert(antwort(403, {}, 'kein json'), jetzt), /^GitHub verweigert den Zugriff\. Dem Token fehlt/);
+
+  // Beim Suchen kommt die genaue Meldung in der Oberfläche an.
+  const ordner = await temp();
+  try {
+    const fetchImpl = async () => new Response(JSON.stringify({ message: 'Resource not accessible by personal access token' }), { status: 403 });
+    const { v } = verwaltung(ordner, { fetchImpl });
+    await assert.rejects(v.suchen(), /„Contents: Read-only“ ergänzen/);
+    assert.match(v.status().fehler, /Contents: Read-only/);
+  } finally { await rm(ordner, { recursive: true, force: true }); }
 });
