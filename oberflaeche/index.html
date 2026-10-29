@@ -12,6 +12,7 @@
 <header class="kopf">
   <h1>Monitoring <span id="version" class="leise"></span></h1>
   <div class="kopf-rechts">
+    <button type="button" id="benachrichtigung-oeffnen" class="zweitrangig" hidden>Benachrichtigung</button>
     <button type="button" id="protokoll-oeffnen" class="zweitrangig" hidden>Protokoll</button>
     <button type="button" id="neustart-oeffnen" class="zweitrangig" hidden>Neu starten</button>
     <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
@@ -66,6 +67,34 @@
     </div>
   </form>
 </dialog>
+<dialog id="benachrichtigung" class="breit">
+  <div class="dialog-kopf">
+    <h2>Benachrichtigung per Mail</h2>
+    <button type="button" id="ben-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p class="leise">Versand über Microsoft 365 (App-Registrierung). Mails kommen beim Wechsel auf Fehler, Warnung oder „Keine Meldung“, wenn ein Modul wieder OK ist, und als Erinnerung, solange ein Problem besteht. Einrichtung siehe README, Abschnitt „Benachrichtigung“.</p>
+  <form id="ben-formular" novalidate>
+    <div class="felder">
+      <div class="feld schalter"><input type="checkbox" id="ben-aktiv"><label for="ben-aktiv">Benachrichtigung aktiv</label><small class="feldfehler" id="ben-aktiv-fehler"></small></div>
+      <div class="feld"><label for="ben-tenant_id">Mandanten-ID (Tenant)</label><input id="ben-tenant_id" autocomplete="off"><small class="feldfehler" id="ben-tenant_id-fehler"></small></div>
+      <div class="feld"><label for="ben-client_id">Anwendungs-ID (Client)</label><input id="ben-client_id" autocomplete="off"><small class="feldfehler" id="ben-client_id-fehler"></small></div>
+      <div class="feld"><label for="ben-client_secret">Geheimer Clientschlüssel</label><input id="ben-client_secret" type="password" autocomplete="new-password"><small class="leise">Wird nie angezeigt. Leer lassen, um den gespeicherten zu behalten.</small><small class="feldfehler" id="ben-client_secret-fehler"></small></div>
+      <div class="feld"><label for="ben-absender">Absenderpostfach</label><input id="ben-absender" type="email" autocomplete="off" placeholder="monitoring@firma.de"><small class="feldfehler" id="ben-absender-fehler"></small></div>
+      <div class="feld"><label for="ben-empfaenger">Empfänger</label><input id="ben-empfaenger" autocomplete="off" placeholder="it@firma.de, chef@firma.de"><small class="leise">Mehrere mit Komma oder Semikolon trennen.</small><small class="feldfehler" id="ben-empfaenger-fehler"></small></div>
+      <div class="feld"><label for="ben-melden_nach_laeufen">Melden nach … fehlerhaften Läufen hintereinander</label><input id="ben-melden_nach_laeufen" type="number" min="1" max="20" step="1"><small class="leise">1 = sofort beim ersten fehlerhaften Lauf. Gilt für Fehler und Warnung; „Keine Meldung“ und fehlerhafte Module werden sofort gemeldet.</small><small class="feldfehler" id="ben-melden_nach_laeufen-fehler"></small></div>
+      <div class="feld"><label for="ben-erinnerung_stunden">Erinnerung alle … Stunden</label><input id="ben-erinnerung_stunden" type="number" min="0" max="168" step="any"><small class="leise">0 = keine Erinnerung.</small><small class="feldfehler" id="ben-erinnerung_stunden-fehler"></small></div>
+      <div class="feld"><label for="ben-link">Adresse der Oberfläche (für den Link in der Mail)</label><input id="ben-link" autocomplete="off" placeholder="http://10.0.0.5:8080/"><small class="feldfehler" id="ben-link-fehler"></small></div>
+    </div>
+    <p id="ben-meldung" class="upd-meldung" role="status"></p>
+    <div class="aktionen">
+      <button type="submit" id="ben-speichern">Speichern</button>
+      <button type="button" id="ben-test" class="zweitrangig">Testmail senden</button>
+    </div>
+  </form>
+  <h3>Zuletzt gesendet</h3>
+  <p id="ben-leer" class="leise">Noch keine Benachrichtigungen.</p>
+  <ol id="ben-verlauf" class="verlauf"></ol>
+</dialog>
 <dialog id="updates">
   <div class="dialog-kopf">
     <h2>Updates</h2>
@@ -90,6 +119,21 @@
     <button type="button" id="upd-installieren" hidden>Updaten</button>
     <button type="button" id="upd-zurueck" class="zweitrangig" hidden>Vorherige Version wiederherstellen</button>
   </div>
+  <h3>GitHub-Zugang</h3>
+  <p id="tok-status" class="leise"></p>
+  <form id="tok-formular" class="felder" novalidate>
+    <div class="feld">
+      <label for="tok-wert">GitHub-Token (Fine-grained, nur „Contents: Read-only“)</label>
+      <input id="tok-wert" type="password" autocomplete="new-password" placeholder="github_pat_…">
+      <small class="leise">Wird vor dem Speichern bei GitHub geprüft, danach nie wieder angezeigt. Anleitung in der README, Abschnitt „Updates“.</small>
+    </div>
+    <p id="tok-meldung" class="upd-meldung" role="status"></p>
+    <div class="aktionen">
+      <button type="submit" id="tok-speichern">Token speichern</button>
+      <button type="button" id="tok-pruefen" class="zweitrangig">Token prüfen</button>
+      <button type="button" id="tok-entfernen" class="zweitrangig" hidden>Token entfernen</button>
+    </div>
+  </form>
 </dialog>
 <dialog id="protokoll" class="breit">
   <div class="dialog-kopf">

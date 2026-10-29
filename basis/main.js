@@ -13,6 +13,7 @@ import { fuehreAus } from './ausfuehrung.js';
 import { Ergebnisspeicher } from './speicher.js';
 import { Planer } from './planer.js';
 import { Modulverwaltung } from './modulverwaltung.js';
+import { Benachrichtigung } from './benachrichtigung.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
@@ -82,8 +83,11 @@ async function starten(konfig, configDatei, protokoll) {
     if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
   };
   const planer = new Planer({ ausfuehren: (m) => fuehreAus(m), speichern: uebernehmen, log });
+  const benachrichtigung = new Benachrichtigung({ datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, log });
+  await benachrichtigung.laden();
   const module = new Modulverwaltung({
     moduleOrdner: konfig.moduleOrdner, datenOrdner: konfig.datenOrdner, speicher, planer, uebernehmen,
+    nachTakt: (ansichten) => benachrichtigung.pruefen(ansichten),
     geheimnisse: protokoll.geheimnisse, log,
   });
   await module.start();
@@ -94,6 +98,7 @@ async function starten(konfig, configDatei, protokoll) {
   const updates = new Updateverwaltung({
     installOrdner: process.env.MONITOR_INSTALL_ORDNER || path.dirname(configDatei), programmOrdner: APP_ORDNER, configDatei,
     updates: konfig.updates, installiert: await versionLesen(APP_ORDNER), log,
+    datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse,
     viaStarter: typeof process.send === 'function' && process.env.MONITOR_STARTER === '1',
     neustart: () => neustarten(),
   });
@@ -108,7 +113,7 @@ async function starten(konfig, configDatei, protokoll) {
   };
   await updates.starten();
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

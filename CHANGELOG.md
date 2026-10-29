@@ -1,5 +1,29 @@
 # Änderungen
 
+## 0.6.0
+
+### Neu
+
+- **Benachrichtigung per Mail** über Microsoft 365 (Graph, App-Registrierung mit Clientschlüssel; läuft ohne Anmeldung, auch unter SYSTEM). Keine zusätzliche Abhängigkeit.
+- Mails beim Wechsel auf Fehler, Warnung oder „Keine Meldung“, bei „Wieder OK“ und als Erinnerung, solange ein Problem besteht (Abstand einstellbar, Standard 4 h, 0 = aus).
+- **Melden nach … Läufen** einstellbar (Standard 1 = sofort). „Keine Meldung“ und fehlerhafte Module werden immer sofort gemeldet.
+- Admin-Dialog „Benachrichtigung“: Zugangsdaten, Absender, eine Empfängerliste für alles, Link zur Oberfläche, Testmail, Liste der letzten 20 Benachrichtigungen mit Ergebnis.
+- Gemeldeter Zustand je Modul wird gespeichert – kein Doppelversand nach Neustart. Fehlgeschlagener Versand wird protokolliert und alle 5 Minuten wiederholt.
+- README: Einrichtung mit Entra und RBAC for Applications (Senderecht nur für ein Postfach).
+- **GitHub-Token in der Oberfläche eintragen:** Dialog „Updates“ → GitHub-Zugang mit „Token speichern“, „Token prüfen“ und „Token entfernen“. Der Token wird vor dem Speichern bei GitHub geprüft, gilt ohne Neustart, wird nie wieder angezeigt und liegt in `data/github.json`. Ablaufdatum wird angezeigt; 14 Tage vorher täglich eine Warnung im Fehlerprotokoll.
+
+### Geändert
+
+- `AGENTS.md`: Versionsschema 0.Y.Z (neue Funktionen → Y, Fehlerbehebungen → Z).
+- Ein in der Oberfläche gespeicherter Token hat Vorrang vor `updates.github_token` in `config.json`; der Eintrag in `config.json` funktioniert weiter.
+- Die tägliche Update-Prüfung läuft auch, wenn beim Start noch kein Token eingetragen war, und prüft dabei den Token.
+
+### Prüfung
+
+- `npm test`: 72 Tests, neu u. a. GitHub-Token (Ablaufdatum lesen, Speichern bei noch fehlendem Ordner `data`, abgelehnte Tokens nicht speichern, Vorrang vor config.json, Ablaufwarnung, entfernen, Admin-Endpunkte), Graph (Token holen und wiederverwenden, Aufbau der Mail, verständliche Fehler für Anmeldung, Berechtigung, Netzwerk), Einstellungen prüfen und Schlüssel behalten, Wechsel, kein Doppelversand, Erinnerung, Neustart, „Melden nach … Läufen“, Modulfehler sofort, Wiederholung nach Fehlschlag, aus = keine Mails, Schlüssel nie in Ansicht/Protokoll, Admin-Endpunkte.
+- Browsertests der Dialoge „Updates“ (Token) und „Benachrichtigung“ mit Pflichtfeldprüfung und Testmail (Versand ohne Verbindung zu Microsoft → verständliche Fehlermeldung).
+- Noch auf dem Worker zu prüfen: echter Versand über die App-Registrierung.
+
 ## 0.5.0
 
 ### Neu

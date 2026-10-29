@@ -62,7 +62,7 @@ export function istInterneAdresse(adresse) {
 
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -149,10 +149,39 @@ export function erstelleAnwendung({ module, anmeldung, updates, protokoll, neust
         return json(res, 200, { eintraege, quellen });
       }
 
+      if (weg === '/api/benachrichtigung' || weg === '/api/benachrichtigung/test') {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!benachrichtigung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        if (weg === '/api/benachrichtigung' && req.method === 'GET') return json(res, 200, benachrichtigung.ansicht());
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (weg === '/api/benachrichtigung/test') {
+          const ergebnis = await benachrichtigung.testmail(sitzung.benutzer);
+          return json(res, ergebnis.ok ? 200 : 409, { ...ergebnis, ...benachrichtigung.ansicht() });
+        }
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req, 20_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const ergebnis = await benachrichtigung.speichern(eingabe?.werte, sitzung.benutzer);
+        if (ergebnis.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: ergebnis.feldfehler });
+        return json(res, 200, { geaendert: ergebnis.geaendert, ...benachrichtigung.ansicht() });
+      }
+
       if (weg.startsWith('/api/updates')) {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
         if (!updates) return json(res, 404, { fehler: 'Updates nicht verfügbar.' });
         if (weg === '/api/updates' && req.method === 'GET') return json(res, 200, updates.status());
+        if (weg === '/api/updates/token' || weg === '/api/updates/token/pruefen') {
+          if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+          if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+          if (weg === '/api/updates/token/pruefen') return json(res, 200, await updates.tokenTesten());
+          let eingabe;
+          try { eingabe = JSON.parse(await koerperLesen(req)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+          try {
+            return json(res, 200, eingabe?.entfernen === true ? await updates.tokenEntfernen(sitzung.benutzer) : await updates.tokenSpeichern(eingabe?.token, sitzung.benutzer));
+          } catch (fehler) {
+            return json(res, 400, { fehler: fehler.message, status: updates.status() });
+          }
+        }
         const aktion = { '/api/updates/suchen': 'suchen', '/api/updates/installieren': 'installieren', '/api/updates/zurueck': 'zurueck' }[weg];
         if (!aktion || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });

@@ -164,3 +164,77 @@ test('Zurück auf die vorherige Version und Aufräumen alter Versionen', async (
     await assert.rejects(ohne.zurueck(), /keine vorherige Version/);
   } finally { await rm(ordner, { recursive: true, force: true }); }
 });
+
+test('Token-Ablaufdatum aus dem GitHub-Kopf lesen', async () => {
+  const { ablaufLesen } = await import('../basis/updates.js');
+  assert.equal(ablaufLesen('2026-12-31 00:00:00 UTC'), '2026-12-31T00:00:00.000Z');
+  assert.equal(ablaufLesen('2026-12-31 01:00:00 +0100'), '2026-12-31T00:00:00.000Z');
+  assert.equal(ablaufLesen(null), null);
+  assert.equal(ablaufLesen('irgendwann'), null);
+});
+
+test('GitHub-Token in der Oberfläche: prüfen, speichern, Vorrang vor config.json, Ablaufwarnung, entfernen', async () => {
+  const { mkdtemp: tmp, rm: weg, readFile: lies } = await import('node:fs/promises');
+  const ordner = await tmp(path.join(tmpdir(), 'mb-token-'));
+  const gesehen = [];
+  const fetchImpl = async (url, opt) => {
+    const token = opt.headers.Authorization.replace('Bearer ', '');
+    gesehen.push([url, token]);
+    if (token.startsWith('github_pat_falsch')) return new Response('{}', { status: 401 });
+    return new Response('{}', { status: 200, headers: { 'github-authentication-token-expiration': '2026-11-05 00:00:00 UTC' } });
+  };
+  const meldungen = [];
+  const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
+  const geheimnisse = [];
+  const neu = (updates) => new Updateverwaltung({ installOrdner: ordner, programmOrdner: ordner, configDatei: path.join(ordner, 'config.json'), updates, installiert: '0.6.0', viaStarter: true, datenOrdner: ordner, geheimnisse, log, fetchImpl, jetzt: () => Date.parse('2026-10-29T12:00:00Z') });
+  try {
+    const ohne = neu(null);
+    await ohne.tokenLaden();
+    assert.equal(ohne.status().eingerichtet, false);
+    await assert.rejects(ohne.suchen(), /im Dialog „Updates“ einen GitHub-Token/);
+    await assert.rejects(ohne.tokenSpeichern('zu kurz', 'patrick'), /GitHub-Token/);
+    await assert.rejects(ohne.tokenSpeichern('github_pat_falsch_1234567890abcdef', 'patrick'), /abgelehnt/);
+    assert.equal(ohne.status().eingerichtet, false, 'abgelehnter Token wird nicht gespeichert');
+
+    const st = await ohne.tokenSpeichern('github_pat_richtig_1234567890abcdef', 'patrick');
+    assert.equal(gesehen.at(-1)[0], 'https://api.github.com/repos/pfkonsumdigital/Monitoring-Basis');
+    assert.deepEqual([st.eingerichtet, st.token.quelle, st.token.ablauf, st.token.restTage, st.token.laeuftBaldAb], [true, 'oberflaeche', '2026-11-05T00:00:00.000Z', 6, true]);
+    assert.doesNotMatch(JSON.stringify(st), /github_pat_richtig/, 'Token nie im Status');
+    assert.ok(geheimnisse.includes('github_pat_richtig_1234567890abcdef'));
+    assert.ok(meldungen.some(([s, m]) => s === 'warnung' && /läuft in 6 Tagen ab/.test(m)));
+    assert.match(await lies(path.join(ordner, 'github.json'), 'utf8'), /github_pat_richtig/);
+
+    // Neustart mit Token in config.json: der Token aus der Oberfläche hat Vorrang.
+    const v2 = neu({ repo: 'pfkonsumdigital/Monitoring-Basis', githubToken: 'github_pat_ausconfig_1234567890' });
+    await v2.starten();
+    assert.equal(v2.status().token.quelle, 'oberflaeche');
+    assert.equal(v2.updates.githubToken, 'github_pat_richtig_1234567890abcdef');
+    const geprueft = await v2.tokenTesten();
+    assert.equal(geprueft.token.ok, true);
+    const ent = await v2.tokenEntfernen('patrick');
+    assert.equal(ent.token.quelle, 'config', 'zurück auf config.json');
+    assert.equal(v2.updates.githubToken, 'github_pat_ausconfig_1234567890');
+  } finally {
+    await weg(ordner, { recursive: true, force: true });
+  }
+});
+
+test('Speichern funktioniert auch, wenn der Datenordner noch nicht existiert (frische Installation)', async () => {
+  const { mkdtemp: tmp, rm: weg, access } = await import('node:fs/promises');
+  const { Benachrichtigung } = await import('../basis/benachrichtigung.js');
+  const { schreibeAtomar } = await import('../basis/einstellungen.js');
+  const wurzel = await tmp(path.join(tmpdir(), 'mb-frisch-'));
+  try {
+    const fetchImpl = async () => new Response('{}', { status: 200 });
+    const v = new Updateverwaltung({ installOrdner: wurzel, programmOrdner: wurzel, configDatei: path.join(wurzel, 'config.json'), updates: null, installiert: '0.6.0', viaStarter: true, datenOrdner: path.join(wurzel, 'data1'), fetchImpl });
+    await v.tokenLaden();
+    assert.equal((await v.tokenSpeichern('github_pat_gut_12345678901234567890', 'patrick')).token.quelle, 'oberflaeche');
+    const b = new Benachrichtigung({ datenOrdner: path.join(wurzel, 'data2') });
+    await b.laden();
+    assert.ok((await b.speichern({ aktiv: false, empfaenger: 'a@b.de' }, 'patrick')).geaendert);
+    await schreibeAtomar(path.join(wurzel, 'data3', 'modulzustand.json'), { x: { aktiv: false } });
+    await access(path.join(wurzel, 'data3', 'modulzustand.json'));
+  } finally {
+    await weg(wurzel, { recursive: true, force: true });
+  }
+});

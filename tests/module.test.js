@@ -286,3 +286,19 @@ test('Einstellungen: Formular mit allen Feldern meldet nur echte Änderungen', a
     await rm(ordner, { recursive: true, force: true });
   }
 });
+
+test('Modulverwaltung: nach jedem Takt werden die Ansichten weitergereicht (Benachrichtigung)', async () => {
+  const u = await aufbau({ 'ftp/module.json': { id: 'ftp', name: 'FTP', typ: 'eigenstaendig' } });
+  try {
+    const erhalten = [];
+    const v = u.neu();
+    v.nachTakt = async (ansichten) => { erhalten.push(ansichten.map((m) => m.id)); };
+    await v.takt();
+    assert.deepEqual(erhalten, [['ftp']]);
+    v.nachTakt = async () => { throw new Error('Mail kaputt'); };
+    await v.takt();
+    assert.ok(u.meldungen.some(([s, m]) => s === 'fehler' && /Mail kaputt/.test(m)), 'Fehler stoppt die Basis nicht');
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});

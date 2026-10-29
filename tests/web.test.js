@@ -421,3 +421,93 @@ test('Webserver: Moduleinstellungen und Pause nur für Admins, Passwörter verbo
     await rm(wurzel, { recursive: true, force: true });
   }
 });
+
+test('Webserver: Benachrichtigung nur für Admins, Schlüssel nie zurück, Testmail', async () => {
+  const http = await import('node:http');
+  const { Benachrichtigung } = await import('../basis/benachrichtigung.js');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-webben-'));
+  const gesendet = [];
+  const fetchImpl = async (url, opt) => {
+    if (url.includes('token')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 });
+    gesendet.push(JSON.parse(opt.body).message.subject);
+    return new Response(null, { status: 202 });
+  };
+  const benachrichtigung = new Benachrichtigung({ datenOrdner: wurzel, fetchImpl });
+  await benachrichtigung.laden();
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule([], {}, {}), benachrichtigung, anmeldung, sitzungMs: 60_000, verschluesselt: false }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, text: daten, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    assert.equal((await hole('GET', '/api/benachrichtigung', gast)).status, 403);
+    assert.equal((await hole('POST', '/api/benachrichtigung', chef, '{}')).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole('POST', '/api/benachrichtigung/test', { ...chef, ...schutz })).status, 409, 'noch nicht eingerichtet');
+    const falsch = await hole('POST', '/api/benachrichtigung', { ...chef, ...schutz }, JSON.stringify({ werte: { aktiv: true } }));
+    assert.equal(falsch.status, 400);
+    assert.ok(falsch.json().feldfehler.tenant_id);
+    const ok = await hole('POST', '/api/benachrichtigung', { ...chef, ...schutz }, JSON.stringify({ werte: { aktiv: true, tenant_id: 'firma.onmicrosoft.com', client_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', client_secret: 'Ganz~Geheim~42', absender: 'monitoring@firma.de', empfaenger: 'it@firma.de' } }));
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.json().werte.client_secret, { gesetzt: true });
+    assert.doesNotMatch(ok.text + (await hole('GET', '/api/benachrichtigung', chef)).text, /Ganz~Geheim/);
+    const test = await hole('POST', '/api/benachrichtigung/test', { ...chef, ...schutz });
+    assert.equal(test.status, 200);
+    assert.deepEqual(gesendet, ['[Monitoring] Testmail']);
+    assert.equal(test.json().verlauf[0].art, 'test');
+  } finally {
+    server.close();
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Webserver: GitHub-Token speichern, prüfen, entfernen nur für Admins mit Schutzkopf', async () => {
+  const http = await import('node:http');
+  const aufrufe = [];
+  const updates = {
+    status: () => ({ eingerichtet: true, token: { gesetzt: true, quelle: 'oberflaeche' } }),
+    tokenSpeichern: async (t, b) => { aufrufe.push(['speichern', t, b]); if (t === 'falsch') throw new Error('GitHub hat den Token abgelehnt'); return { token: { quelle: 'oberflaeche' } }; },
+    tokenTesten: async () => { aufrufe.push(['testen']); return { token: { ok: true } }; },
+    tokenEntfernen: async (b) => { aufrufe.push(['entfernen', b]); return { token: { quelle: null } }; },
+  };
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule([], {}, {}), updates, anmeldung, sitzungMs: 60_000, verschluesselt: false }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    assert.equal((await hole('/api/updates/token', { ...gast, ...schutz }, '{"token":"x"}')).status, 403);
+    assert.equal((await hole('/api/updates/token', chef, '{"token":"x"}')).status, 403, 'ohne Schutzkopf');
+    const falsch = await hole('/api/updates/token', { ...chef, ...schutz }, '{"token":"falsch"}');
+    assert.equal(falsch.status, 400);
+    assert.match(falsch.json().fehler, /abgelehnt/);
+    assert.equal((await hole('/api/updates/token', { ...chef, ...schutz }, '{"token":"github_pat_x"}')).status, 200);
+    assert.equal((await hole('/api/updates/token/pruefen', { ...chef, ...schutz })).status, 200);
+    assert.equal((await hole('/api/updates/token', { ...chef, ...schutz }, '{"entfernen":true}')).status, 200);
+    assert.deepEqual(aufrufe.map((a) => a[0]), ['speichern', 'speichern', 'testen', 'entfernen']);
+    assert.equal(aufrufe[1][2], 'chef');
+  } finally {
+    server.close();
+  }
+});

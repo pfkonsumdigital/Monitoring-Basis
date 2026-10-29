@@ -10,6 +10,7 @@ function relativ(iso) {
   if (!iso) return null;
   const sekunden = Math.round((Date.parse(iso) - Date.now()) / 1000);
   const betrag = Math.abs(sekunden);
+  if (betrag < 5) return 'gerade eben';
   const text = betrag < 60 ? `${betrag} s` : betrag < 3600 ? `${Math.round(betrag / 60)} min` : betrag < 86400 ? `${Math.round(betrag / 3600)} h` : `${Math.round(betrag / 86400)} Tagen`;
   return sekunden < 0 ? `vor ${text}` : `in ${text}`;
 }
@@ -76,6 +77,7 @@ async function aktualisieren() {
     $('version').textContent = daten.version ? `v${daten.version}` : '';
     $('updates-oeffnen').hidden = !daten.admin;
     $('protokoll-oeffnen').hidden = !daten.admin;
+    $('benachrichtigung-oeffnen').hidden = !daten.admin;
     $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
     letzteModule = daten.module;
@@ -226,6 +228,65 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
 $('einst-schliessen').addEventListener('click', () => $('einstellungen').close());
 $('einst-abbrechen').addEventListener('click', () => $('einstellungen').close());
 
+// ---- Benachrichtigung (nur Admins) ----
+const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link'];
+const benMeldung = (text, art = '') => { $('ben-meldung').textContent = text; $('ben-meldung').dataset.art = art; };
+const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail' };
+
+function benZeigen(daten) {
+  const w = daten.werte;
+  $('ben-aktiv').checked = w.aktiv;
+  for (const k of BEN_FELDER) {
+    if (k === 'client_secret') { $('ben-client_secret').value = ''; $('ben-client_secret').placeholder = w.client_secret.gesetzt ? 'gesetzt' : 'nicht gesetzt'; continue; }
+    $(`ben-${k}`).value = Array.isArray(w[k]) ? w[k].join(', ') : w[k] ?? '';
+  }
+  $('ben-leer').hidden = daten.verlauf.length > 0;
+  $('ben-verlauf').replaceChildren(...daten.verlauf.map((e) => {
+    const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.zeit)} – ${e.betreff}${e.ok ? '' : ` – nicht gesendet: ${e.fehler}`}` }));
+    li.dataset.status = !e.ok ? 'fehler' : e.art === 'wieder-ok' || e.art === 'test' ? 'ok' : e.art === 'warnung' ? 'warnung' : 'fehler';
+    li.title = BEN_ART[e.art] ?? e.art;
+    return li;
+  }));
+}
+
+function benFehlerZeigen(feldfehler = {}) {
+  for (const k of ['aktiv', ...BEN_FELDER]) $(`ben-${k}-fehler`).textContent = feldfehler[k] ?? '';
+}
+
+$('benachrichtigung-oeffnen').addEventListener('click', async () => {
+  benMeldung('Wird geladen …');
+  benFehlerZeigen();
+  $('benachrichtigung').showModal();
+  const antwort = await api('/api/benachrichtigung');
+  if (!antwort.ok) { benMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); return; }
+  benZeigen(await antwort.json());
+  benMeldung('');
+});
+$('ben-schliessen').addEventListener('click', () => $('benachrichtigung').close());
+$('ben-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const werte = { aktiv: $('ben-aktiv').checked };
+  for (const k of BEN_FELDER) werte[k] = $(`ben-${k}`).value;
+  benFehlerZeigen();
+  $('ben-speichern').disabled = true;
+  benMeldung('Wird gespeichert …');
+  const antwort = await senden('/api/benachrichtigung', { werte });
+  const daten = await antwort.json().catch(() => ({}));
+  $('ben-speichern').disabled = false;
+  if (!antwort.ok) { benFehlerZeigen(daten.feldfehler); benMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
+  benZeigen(daten);
+  benMeldung(daten.geaendert.length ? 'Gespeichert.' : 'Keine Änderungen.', 'ok');
+});
+$('ben-test').addEventListener('click', async () => {
+  $('ben-test').disabled = true;
+  benMeldung('Testmail wird gesendet …');
+  const antwort = await senden('/api/benachrichtigung/test', {});
+  const daten = await antwort.json().catch(() => ({}));
+  $('ben-test').disabled = false;
+  if (daten.verlauf) benZeigen(daten);
+  benMeldung(daten.ok ? 'Testmail gesendet. Bitte Posteingang prüfen.' : `Nicht gesendet: ${daten.fehler ?? 'unbekannter Fehler'}`, daten.ok ? 'ok' : 'fehler');
+});
+
 // ---- Updates (nur Admins) ----
 const PHASEN = { suche: 'Suche nach Updates …', herunterladen: 'Paket wird heruntergeladen …', pruefen: 'Prüfsumme wird kontrolliert …', entpacken: 'Paket wird entpackt …', selbsttest: 'Neue Version wird getestet …', neustart: 'Die Basis startet neu …' };
 let updateStatus = null;
@@ -248,7 +309,8 @@ function updateZeigen(st) {
   $('upd-installieren').textContent = st.verfuegbar ? `Auf v${st.verfuegbar.version} updaten` : 'Updaten';
   $('upd-zurueck').hidden = !(st.vorherige && st.viaStarter) || beschaeftigt;
   $('upd-zurueck').textContent = st.vorherige ? `Zurück auf v${st.vorherige.version}` : 'Vorherige Version wiederherstellen';
-  if (!st.eingerichtet) updateMeldung('Updates sind nicht eingerichtet: In config.json fehlt der Abschnitt "updates" mit GitHub-Token.', 'fehler');
+  tokenZeigen(st.token);
+  if (!st.eingerichtet) updateMeldung('Updates sind noch nicht eingerichtet: Bitte unten einen GitHub-Token eintragen.', 'fehler');
   else if (beschaeftigt) updateMeldung(PHASEN[st.phase]);
   else if (st.phase === 'fehler') updateMeldung(st.fehler, 'fehler');
   else if (!st.viaStarter) updateMeldung('Die Basis läuft nicht über start.js. Updates können gesucht, aber nicht installiert werden.', 'fehler');
@@ -256,6 +318,47 @@ function updateZeigen(st) {
   else if (st.updateMoeglich) updateMeldung(`Version ${st.verfuegbar.version} ist verfügbar.`);
   else updateMeldung('');
 }
+
+const tokMeldung = (text, art = '') => { $('tok-meldung').textContent = text; $('tok-meldung').dataset.art = art; };
+function tokenZeigen(t) {
+  if (!t) return;
+  const teile = [];
+  if (!t.gesetzt) teile.push('Kein Token eingetragen.');
+  else {
+    teile.push(t.quelle === 'oberflaeche' ? 'Token gesetzt (hier eingetragen).' : 'Token gesetzt (aus config.json).');
+    if (t.ablauf) teile.push(t.restTage < 0 ? `Abgelaufen am ${zeit(t.ablauf)}.` : `Gültig bis ${new Date(t.ablauf).toLocaleDateString('de-DE')} (noch ${t.restTage} ${t.restTage === 1 ? 'Tag' : 'Tage'}).`);
+    if (t.geprueft) teile.push(t.ok ? `Zuletzt erfolgreich geprüft ${relativ(t.geprueft)}.` : `Prüfung fehlgeschlagen: ${t.fehler}`);
+  }
+  $('tok-status').textContent = teile.join(' ');
+  $('tok-status').dataset.art = t.laeuftBaldAb || t.ok === false ? 'fehler' : '';
+  $('tok-pruefen').hidden = !t.gesetzt;
+  $('tok-entfernen').hidden = t.quelle !== 'oberflaeche';
+}
+
+async function tokenAktion(weg, koerper, laeuft) {
+  tokMeldung(laeuft);
+  for (const k of ['tok-speichern', 'tok-pruefen', 'tok-entfernen']) $(k).disabled = true;
+  const antwort = await senden(weg, koerper ?? {});
+  const daten = await antwort.json().catch(() => ({}));
+  for (const k of ['tok-speichern', 'tok-pruefen', 'tok-entfernen']) $(k).disabled = false;
+  const st = daten.status ?? daten;
+  if (st.token) updateZeigen(st);
+  return { ok: antwort.ok, daten };
+}
+$('tok-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const { ok, daten } = await tokenAktion('/api/updates/token', { token: $('tok-wert').value.trim() }, 'Token wird bei GitHub geprüft …');
+  if (ok) $('tok-wert').value = '';
+  tokMeldung(ok ? 'Token gespeichert. Jetzt kann nach Updates gesucht werden.' : daten.fehler ?? 'Speichern nicht möglich.', ok ? 'ok' : 'fehler');
+});
+$('tok-pruefen').addEventListener('click', async () => {
+  const { daten } = await tokenAktion('/api/updates/token/pruefen', {}, 'Token wird geprüft …');
+  tokMeldung(daten.token?.ok ? 'Der Token funktioniert.' : `Der Token funktioniert nicht: ${daten.token?.fehler ?? 'unbekannt'}`, daten.token?.ok ? 'ok' : 'fehler');
+});
+$('tok-entfernen').addEventListener('click', async () => {
+  const { ok } = await tokenAktion('/api/updates/token', { entfernen: true }, 'Wird entfernt …');
+  tokMeldung(ok ? 'Token entfernt.' : 'Entfernen nicht möglich.', ok ? 'ok' : 'fehler');
+});
 
 async function updateAktion(weg, koerper) {
   const antwort = await api(`/api/updates/${weg}`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: koerper ? JSON.stringify(koerper) : undefined });
@@ -285,6 +388,8 @@ async function aufNeustartWarten(zeige = updateMeldung) {
 
 async function updatesOeffnen() {
   $('upd-bestaetigen').hidden = true;
+  tokMeldung('');
+  $('tok-wert').value = '';
   if (!$('updates').open) $('updates').showModal();
   const antwort = await api('/api/updates');
   if (antwort.ok) updateZeigen(await antwort.json());

@@ -1,4 +1,4 @@
-import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -135,6 +135,7 @@ export async function speichern(modul, eingabe) {
 
 export async function schreibeAtomar(datei, wert) {
   const temp = `${datei}.${randomUUID()}.tmp`;
+  await mkdir(path.dirname(datei), { recursive: true });
   try {
     await writeFile(temp, JSON.stringify(wert, null, 2) + '\n', { mode: 0o600 });
     await rename(temp, datei);

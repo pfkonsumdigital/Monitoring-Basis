@@ -332,6 +332,64 @@ ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
 Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
 Problemen stehen oben.
 
+## Benachrichtigung per Mail
+
+Die Basis verschickt Mails über **Microsoft 365** (Microsoft Graph) mit einer
+eigenen App-Registrierung. Das funktioniert ohne angemeldeten Benutzer, also
+auch, wenn die Basis per Autostart unter SYSTEM läuft. Der Worker braucht
+ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
+
+### Wann kommt eine Mail?
+
+| Ereignis | Betreff |
+| --- | --- |
+| Modul wechselt auf Fehler oder Warnung (auch Warnung → Fehler) | `[Monitoring] FEHLER: <Modul>` |
+| Eigenständiges Modul meldet sich nicht mehr | `[Monitoring] KEINE MELDUNG: <Modul>` |
+| Modul ist wieder OK | `[Monitoring] WIEDER OK: <Modul>` |
+| Problem besteht weiter (Abstand einstellbar, Standard 4 h) | `[Monitoring] ERINNERUNG: <Modul> – Fehler seit 6 h` |
+
+- Gemeldet wird nur der **Wechsel**, nicht jeder weitere fehlerhafte Lauf.
+- **Melden nach … Läufen** (Standard 1 = sofort): erst melden, wenn Fehler
+  oder Warnung so viele Läufe hintereinander bestehen. „Keine Meldung“ und
+  fehlerhafte Module (`module.json`) werden immer sofort gemeldet.
+- Pausierte Module lösen keine Mails aus. Der zuletzt gemeldete Zustand je
+  Modul wird gespeichert – ein Neustart der Basis verschickt nichts doppelt.
+- Schlägt der Versand fehl, steht das im Fehlerprotokoll; die Basis versucht
+  es alle 5 Minuten erneut.
+
+### Einrichten
+
+1. **App registrieren:** Entra Admin Center → *App-Registrierungen* → *Neue
+   Registrierung*, z. B. „Monitoring-Basis Mail“, nur Konten dieses
+   Verzeichnisses. Mandanten-ID (Verzeichnis-ID) und Anwendungs-ID notieren.
+2. **Geheimen Schlüssel anlegen:** *Zertifikate & Geheimnisse* → *Neuer
+   geheimer Clientschlüssel*. Den **Wert** sofort kopieren (er wird nur einmal
+   angezeigt). Ablaufdatum notieren – vor Ablauf einen neuen anlegen und in
+   der Basis eintragen.
+3. **Senderecht auf ein Postfach beschränken (RBAC for Applications):** In
+   Exchange Online PowerShell (`Connect-ExchangeOnline`), Objekt-ID aus
+   *Unternehmensanwendungen* (nicht aus App-Registrierungen):
+
+   ```powershell
+   New-ServicePrincipal -AppId <Anwendungs-ID> -ObjectId <Objekt-ID der Unternehmensanwendung> -DisplayName "Monitoring-Basis Mail"
+   New-ManagementScope -Name "Monitoring-Absender" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'monitoring@konsum-weimar.de'"
+   New-ManagementRoleAssignment -App "Monitoring-Basis Mail" -Role "Application Mail.Send" -CustomResourceScope "Monitoring-Absender"
+   Test-ServicePrincipalAuthorization -Identity "Monitoring-Basis Mail" -Resource monitoring@konsum-weimar.de
+   ```
+
+   `InScope` muss `True` sein. **Wichtig:** Der App in Entra **keine**
+   Anwendungsberechtigung `Mail.Send` mit Administratorzustimmung geben – sonst
+   darf sie als jedes Postfach senden und die Beschränkung wirkt nicht.
+   Änderungen brauchen bis zu 2 Stunden, bis sie greifen.
+4. **In der Basis eintragen:** Als Admin oben auf **„Benachrichtigung“**:
+   Mandanten-ID, Anwendungs-ID, Schlüssel, Absenderpostfach, Empfänger, ggf.
+   Adresse der Oberfläche (für den Link in der Mail), „aktiv“ anhaken,
+   speichern und **„Testmail senden“**.
+
+Die Einstellungen liegen in `data/benachrichtigung.json`. Der Schlüssel wird in
+der Oberfläche nie angezeigt und aus Protokollen gefiltert, liegt aber vorerst
+im Klartext in der Datei (Verschlüsselung mit DPAPI ist vorgemerkt).
+
 ## Updates
 
 Admins finden oben rechts den Knopf **„Updates“**. Ein Punkt am Knopf zeigt an,
@@ -352,21 +410,31 @@ Versionen.
 Voraussetzungen:
 
 1. Die Basis läuft über `node start.js`, nicht direkt über `basis/main.js`.
-2. In GitHub unter **Settings → Developer settings → Fine-grained tokens** einen
-   Token anlegen:
-   - nur für das Repo `Monitoring-Basis`
+2. In GitHub unter **Profilbild → Settings → Developer settings → Personal
+   access tokens → Fine-grained tokens → Generate new token** einen Token anlegen:
+   - Resource owner `pfkonsumdigital`
+   - *Only select repositories*: `Monitoring-Basis` (später auch die Modul-Repos)
    - Recht **Contents: Read-only**
    - mit Ablaufdatum
-3. Den Token in `config.json` eintragen:
+3. Den Token in der Oberfläche eintragen: **„Updates“ → GitHub-Zugang → Token
+   speichern**. Die Basis prüft ihn vorher bei GitHub (abgelehnte Tokens werden
+   nicht gespeichert) und braucht keinen Neustart.
+
+Die Oberfläche zeigt, ob ein Token gesetzt ist, woher er kommt und bis wann er
+gilt. 14 Tage vor Ablauf steht täglich eine Warnung im Fehlerprotokoll. Der
+Token wird nie wieder angezeigt und aus Protokollen gefiltert. Er liegt in
+`data/github.json`, vorerst im Klartext (Verschlüsselung mit Windows-DPAPI ist
+vorgesehen) – den Ordner deshalb über Windows-Dateirechte schützen.
+
+Alternativ geht weiterhin der Eintrag in `config.json`; ein in der Oberfläche
+gespeicherter Token hat Vorrang, „Token entfernen“ schaltet zurück:
 
 ```json
 "updates": { "github_token": "github_pat_…" }
 ```
 
-Optional lässt sich mit `"repo": "besitzer/name"` ein anderes Repo angeben.
-Standard ist `pfkonsumdigital/Monitoring-Basis`. Der Token steht vorerst im
-Klartext in `config.json`, die Datei deshalb über Windows-Dateirechte schützen.
-Eine Verschlüsselung mit Windows-DPAPI ist vorgesehen. Der Worker braucht
+Optional lässt sich dort mit `"repo": "besitzer/name"` ein anderes Repo
+angeben. Standard ist `pfkonsumdigital/Monitoring-Basis`. Der Worker braucht
 ausgehend HTTPS zu `api.github.com` sowie zu `objects.githubusercontent.com`
 bzw. `release-assets.githubusercontent.com` (Download).
 

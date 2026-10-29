@@ -168,3 +168,5 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .feldfehler:empty { display: none; }
 #details-admin { margin: 8px 0; }
 #details-admin[hidden] { display: none; }
+#tok-status[data-art="fehler"] { color: var(--fehler); }
+#updates .felder { margin-top: 4px; }

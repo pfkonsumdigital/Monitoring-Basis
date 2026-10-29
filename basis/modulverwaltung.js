@@ -12,8 +12,8 @@ const FEHLVERSUCHE_BIS_MELDUNG = 4;
 // eigenständiger Module in den Verlauf und verwaltet Einstellungen und „aktiv“ (Pause).
 // Ein fehlerhaftes Modul betrifft immer nur sich selbst.
 export class Modulverwaltung {
-  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, geheimnisse = [], log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
-    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, geheimnisse, log, jetzt, intervallMs });
+  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, nachTakt = null, geheimnisse = [], log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
+    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, nachTakt, geheimnisse, log, jetzt, intervallMs });
     this.zustandDatei = path.join(datenOrdner, 'modulzustand.json');
     this.module = [];
     this.signaturen = new Map();
@@ -35,7 +35,7 @@ export class Modulverwaltung {
   async takt() {
     if (this.beschaeftigt) return;
     this.beschaeftigt = true;
-    try { await this.einlesen(); await this.statusLesen(); }
+    try { await this.einlesen(); await this.statusLesen(); await this.nachTakt?.(this.ansichten()); }
     catch (fehler) { melde(this.log, 'fehler', 'Module', `Module konnten nicht gelesen werden: ${fehler.message}`, fehler); }
     finally { this.beschaeftigt = false; }
   }

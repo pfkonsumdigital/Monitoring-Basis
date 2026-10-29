@@ -8,6 +8,9 @@ import { melde } from './protokoll.js';
 const MAX_PAKET = 200 * 1024 * 1024;
 const BEHALTEN = 3;
 export const NEUSTART_CODE = 3;
+const STANDARD_REPO = 'pfkonsumdigital/Monitoring-Basis';
+const TAG = 86_400_000;
+const WARNEN_TAGE = 14;
 
 export function zerlegeVersion(text) {
   const treffer = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(text ?? '').trim());
@@ -22,6 +25,16 @@ export function vergleicheVersionen(a, b) {
   return 0;
 }
 
+// GitHub meldet das Ablaufdatum eines Tokens im Kopf github-authentication-token-expiration,
+// z. B. "2026-12-31 00:00:00 UTC" oder "2026-12-31 00:00:00 +0100". Ohne Ablaufdatum: null.
+export function ablaufLesen(kopf) {
+  const t = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})\s*(UTC|Z|[+-]\d{2}:?\d{2})?$/.exec(String(kopf ?? '').trim());
+  if (!t) return null;
+  const zone = !t[3] || t[3] === 'UTC' || t[3] === 'Z' ? 'Z' : t[3].replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');
+  const ms = Date.parse(`${t[1]}T${t[2]}${zone}`);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 export const paketName = (version) => `monitoring-basis-${version}.tar.gz`;
 
 async function jsonLesen(datei) {
@@ -30,6 +43,7 @@ async function jsonLesen(datei) {
 }
 async function atomarSchreiben(datei, wert) {
   const temp = `${datei}.${randomUUID()}.tmp`;
+  await mkdir(path.dirname(datei), { recursive: true });
   await writeFile(temp, JSON.stringify(wert, null, 2) + '\n');
   await rename(temp, datei);
 }
@@ -57,11 +71,18 @@ export async function leseAktiv(installOrdner) {
 export const schreibeAktiv = (installOrdner, wert) => atomarSchreiben(path.join(installOrdner, 'aktiv.json'), wert);
 
 export class Updateverwaltung {
-  constructor({ installOrdner, programmOrdner, configDatei, updates, installiert, viaStarter, neustart, log = () => {}, fetchImpl = fetch, spawnImpl = spawn }) {
+  constructor({ installOrdner, programmOrdner, configDatei, updates, installiert, viaStarter, neustart, datenOrdner = null, geheimnisse = [], log = () => {}, fetchImpl = fetch, spawnImpl = spawn, jetzt = () => Date.now() }) {
     this.installOrdner = installOrdner;
     this.programmOrdner = programmOrdner;
     this.configDatei = configDatei;
+    // Token aus config.json (updates.github_token); ein in der Oberfläche gespeicherter Token hat Vorrang.
+    this.konfigUpdates = updates;
     this.updates = updates;
+    this.tokenDatei = datenOrdner ? path.join(datenOrdner, 'github.json') : null;
+    this.oberflaechenToken = null;
+    this.tokenInfo = { ablauf: null, geprueft: null, ok: null, fehler: null };
+    this.geheimnisse = geheimnisse;
+    this.jetzt = jetzt;
     this.installiert = installiert;
     this.viaStarter = viaStarter;
     this.neustart = neustart;
@@ -72,20 +93,42 @@ export class Updateverwaltung {
     this.zustand = { phase: 'bereit', fehler: null, verfuegbar: null, letztePruefung: null, vorherige: null };
   }
 
+  // Wirksamer Zugang: Token aus der Oberfläche vor Token aus config.json.
+  zugangSetzen() {
+    const repo = this.konfigUpdates?.repo ?? STANDARD_REPO;
+    if (this.oberflaechenToken) this.updates = { repo, githubToken: this.oberflaechenToken };
+    else this.updates = this.konfigUpdates ?? null;
+    if (this.updates?.githubToken && !this.geheimnisse.includes(this.updates.githubToken)) this.geheimnisse.push(this.updates.githubToken);
+  }
+
+  tokenStatus() {
+    const ablauf = this.tokenInfo.ablauf;
+    const restTage = ablauf ? Math.floor((Date.parse(ablauf) - this.jetzt()) / TAG) : null;
+    return {
+      gesetzt: Boolean(this.updates?.githubToken),
+      quelle: this.oberflaechenToken ? 'oberflaeche' : this.konfigUpdates?.githubToken ? 'config' : null,
+      repo: this.updates?.repo ?? this.konfigUpdates?.repo ?? STANDARD_REPO,
+      ...this.tokenInfo,
+      restTage,
+      laeuftBaldAb: restTage !== null && restTage < WARNEN_TAGE,
+    };
+  }
+
   status() {
     return {
       eingerichtet: Boolean(this.updates), viaStarter: this.viaStarter, installiert: this.installiert,
+      token: this.tokenStatus(),
       ...this.zustand,
       updateMoeglich: Boolean(this.zustand.verfuegbar && vergleicheVersionen(this.zustand.verfuegbar.version, this.installiert) > 0),
     };
   }
 
-  async github(weg, { binaer = false } = {}) {
+  async github(weg, { binaer = false, zugang = this.updates } = {}) {
     let antwort;
     try {
-      antwort = await this.fetch(weg.startsWith('https://') ? weg : `https://api.github.com/repos/${this.updates.repo}${weg}`, {
+      antwort = await this.fetch(weg.startsWith('https://') ? weg : `https://api.github.com/repos/${zugang.repo}${weg}`, {
         headers: {
-          Authorization: `Bearer ${this.updates.githubToken}`,
+          Authorization: `Bearer ${zugang.githubToken}`,
           Accept: binaer ? 'application/octet-stream' : 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           'User-Agent': 'Monitoring-Basis',
@@ -96,7 +139,7 @@ export class Updateverwaltung {
     } catch {
       throw new BasisFehler('GitHub ist nicht erreichbar. Internetzugang, Proxy und Firewall des Workers prüfen.');
     }
-    if (antwort.status === 401) throw new BasisFehler('GitHub hat den Token abgelehnt. updates.github_token prüfen (abgelaufen oder falsch).');
+    if (antwort.status === 401) throw new BasisFehler('GitHub hat den Token abgelehnt (abgelaufen oder falsch). Neuen Token im Dialog „Updates“ eintragen.');
     if (antwort.status === 403 || antwort.status === 429) throw new BasisFehler('GitHub verweigert den Zugriff (Rechte des Tokens oder Abruflimit). Später erneut versuchen.');
     if (antwort.status === 404) throw new BasisFehler('Kein Release gefunden – oder der Token hat keinen Lesezugriff auf das Repo.');
     if (!antwort.ok) throw new BasisFehler(`GitHub antwortet mit HTTP ${antwort.status}.`);
@@ -120,7 +163,7 @@ export class Updateverwaltung {
   }
 
   async suchen() {
-    if (!this.updates) throw new BasisFehler('Updates sind nicht eingerichtet (Abschnitt "updates" in config.json fehlt).');
+    if (!this.updates) throw new BasisFehler('Updates sind nicht eingerichtet: Bitte im Dialog „Updates“ einen GitHub-Token eintragen.');
     await this.exklusiv('suche', async () => {
       const release = await (await this.github('/releases/latest')).json();
       const version = zerlegeVersion(release.tag_name) ? release.tag_name.replace(/^v/, '') : null;
@@ -233,10 +276,72 @@ export class Updateverwaltung {
     }
   }
 
-  // Sucht einmal täglich nach Updates, installiert aber nie selbst.
+  // Gespeicherten Token aus der Oberfläche laden (data/github.json).
+  async tokenLaden() {
+    if (this.tokenDatei) {
+      const wert = await jsonLesen(this.tokenDatei).catch(() => null);
+      this.oberflaechenToken = typeof wert?.github_token === 'string' && wert.github_token ? wert.github_token : null;
+    }
+    this.zugangSetzen();
+  }
+
+  // Prüft, ob der Token das Repo lesen darf, und merkt sich das Ablaufdatum (falls GitHub es meldet).
+  async tokenPruefen(zugang = this.updates) {
+    if (!zugang?.githubToken) throw new BasisFehler('Kein GitHub-Token eingetragen.');
+    const antwort = await this.github('', { zugang });
+    return { ablauf: ablaufLesen(antwort.headers.get('github-authentication-token-expiration')) };
+  }
+
+  async tokenTesten() {
+    const info = { geprueft: new Date(this.jetzt()).toISOString() };
+    try {
+      Object.assign(this.tokenInfo, info, await this.tokenPruefen(), { ok: true, fehler: null });
+    } catch (fehler) {
+      Object.assign(this.tokenInfo, info, { ok: false, fehler: fehler.message });
+    }
+    this.ablaufWarnen();
+    return this.status();
+  }
+
+  // Speichert einen neuen Token aus der Oberfläche – nur, wenn GitHub ihn annimmt.
+  async tokenSpeichern(token, benutzer) {
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_]{20,255}$/.test(token.trim())) throw new BasisFehler('Das sieht nicht wie ein GitHub-Token aus (z. B. github_pat_…).');
+    if (!this.tokenDatei) throw new BasisFehler('Speichern nicht möglich.');
+    const zugang = { repo: this.konfigUpdates?.repo ?? STANDARD_REPO, githubToken: token.trim() };
+    if (!this.geheimnisse.includes(zugang.githubToken)) this.geheimnisse.push(zugang.githubToken);
+    const { ablauf } = await this.tokenPruefen(zugang);
+    await atomarSchreiben(this.tokenDatei, { github_token: zugang.githubToken });
+    this.oberflaechenToken = zugang.githubToken;
+    this.zugangSetzen();
+    this.tokenInfo = { ablauf, geprueft: new Date(this.jetzt()).toISOString(), ok: true, fehler: null };
+    this.log(`GitHub-Token für Updates gespeichert durch ${benutzer}${ablauf ? ` (gültig bis ${ablauf.slice(0, 10)})` : ''}.`);
+    this.ablaufWarnen();
+    return this.status();
+  }
+
+  async tokenEntfernen(benutzer) {
+    if (this.tokenDatei) await rm(this.tokenDatei, { force: true });
+    this.oberflaechenToken = null;
+    this.zugangSetzen();
+    this.tokenInfo = { ablauf: null, geprueft: null, ok: null, fehler: null };
+    this.log(`GitHub-Token der Oberfläche entfernt durch ${benutzer}.`);
+    return this.status();
+  }
+
+  ablaufWarnen() {
+    const t = this.tokenStatus();
+    if (!t.laeuftBaldAb) return;
+    melde(this.log, 'warnung', 'Update', t.restTage < 0 ? `Der GitHub-Token ist abgelaufen (${t.ablauf.slice(0, 10)}). Neuen Token im Dialog „Updates“ eintragen.`
+      : `Der GitHub-Token läuft in ${t.restTage} ${t.restTage === 1 ? 'Tag' : 'Tagen'} ab (${t.ablauf.slice(0, 10)}). Rechtzeitig einen neuen Token im Dialog „Updates“ eintragen.`);
+  }
+
+  // Sucht einmal täglich nach Updates (und prüft den Token), installiert aber nie selbst.
   taeglichPruefen() {
-    if (!this.updates) return null;
-    const pruefen = () => this.suchen().catch(() => {});
+    const pruefen = async () => {
+      if (!this.updates) return;
+      await this.tokenTesten().catch(() => {});
+      await this.suchen().catch(() => {});
+    };
     setTimeout(pruefen, 60_000).unref();
     const timer = setInterval(pruefen, 24 * 3_600_000);
     timer.unref();
@@ -244,6 +349,7 @@ export class Updateverwaltung {
   }
 
   async starten() {
+    await this.tokenLaden();
     this.zustand.vorherige = await this.vorherigeErmitteln().catch(() => null);
     await this.aufraeumen();
   }
