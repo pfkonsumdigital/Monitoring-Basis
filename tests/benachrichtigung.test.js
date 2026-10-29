@@ -181,3 +181,33 @@ test('Benachrichtigung: Schlüssel nie in der Ansicht, im Geheimnisfilter, Testm
     await rm(u.ordner, { recursive: true, force: true });
   }
 });
+
+test('Benachrichtigung: Dienst gestoppt sofort melden, beendete Module nicht; Mail beim Beenden der Basis', async () => {
+  const u = await aufbau();
+  try {
+    const betreffe = () => u.ms.mails().map((m) => m.message.subject);
+    const dienst = { name: 'MonitoringFTP', zustand: 'gestoppt', fehler: null };
+    await u.b.pruefen([modul('dienst-gestoppt', { problemLaeufe: 0, dienst })]);
+    assert.deepEqual(betreffe(), ['[Monitoring] DIENST GESTOPPT: FTP-Dateialter']);
+    assert.match(u.ms.mails()[0].message.body.content, /Problem: Windows-Dienst „MonitoringFTP“ ist gestoppt\./);
+    await u.b.pruefen([modul('beendet', { problemLaeufe: 0 })]);
+    u.vor(5 * 60);
+    await u.b.pruefen([modul('beendet', { problemLaeufe: 0 })]);
+    assert.equal(betreffe().length, 1, 'beendet: keine Mail, keine Erinnerung');
+
+    await u.b.basisBeendet('patrick', true, ['Gesperrt: Keine Berechtigung.']);
+    assert.equal(betreffe()[1], '[Monitoring] Basis beendet durch patrick');
+    const text = u.ms.mails()[1].message.body.content;
+    assert.match(text, /keine Module überwacht/);
+    assert.match(text, /eigenständigen Module wurden ebenfalls beendet/);
+    assert.match(text, /Nicht beendet:\n- Gesperrt: Keine Berechtigung\./);
+    assert.match(text, /Start\.exe/);
+    assert.equal(u.b.ansicht().verlauf[0].art, 'basis-beendet');
+
+    await u.b.speichern({ aktiv: false }, 'patrick');
+    assert.equal(await u.b.basisBeendet('patrick', false), null, 'aus = keine Mail');
+    assert.equal(betreffe().length, 2);
+  } finally {
+    await rm(u.ordner, { recursive: true, force: true });
+  }
+});

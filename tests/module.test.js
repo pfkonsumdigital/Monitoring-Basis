@@ -10,6 +10,7 @@ import { Ergebnisspeicher } from '../basis/speicher.js';
 import { Planer } from '../basis/planer.js';
 import { pruefeModul } from '../basis/module.js';
 import { fuehreAus } from '../basis/ausfuehrung.js';
+import { DienstFehler } from '../basis/dienste.js';
 
 const FELDER = [
   { schluessel: 'server', bezeichnung: 'FTP-Server', typ: 'text', pflicht: true },
@@ -146,7 +147,7 @@ async function aufbau(dateien = {}) {
   const planer = new Planer({ ausfuehren: async () => ({ status: 'ok', zusammenfassung: 'x' }), speichern: uebernehmen });
   const geheimnisse = [];
   let uhr = Date.parse('2026-10-29T12:00:00Z');
-  const neu = () => new Modulverwaltung({ moduleOrdner, datenOrdner: path.join(wurzel, 'data'), speicher, planer, uebernehmen, geheimnisse, log, jetzt: () => uhr, intervallMs: 60_000 });
+  const neu = (extra = {}) => new Modulverwaltung({ moduleOrdner, datenOrdner: path.join(wurzel, 'data'), speicher, planer, uebernehmen, geheimnisse, log, jetzt: () => uhr, intervallMs: 60_000, ...extra });
   return { wurzel, moduleOrdner, meldungen, speicher, planer, uebernommen, geheimnisse, neu, uhr: (t) => { uhr = Date.parse(t); } };
 }
 
@@ -298,6 +299,129 @@ test('Modulverwaltung: nach jedem Takt werden die Ansichten weitergereicht (Bena
     v.nachTakt = async () => { throw new Error('Mail kaputt'); };
     await v.takt();
     assert.ok(u.meldungen.some(([s, m]) => s === 'fehler' && /Mail kaputt/.test(m)), 'Fehler stoppt die Basis nicht');
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('module.json: dienst und befehlsdatei nur bei eigenständigen Modulen, Dienstname geprüft', () => {
+  const basis = { id: 'ftp', name: 'FTP', typ: 'eigenstaendig' };
+  const { modul } = pruefeModul({ ...basis, dienst: 'MonitoringFTP', befehlsdatei: true }, 'ftp', '/m/ftp');
+  assert.equal(modul.dienst, 'MonitoringFTP');
+  assert.equal(modul.befehlsdatei, true);
+  assert.equal(pruefeModul(basis, 'ftp', '/m/ftp').modul.dienst, null);
+  assert.match(pruefeModul({ ...basis, dienst: 'net stop x & calc' }, 'ftp', '/m/ftp').fehler, /dienst muss/);
+  assert.match(pruefeModul({ ...basis, befehlsdatei: 'ja' }, 'ftp', '/m/ftp').fehler, /befehlsdatei muss/);
+  assert.match(pruefeModul({ id: 'p', name: 'P', typ: 'programm', befehl: 'x.exe', dienst: 'X' }, 'p', '/m/p').fehler, /nur bei typ "eigenstaendig"/);
+});
+
+// Simulierte Windows-Dienste für die Modulverwaltung.
+function dienste(start = {}) {
+  const stand = { ...start };
+  const aufrufe = [];
+  return {
+    aufrufe, stand,
+    async zustand(name) { return stand[name] ? { zustand: stand[name] } : { zustand: 'fehlt', fehler: `Der Dienst „${name}“ ist auf diesem Rechner nicht installiert.` }; },
+    async beenden(name) { aufrufe.push(['beenden', name]); if (name === 'Gesperrt') throw new DienstFehler('Keine Berechtigung.', 5); stand[name] = 'gestoppt'; },
+    async starten(name) { aufrufe.push(['starten', name]); stand[name] = 'laeuft'; },
+  };
+}
+
+test('Module beenden: Windows-Dienst stoppen, kein Alarm bis zur nächsten Meldung, Starten', async () => {
+  const u = await aufbau({ 'ftp/module.json': { id: 'ftp', name: 'FTP', typ: 'eigenstaendig', intervall_minuten: 5, dienst: 'MonitoringFTP' } });
+  try {
+    const d = dienste({ MonitoringFTP: 'laeuft' });
+    const v = u.neu({ dienste: d });
+    await v.start();
+    v.stop();
+    const status = path.join(u.moduleOrdner, 'ftp', 'status.json');
+    await schreibeJson(status, { status: 'ok', zeit: '2026-10-29T11:58:00Z' });
+    await v.statusLesen();
+    let a = v.ansichten()[0];
+    assert.deepEqual([a.anzeige, a.dienst, a.kannBeenden, a.kannStarten], ['ok', { name: 'MonitoringFTP', zustand: 'laeuft', fehler: null }, true, false]);
+
+    // Dienst fällt aus, ohne dass jemand ihn über die Basis beendet hat → Problem.
+    d.stand.MonitoringFTP = 'gestoppt';
+    await v.dienstePruefen();
+    a = v.ansichten()[0];
+    assert.equal(a.anzeige, 'dienst-gestoppt');
+    assert.equal(a.kannStarten, true);
+    assert.ok(u.meldungen.some(([, m]) => /Windows-Dienst MonitoringFTP \(Modul ftp\): gestoppt/.test(m)));
+
+    await v.starten('ftp', 'patrick');
+    d.stand.MonitoringFTP = 'laeuft';
+    assert.equal((await v.beenden('ftp', 'patrick')).ok, true);
+    assert.deepEqual(d.aufrufe, [['starten', 'MonitoringFTP'], ['beenden', 'MonitoringFTP']]);
+    u.uhr('2026-10-29T14:00:00Z'); // weit über der Frist – trotzdem keine „Keine Meldung“
+    a = v.ansichten()[0];
+    assert.deepEqual([a.anzeige, a.beendetVon, a.ueberfaelligSeit, a.kannBeenden, a.kannStarten], ['beendet', 'patrick', null, false, true]);
+    assert.ok(u.meldungen.some(([, m]) => m === 'Modul ftp beendet durch patrick (Windows-Dienst „MonitoringFTP“ gestoppt).'));
+
+    // „Beendet“ bleibt nach Neustart der Basis erhalten …
+    const v2 = u.neu({ dienste: d });
+    await v2.start();
+    v2.stop();
+    assert.equal(v2.ansichten()[0].anzeige, 'beendet');
+    // … bis sich das Modul wieder meldet.
+    await schreibeJson(status, { status: 'ok', zeit: '2026-10-29T14:01:00Z' });
+    d.stand.MonitoringFTP = 'laeuft';
+    await v2.statusLesen();
+    await v2.dienstePruefen();
+    assert.equal(v2.ansichten()[0].anzeige, 'ok');
+    assert.equal(v2.ansichten()[0].beendet, null);
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Module beenden: befehl.json, Fehler beim Dienst, nicht beendbar, alle beenden', async () => {
+  const u = await aufbau({
+    'datei/module.json': { id: 'datei', name: 'Datei', typ: 'eigenstaendig', befehlsdatei: true },
+    'gesperrt/module.json': { id: 'gesperrt', name: 'Gesperrt', typ: 'eigenstaendig', dienst: 'Gesperrt' },
+    'ohne/module.json': { id: 'ohne', name: 'Ohne', typ: 'eigenstaendig' },
+    'dienst/module.json': { id: 'dienst', name: 'Dienst', typ: 'eigenstaendig', dienst: 'Dienst' },
+    'fehlt/module.json': { id: 'fehlt', name: 'Fehlt', typ: 'eigenstaendig', dienst: 'GibtsNicht' },
+  });
+  try {
+    const d = dienste({ Gesperrt: 'laeuft', Dienst: 'laeuft' });
+    const v = u.neu({ dienste: d });
+    await v.start();
+    v.stop();
+    const nach = (id) => v.ansichten().find((m) => m.id === id);
+    assert.equal(nach('fehlt').anzeige, 'dienst-gestoppt');
+    assert.match(nach('fehlt').dienst.fehler, /nicht installiert/);
+    assert.equal(nach('ohne').kannBeenden, false);
+    assert.match((await v.beenden('ohne', 'patrick')).fehler, /nicht an, wie es beendet werden kann/);
+
+    const fehler = await v.alleBeenden('patrick');
+    assert.deepEqual(fehler, ['Gesperrt: Keine Berechtigung.']);
+    const befehl = JSON.parse(await readFile(path.join(u.moduleOrdner, 'datei', 'befehl.json'), 'utf8'));
+    assert.deepEqual(befehl, { befehl: 'beenden', zeit: '2026-10-29T12:00:00.000Z', von: 'patrick' });
+    assert.equal(nach('datei').anzeige, 'beendet');
+    assert.equal(nach('dienst').anzeige, 'beendet');
+    assert.equal(nach('gesperrt').anzeige, 'unbekannt', 'nicht beendet bleibt wie es war');
+    assert.ok(u.meldungen.some(([s, m]) => s === 'fehler' && /Windows-Dienst Gesperrt konnte nicht beendet werden/.test(m)));
+    assert.deepEqual(await v.alleBeenden('patrick'), ['Gesperrt: Keine Berechtigung.'], 'bereits beendete werden übersprungen');
+    assert.match((await v.starten('datei', 'patrick')).fehler, /Windows-Dienst/);
+    assert.equal(await v.beenden('unbekannt', 'patrick'), null);
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Module beenden: von der Basis gestartetes Modul wird abgebrochen und pausiert', async () => {
+  const u = await aufbau({ 'skript/module.json': { id: 'skript', name: 'Skript', typ: 'programm', befehl: 'x.exe', intervall_minuten: 5 } });
+  try {
+    const abgebrochen = [];
+    const v = u.neu({ abbrechen: (id) => { abgebrochen.push(id); return 1; } });
+    await v.start();
+    v.stop();
+    const ergebnis = await v.beenden('skript', 'patrick');
+    assert.equal(ergebnis.text, 'Modul skript beendet durch patrick (laufende Prüfung abgebrochen), pausiert.');
+    assert.deepEqual(abgebrochen, ['skript']);
+    assert.equal(v.ansichten()[0].anzeige, 'inaktiv');
+    assert.equal(u.planer.module.find((m) => m.id === 'skript').aktiv, false);
+    assert.match((await v.starten('skript', 'patrick')).fehler, /Windows-Dienst/);
   } finally {
     await rm(u.wurzel, { recursive: true, force: true });
   }

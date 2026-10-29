@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pruefeFelder } from './einstellungen.js';
+import { DIENST_MUSTER } from './dienste.js';
 
 const ID_MUSTER = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const istText = (wert) => typeof wert === 'string' && wert.trim() !== '' && !/[\r\n\0]/.test(wert);
@@ -35,8 +36,16 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
     toleranzMinuten: toleranz,
   };
   if (roh.typ === 'eigenstaendig') {
-    // Läuft selbst (eigener Dienst/Aufgabe) und schreibt status.json; die Basis startet es nie.
+    // Läuft selbst (eigener Dienst/Aufgabe) und schreibt status.json. Die Basis startet es nie von sich aus,
+    // nur einen eingetragenen Windows-Dienst auf Knopfdruck eines Admins.
     // intervall_minuten = erwarteter Abstand der Meldungen (für „keine Meldung“).
+    // Beenden über die Basis: „dienst“ = Name des Windows-Dienstes, „befehlsdatei“ = Modul liest befehl.json.
+    if (roh.dienst !== undefined && (typeof roh.dienst !== 'string' || !DIENST_MUSTER.test(roh.dienst))) return fehler('dienst muss der Name eines Windows-Dienstes sein (Buchstaben, Ziffern, _ . -)');
+    if (roh.befehlsdatei !== undefined && typeof roh.befehlsdatei !== 'boolean') return fehler('befehlsdatei muss true oder false sein');
+    modul.dienst = roh.dienst ?? null;
+    modul.befehlsdatei = roh.befehlsdatei === true;
+  } else if (['programm', 'plugin'].includes(roh.typ) && (roh.dienst !== undefined || roh.befehlsdatei !== undefined)) {
+    return fehler('dienst und befehlsdatei gibt es nur bei typ "eigenstaendig"');
   } else if (roh.typ === 'programm') {
     if (!istText(roh.befehl)) return fehler('befehl fehlt');
     const argumente = roh.argumente ?? [];

@@ -1,5 +1,31 @@
 # Änderungen
 
+## 0.7.0
+
+### Neu
+
+- **Basis beenden über die Oberfläche:** Admin-Knopf „Beenden“ mit Rückfrage. Optional („Auch alle eigenständigen Module und ihre Windows-Dienste beenden“) werden vorher alle eigenständigen Module beendet, die das unterstützen. Danach zeigt die Seite, wie die Basis wieder gestartet wird. Die Basis endet regulär (Code 0), Starter und Aufgabenplaner starten sie nicht von selbst neu.
+- Mail „[Monitoring] Basis beendet durch <Benutzer>“, wenn die Benachrichtigung eingerichtet ist (mit Liste der Module, die sich nicht beenden ließen).
+- **Module einzeln beenden** (Details, nur Admins, mit Rückfrage):
+  - eigenständige Module mit `"dienst"` in `module.json`: Die Basis stoppt den eingetragenen Windows-Dienst; Knopf „Dienst starten“ startet ihn wieder.
+  - eigenständige Module mit `"befehlsdatei": true`: Die Basis legt `befehl.json` in den Modulordner, das Modul beendet sich selbst.
+  - von der Basis gestartete Module: „Prüfung abbrechen“ bricht die laufende Prüfung ab und pausiert das Modul.
+- Neuer Zustand **„Beendet“**: keine „Keine Meldung“ und keine Mails, bleibt nach Neustart der Basis erhalten und endet automatisch, sobald sich das Modul wieder meldet.
+- **Dienstzustand:** Bei Modulen mit `"dienst"` fragt die Basis alle 15 Sekunden den Windows-Dienst ab (Details: „Windows-Dienst … läuft/gestoppt“). Gestoppt oder nicht installiert, ohne dass jemand ihn über die Basis beendet hat → Zustand „Dienst gestoppt“ (zählt als Fehler) und Mail „[Monitoring] DIENST GESTOPPT: <Modul>“.
+- Beispielmodul `ordnerpruefung` 1.1.0 versteht `befehl.json` (Vorlage für eigene Module).
+
+### Geändert
+
+- Andockvertrag (abwärtskompatibel erweitert): optionale Angaben `dienst` und `befehlsdatei` in `module.json` (nur `typ: "eigenstaendig"`), Datei `befehl.json`.
+- Abgebrochene Prüfungen (Beenden, Neustart) erscheinen als Warnung „Prüfung wurde über die Basis beendet.“ statt als Fehler mit Exitcode.
+- `AGENTS.md`: Architekturgrenze ergänzt – die Basis startet eigenständige Module weiterhin nie von sich aus, nur einen in `module.json` eingetragenen Windows-Dienst auf Knopfdruck eines Admins.
+
+### Prüfung
+
+- `npm test`: 84 Tests, neu u. a. sc.exe-Ausgabe (englisch/deutsch) lesen, Dienst stoppen/starten ohne Shell, verständliche Fehler (keine Berechtigung, nicht installiert), ungültige Dienstnamen und andere Systeme rufen sc.exe nie auf, „Beendet“ ohne Alarm und nach Neustart, Rückkehr bei neuer Meldung, „Dienst gestoppt“, `befehl.json`, alle beenden mit Fehlerliste, Prüfung eines Moduls gezielt abbrechen, Mails „Dienst gestoppt“ und „Basis beendet“, Admin-Endpunkte mit Schutzkopf und Herkunftsprüfung, Beispielmodul beendet sich über `befehl.json` und ignoriert einen alten Befehl beim Start.
+- Browsertest mit echter Basis über `start.js`: Prüfung abbrechen, Dienstmodul (Linux: verständliche Meldung), Beispielmodul über `befehl.json` beendet (Prozess endet), Basis mit allen Modulen beendet (Basis und Starter enden mit Code 0), Neustart: „Beendet“ bleibt, verschwindet bei neuer Meldung. Ansicht auf dem Handy geprüft.
+- Noch auf dem Worker zu prüfen: echtes Stoppen und Starten eines Windows-Dienstes (`sc.exe`) unter SYSTEM.
+
 ## 0.6.0
 
 ### Neu

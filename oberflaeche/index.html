@@ -15,12 +15,19 @@
     <button type="button" id="benachrichtigung-oeffnen" class="zweitrangig" hidden>Benachrichtigung</button>
     <button type="button" id="protokoll-oeffnen" class="zweitrangig" hidden>Protokoll</button>
     <button type="button" id="neustart-oeffnen" class="zweitrangig" hidden>Neu starten</button>
+    <button type="button" id="beenden-oeffnen" class="zweitrangig" hidden>Beenden</button>
     <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <span id="benutzer" class="leise"></span>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
   </div>
 </header>
 <main>
+  <section id="beendet-seite" class="beendet-seite" hidden>
+    <h2>Die Monitoring-Basis ist beendet</h2>
+    <p id="beendet-text"></p>
+    <p>Bis zum nächsten Start werden keine Module überwacht und keine Benachrichtigungen verschickt.</p>
+    <p>Neu starten auf dem Worker: <strong>Start.exe</strong> doppelklicken oder im Aufgabenplaner die Aufgabe <strong>„Monitoring-Basis“</strong> starten (läuft dann wieder unter SYSTEM). Ein Neustart des Rechners startet sie per Autostart ebenfalls.</p>
+  </section>
   <section class="uebersicht" aria-label="Zusammenfassung">
     <div class="zaehler" data-status="ok"><span id="anzahl-ok">–</span>OK</div>
     <div class="zaehler" data-status="warnung"><span id="anzahl-warnung">–</span>Warnung</div>
@@ -39,11 +46,14 @@
   </div>
   <p id="details-beschreibung" class="leise"></p>
   <p id="details-zusammenfassung"></p>
+  <p id="details-aktion-meldung" class="upd-meldung" role="status"></p>
   <dl id="details-fakten" class="messwerte"></dl>
   <div id="details-leiste" class="leiste gross" aria-hidden="true"></div>
   <div id="details-admin" class="aktionen" hidden>
     <button type="button" id="details-einstellungen" class="zweitrangig">Einstellungen</button>
     <button type="button" id="details-pause" class="zweitrangig">Pausieren</button>
+    <button type="button" id="details-beenden" class="zweitrangig gefahr" hidden>Beenden</button>
+    <button type="button" id="details-starten" class="zweitrangig" hidden>Dienst starten</button>
   </div>
   <h3 id="details-messwerte-titel">Kennzahlen</h3>
   <dl id="details-messwerte" class="messwerte"></dl>
@@ -167,6 +177,20 @@
   <div class="aktionen">
     <button type="button" id="neustart-ja">Jetzt neu starten</button>
     <button type="button" id="neustart-nein" class="zweitrangig">Abbrechen</button>
+  </div>
+</dialog>
+<dialog id="beenden">
+  <div class="dialog-kopf">
+    <h2>Basis beenden</h2>
+    <button type="button" id="beenden-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p>Die Monitoring-Basis wird beendet. Gerade laufende Prüfungen werden abgebrochen. Danach ist diese Seite nicht mehr erreichbar, bis die Basis auf dem Worker wieder gestartet wird.</p>
+  <label class="haken"><input type="checkbox" id="beenden-module"> Auch alle eigenständigen Module und ihre Windows-Dienste beenden</label>
+  <p class="leise">Ohne Haken laufen eigenständige Module weiter. Ist die Benachrichtigung eingerichtet, geht eine Mail „Basis beendet“ an die Empfänger.</p>
+  <p id="beenden-meldung" class="upd-meldung" role="status"></p>
+  <div class="aktionen">
+    <button type="button" id="beenden-ja" class="gefahr">Jetzt beenden</button>
+    <button type="button" id="beenden-nein" class="zweitrangig">Abbrechen</button>
   </div>
 </dialog>
 <template id="kachel-vorlage">

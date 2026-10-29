@@ -82,7 +82,20 @@ test('Neustart: laufende Modulprozesse werden beendet', async () => {
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(beendeLaufendeModule(), 1);
   const ergebnis = await lauf;
-  assert.equal(ergebnis.status, 'fehler');
+  assert.equal(ergebnis.status, 'warnung');
+  assert.equal(ergebnis.zusammenfassung, 'Prüfung wurde über die Basis beendet.');
   assert.ok(ergebnis.dauerMs < 10_000);
   assert.equal(beendeLaufendeModule(), 0);
+});
+
+test('Beenden eines Moduls bricht nur dessen Prüfung ab', async () => {
+  const basis = { typ: 'programm', befehl: process.execPath, argumente: ['-e', 'setInterval(() => {}, 1000)'], arbeitsordner: tmpdir(), ordner: tmpdir(), timeoutMs: 30_000, einstellungen: {} };
+  const a = fuehreAus({ ...basis, id: 'a' });
+  const b = fuehreAus({ ...basis, id: 'b' });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(beendeLaufendeModule('a'), 1);
+  assert.equal((await a).status, 'warnung');
+  assert.equal(beendeLaufendeModule('a'), 0);
+  assert.equal(beendeLaufendeModule(), 1);
+  await b;
 });

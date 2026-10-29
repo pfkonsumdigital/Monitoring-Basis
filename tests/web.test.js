@@ -511,3 +511,64 @@ test('Webserver: GitHub-Token speichern, prüfen, entfernen nur für Admins mit 
     server.close();
   }
 });
+
+test('Webserver: Basis und Module beenden nur für Admins mit Schutzkopf', async () => {
+  const http = await import('node:http');
+  const aufrufe = [];
+  const module = {
+    ansichten: () => [],
+    finde: (id) => ({ ftp: { id: 'ftp' }, kaputt: { id: 'kaputt', fehler: 'module.json: x' } })[id] ?? null,
+    beenden: async (id, benutzer) => { aufrufe.push(['modul-beenden', id, benutzer]); return { ok: true, text: 'beendet' }; },
+    starten: async (id, benutzer) => { aufrufe.push(['modul-starten', id, benutzer]); return { fehler: 'Keine Berechtigung.' }; },
+  };
+  const beenden = (wunsch) => aufrufe.push(['basis-beenden', wunsch]);
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const starte = (opt) => starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, ...opt }), tls: null, host: '127.0.0.1', port: 0 });
+  const server = await starte({ beenden });
+  const ohne = await starte({});
+  const hole = (srv, methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const { port } = srv.address();
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (srv, name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port: srv.address().port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    const chef = await anmelden(server, 'chef');
+    const gast = await anmelden(server, 'gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    assert.equal((await hole(server, 'GET', '/api/status', chef)).json().beendenMoeglich, true);
+    assert.equal((await hole(server, 'GET', '/api/status', gast)).json().beendenMoeglich, false);
+
+    assert.equal((await hole(server, 'POST', '/api/beenden', { ...gast, ...schutz }, '{}')).status, 403);
+    assert.equal((await hole(server, 'POST', '/api/beenden', chef, '{}')).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole(server, 'POST', '/api/beenden', { ...chef, ...schutz, origin: 'http://boese.example' }, '{}')).status, 403, 'fremde Herkunft');
+    assert.equal((await hole(server, 'GET', '/api/beenden', chef)).status, 404);
+    assert.equal((await hole(server, 'POST', '/api/module/ftp/beenden', { ...gast, ...schutz })).status, 403);
+    assert.equal((await hole(server, 'POST', '/api/module/ftp/starten', chef)).status, 403, 'ohne Schutzkopf');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(aufrufe, [], 'nichts ausgelöst');
+
+    const r1 = await hole(server, 'POST', '/api/module/ftp/beenden', { ...chef, ...schutz });
+    assert.deepEqual([r1.status, r1.json()], [200, { ok: true, text: 'beendet' }]);
+    const r2 = await hole(server, 'POST', '/api/module/ftp/starten', { ...chef, ...schutz });
+    assert.deepEqual([r2.status, r2.json()], [409, { fehler: 'Keine Berechtigung.' }]);
+    assert.equal((await hole(server, 'POST', '/api/module/kaputt/beenden', { ...chef, ...schutz })).status, 409);
+    assert.equal((await hole(server, 'POST', '/api/module/gibtsnicht/beenden', { ...chef, ...schutz })).status, 404);
+
+    assert.equal((await hole(server, 'POST', '/api/beenden', { ...chef, ...schutz }, '{"module":true}')).status, 202);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepEqual(aufrufe, [['modul-beenden', 'ftp', 'chef'], ['modul-starten', 'ftp', 'chef'], ['basis-beenden', { benutzer: 'chef', mitModulen: true }]]);
+
+    const chef2 = await anmelden(ohne, 'chef');
+    assert.equal((await hole(ohne, 'GET', '/api/status', chef2)).json().beendenMoeglich, false);
+    assert.equal((await hole(ohne, 'POST', '/api/beenden', { ...chef2, ...schutz }, '{}')).status, 409);
+  } finally {
+    server.close();
+    ohne.close();
+  }
+});

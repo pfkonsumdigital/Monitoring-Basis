@@ -46,8 +46,32 @@ test('Eigenständiges Beispielmodul: liest Einstellungen, schreibt gültige stat
     assert.equal(eintrag.status, 'warnung');
     assert.deepEqual(eintrag.messwerte, { dateien: 2, veraltet: 1 });
     assert.match(eintrag.details[0], /^alt\.csv/);
-    assert.equal(eintrag.version, '1.0.0');
+    assert.equal(eintrag.version, '1.1.0');
     assert.ok(Math.abs(Date.parse(eintrag.naechsterLauf) - Date.parse(eintrag.ende) - 10 * 60_000) < 1000);
+  } finally {
+    await rm(ordner, { recursive: true, force: true });
+  }
+});
+
+test('Eigenständiges Beispielmodul: alter Befehl beim Start gilt nicht, befehl.json beendet den Dauerbetrieb', async () => {
+  const { spawn } = await import('node:child_process');
+  const ordner = await mkdtemp(path.join(tmpdir(), 'mb-bsp-'));
+  try {
+    await cp(path.join(beispiele, 'ordnerpruefung'), ordner, { recursive: true });
+    const befehl = path.join(ordner, 'befehl.json');
+    await writeFile(befehl, JSON.stringify({ befehl: 'beenden', zeit: '2026-10-01T00:00:00Z', von: 'alt' }));
+    const kind = spawn(process.execPath, [path.join(ordner, 'modul.js')], { stdio: 'ignore' });
+    const ende = new Promise((r) => kind.once('exit', (code) => r(code)));
+    let beendet = false;
+    ende.then(() => { beendet = true; });
+    await new Promise((r) => setTimeout(r, 3000));
+    assert.equal(beendet, false, 'läuft trotz altem Befehl weiter');
+    assert.ok(JSON.parse(await readFile(path.join(ordner, 'status.json'), 'utf8')).zeit, 'hat einen Lauf gemeldet');
+    await writeFile(befehl, JSON.stringify({ befehl: 'beenden', zeit: new Date().toISOString(), von: 'patrick' }));
+    const code = await Promise.race([ende, new Promise((r) => setTimeout(() => r('zu langsam'), 6000))]);
+    if (code === 'zu langsam') kind.kill();
+    assert.equal(code, 0);
+    await assert.rejects(readFile(befehl), /ENOENT/, 'Befehl wurde entfernt');
   } finally {
     await rm(ordner, { recursive: true, force: true });
   }

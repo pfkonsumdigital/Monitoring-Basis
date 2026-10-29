@@ -203,6 +203,7 @@ modules\ftp\
   module.json         vom Modul:  Name, Typ, Version, Einstellungsfelder, erwarteter Takt
   einstellungen.json  schreibt die Basis (Formular „Einstellungen“), liest das Modul
   status.json         schreibt das eigenständige Modul nach jedem Lauf, liest die Basis
+  befehl.json         nur bei "befehlsdatei": true – legt die Basis zum Beenden ab, liest das Modul
 ```
 
 Basis und Modul sprechen sonst nicht miteinander. Ist die Basis aus, prüft das
@@ -251,7 +252,37 @@ Nach jedem Lauf schreibt das Modul `status.json`:
   ohne diese Angabe, bis letzte Meldung + `intervall_minuten`) plus
   `toleranz_minuten` (Standard 10), zeigt die Basis „Keine Meldung“.
 - `beispiele/ordnerpruefung/modul.js` ist eine vollständige Vorlage: Dauerbetrieb
-  mit Takt aus den Einstellungen oder einmalig mit `--einmal`.
+  mit Takt aus den Einstellungen oder einmalig mit `--einmal`, beendbar über
+  `befehl.json`.
+
+### Eigenständige Module über die Basis beenden und starten
+
+Ein eigenständiges Modul gibt in `module.json` an, wie die Basis es beenden
+kann. Nur dann zeigen die Details für Admins den Knopf **„Beenden“** (mit
+Rückfrage):
+
+| Angabe in `module.json` | Beenden | Starten |
+| --- | --- | --- |
+| `"dienst": "MonitoringFTP"` (Name des Windows-Dienstes) | Die Basis stoppt den Dienst (`sc.exe stop`). | Knopf **„Dienst starten“** (`sc.exe start`). |
+| `"befehlsdatei": true` | Die Basis legt `befehl.json` in den Modulordner, das Modul beendet sich selbst. | Nur auf dem Worker. |
+
+- Die Basis fasst nur den Dienst an, der in `module.json` steht. Stoppen und
+  Starten von Diensten klappt, wenn die Basis per Autostart (Konto SYSTEM)
+  oder als Administrator läuft; sonst zeigt die Oberfläche „Keine
+  Berechtigung“.
+- **Dienstzustand:** Bei Modulen mit `dienst` fragt die Basis alle 15 Sekunden
+  den Zustand ab und zeigt ihn in den Details. Ist der Dienst gestoppt (oder
+  nicht installiert), ohne dass ihn jemand über die Basis beendet hat, zeigt
+  die Basis **„Dienst gestoppt“** als Fehler und verschickt eine Mail.
+- **Beendet:** Über die Basis beendete Module zeigen „Beendet“ (mit Zeit und
+  Benutzer). Sie lösen keine „Keine Meldung“ und keine Mails aus – auch nicht
+  nach einem Neustart der Basis. Sobald das Modul wieder eine neue
+  `status.json` schreibt (oder über „Dienst starten“), gilt es wieder als
+  laufend.
+- **`befehl.json`** sieht so aus: `{"befehl": "beenden", "zeit": "2026-10-29T15:00:00Z", "von": "patrick"}`.
+  Das Modul prüft regelmäßig (die Vorlage alle 2 Sekunden), ob die Datei da
+  ist, löscht sie und beendet sich. **Beim Start eine vorhandene `befehl.json`
+  löschen** – ein alter Befehl gilt nicht.
 
 ### Einstellungsfelder
 
@@ -273,6 +304,11 @@ DPAPI ist vorgemerkt) – die Datei deshalb wie `config.json` schützen.
 **Pausieren:** Admins können ein Modul in den Details pausieren. Von der Basis
 gestartete Module laufen dann nicht; eigenständige Module werden nicht mehr
 überwacht (keine „Keine Meldung“). Die Pause übersteht Neustarts.
+
+**Prüfung abbrechen:** Läuft bei einem von der Basis gestarteten Modul gerade
+eine Prüfung, bricht „Prüfung abbrechen“ in den Details sie ab und pausiert
+das Modul. Der Lauf erscheint als Warnung „Prüfung wurde über die Basis
+beendet.“
 
 ### Von der Basis gestartet: Programm (beliebige Sprache)
 
@@ -345,14 +381,16 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
 | --- | --- |
 | Modul wechselt auf Fehler oder Warnung (auch Warnung → Fehler) | `[Monitoring] FEHLER: <Modul>` |
 | Eigenständiges Modul meldet sich nicht mehr | `[Monitoring] KEINE MELDUNG: <Modul>` |
+| Windows-Dienst eines Moduls ist gestoppt, ohne dass er über die Basis beendet wurde | `[Monitoring] DIENST GESTOPPT: <Modul>` |
 | Modul ist wieder OK | `[Monitoring] WIEDER OK: <Modul>` |
 | Problem besteht weiter (Abstand einstellbar, Standard 4 h) | `[Monitoring] ERINNERUNG: <Modul> – Fehler seit 6 h` |
+| Ein Admin beendet die Basis über die Oberfläche | `[Monitoring] Basis beendet durch <Benutzer>` |
 
 - Gemeldet wird nur der **Wechsel**, nicht jeder weitere fehlerhafte Lauf.
 - **Melden nach … Läufen** (Standard 1 = sofort): erst melden, wenn Fehler
   oder Warnung so viele Läufe hintereinander bestehen. „Keine Meldung“ und
   fehlerhafte Module (`module.json`) werden immer sofort gemeldet.
-- Pausierte Module lösen keine Mails aus. Der zuletzt gemeldete Zustand je
+- Pausierte und über die Basis beendete Module lösen keine Mails aus. Der zuletzt gemeldete Zustand je
   Modul wird gespeichert – ein Neustart der Basis verschickt nichts doppelt.
 - Schlägt der Versand fehl, steht das im Fehlerprotokoll; die Basis versucht
   es alle 5 Minuten erneut.
@@ -464,6 +502,17 @@ startet die Basis nach einem Absturz nach 10 Sekunden neu.
 **Neustart:** Admins finden oben den Knopf **„Neu starten“**. Er startet die
 Basis und alle Module neu, laufende Prüfungen werden dabei abgebrochen. Danach
 ist eine neue Anmeldung nötig. Alternativ `Start.exe --neustart`.
+
+**Beenden:** Admins finden oben den Knopf **„Beenden“**. Nach einer Rückfrage
+beendet sich die Basis; laufende Prüfungen werden abgebrochen. Mit dem Haken
+„Auch alle eigenständigen Module und ihre Windows-Dienste beenden“ beendet sie
+vorher alle eigenständigen Module, die das unterstützen (siehe „Eigenständige
+Module über die Basis beenden und starten“); ohne Haken laufen sie weiter. Ist
+die Benachrichtigung eingerichtet, geht eine Mail „Basis beendet“ an die
+Empfänger. Weder Starter noch Aufgabenplaner starten die Basis danach von
+selbst neu. Wieder starten: auf dem Worker `Start.exe` doppelklicken, im
+Aufgabenplaner die Aufgabe „Monitoring-Basis“ starten (dann wieder unter
+SYSTEM) oder den Rechner neu starten. Alternativ zum Knopf: `Start.exe --stop`.
 
 **Fehlerprotokoll:** Die Basis schreibt zwei Dateien in `logs\`:
 

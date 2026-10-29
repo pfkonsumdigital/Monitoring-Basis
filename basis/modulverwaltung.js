@@ -4,16 +4,20 @@ import { ladeModule } from './module.js';
 import { berechneAnsicht, leseStatus } from './modulansicht.js';
 import { ansicht as einstellungsAnsicht, passwoerter, schreibeAtomar, speichern as einstellungenSpeichern, wirksameWerte } from './einstellungen.js';
 import { melde } from './protokoll.js';
+import { beendeLaufendeModule } from './ausfuehrung.js';
+import { DienstFehler, Dienststeuerung } from './dienste.js';
 
 export const STATUS_DATEI = 'status.json';
+export const BEFEHL_DATEI = 'befehl.json';
 const FEHLVERSUCHE_BIS_MELDUNG = 4;
 
 // Kennt alle Module, liest neue/geänderte Module ohne Neustart ein, übernimmt die status.json
 // eigenständiger Module in den Verlauf und verwaltet Einstellungen und „aktiv“ (Pause).
 // Ein fehlerhaftes Modul betrifft immer nur sich selbst.
 export class Modulverwaltung {
-  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, nachTakt = null, geheimnisse = [], log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
-    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, nachTakt, geheimnisse, log, jetzt, intervallMs });
+  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, nachTakt = null, dienste = new Dienststeuerung(), abbrechen = beendeLaufendeModule, geheimnisse = [], log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
+    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, nachTakt, dienste, abbrechen, geheimnisse, log, jetzt, intervallMs });
+    this.dienstZustand = new Map();
     this.zustandDatei = path.join(datenOrdner, 'modulzustand.json');
     this.module = [];
     this.signaturen = new Map();
@@ -26,6 +30,7 @@ export class Modulverwaltung {
     try { this.zustand = JSON.parse(await readFile(this.zustandDatei, 'utf8')) ?? {}; } catch { this.zustand = {}; }
     await this.einlesen();
     await this.statusLesen();
+    await this.dienstePruefen();
     this.timer = setInterval(() => this.takt(), this.intervallMs);
     this.timer.unref?.();
   }
@@ -35,7 +40,7 @@ export class Modulverwaltung {
   async takt() {
     if (this.beschaeftigt) return;
     this.beschaeftigt = true;
-    try { await this.einlesen(); await this.statusLesen(); await this.nachTakt?.(this.ansichten()); }
+    try { await this.einlesen(); await this.statusLesen(); await this.dienstePruefen(); await this.nachTakt?.(this.ansichten()); }
     catch (fehler) { melde(this.log, 'fehler', 'Module', `Module konnten nicht gelesen werden: ${fehler.message}`, fehler); }
     finally { this.beschaeftigt = false; }
   }
@@ -60,7 +65,7 @@ export class Modulverwaltung {
         for (const p of await passwoerter(m)) if (!this.geheimnisse.includes(p)) this.geheimnisse.push(p);
       }
     }
-    for (const id of [...this.signaturen.keys()]) if (!ids.has(id)) { this.signaturen.delete(id); this.statusMerker.delete(id); }
+    for (const id of [...this.signaturen.keys()]) if (!ids.has(id)) { this.signaturen.delete(id); this.statusMerker.delete(id); this.dienstZustand.delete(id); }
     this.module = neu;
     this.planer?.setzeModule(this.planbar());
   }
@@ -94,7 +99,33 @@ export class Modulverwaltung {
       if (letztes?.ende === eintrag.ende) continue;
       if (letztes && Date.parse(letztes.ende ?? letztes.beginn) > Date.parse(eintrag.ende)) continue;
       await this.uebernehmen(m.id, eintrag);
+      // Ein beendetes Modul, das sich danach wieder meldet, läuft wieder.
+      const beendet = this.zustand[m.id]?.beendet;
+      if (beendet && Date.parse(eintrag.ende) > Date.parse(beendet.zeit)) {
+        await this.zustandAendern(m.id, { beendet: null });
+        this.log(`Modul ${m.id} meldet sich wieder und gilt nicht mehr als beendet.`);
+      }
     }
+  }
+
+  // Fragt den Zustand der Windows-Dienste ab, die Module in module.json angeben.
+  async dienstePruefen() {
+    const mitDienst = this.module.filter((m) => !m.fehler && m.dienst);
+    await Promise.all(mitDienst.map(async (m) => {
+      const neu = await this.dienste.zustand(m.dienst);
+      const alt = this.dienstZustand.get(m.id);
+      this.dienstZustand.set(m.id, neu);
+      if (alt && alt.zustand !== neu.zustand && !['startet', 'stoppt', 'unbekannt'].includes(neu.zustand)) {
+        this.log(`Windows-Dienst ${m.dienst} (Modul ${m.id}): ${neu.zustand}.`);
+      }
+    }));
+  }
+
+  async zustandAendern(id, aenderung) {
+    const neu = { ...this.zustand[id], ...aenderung };
+    for (const k of Object.keys(neu)) if (neu[k] === null || neu[k] === undefined) delete neu[k];
+    this.zustand = { ...this.zustand, [id]: neu };
+    await schreibeAtomar(this.zustandDatei, this.zustand);
   }
 
   finde(id) { return this.module.find((m) => m.id === id) ?? null; }
@@ -107,6 +138,8 @@ export class Modulverwaltung {
       geplant: this.planer?.naechster(m.id) ?? null,
       erkanntSeit: this.erkannt.get(m.id) ?? null,
       statusFehler: this.statusMerker.get(m.id)?.fehler ?? null,
+      beendet: this.zustand[m.id]?.beendet ?? null,
+      dienst: this.dienstZustand.get(m.id) ?? null,
       jetzt: this.jetzt(),
     });
   }
@@ -146,10 +179,80 @@ export class Modulverwaltung {
   async setzeAktiv(id, aktiv, benutzer) {
     const m = this.finde(id);
     if (!m || m.fehler) return false;
-    this.zustand = { ...this.zustand, [id]: { aktiv } };
-    await schreibeAtomar(this.zustandDatei, this.zustand);
+    await this.zustandAendern(id, { aktiv });
     this.log(`Modul ${id} ${aktiv ? 'fortgesetzt' : 'pausiert'} durch ${benutzer}.`);
     this.planer?.setzeModule(this.planbar());
     return true;
+  }
+
+  // Beendet ein Modul. Eigenständig: Windows-Dienst stoppen bzw. befehl.json schreiben und als „beendet“ merken
+  // (keine Alarme, bis es sich wieder meldet). Von der Basis gestartet: laufende Prüfung abbrechen und pausieren.
+  // Liefert { ok: true, text } oder { fehler } bzw. null, wenn das Modul unbekannt ist.
+  async beenden(id, benutzer) {
+    const m = this.finde(id);
+    if (!m || m.fehler) return null;
+    if (m.typ !== 'eigenstaendig') {
+      // Erst pausieren, dann abbrechen – sonst plant der Planer nach dem Abbruch den nächsten Lauf.
+      await this.zustandAendern(id, { aktiv: false });
+      this.planer?.setzeModule(this.planbar());
+      const abgebrochen = this.abbrechen(id);
+      const text = `Modul ${id} beendet durch ${benutzer}${abgebrochen ? ' (laufende Prüfung abgebrochen)' : ''}, pausiert.`;
+      this.log(text);
+      return { ok: true, text };
+    }
+    if (!m.dienst && !m.befehlsdatei) return { fehler: 'Dieses Modul gibt in module.json nicht an, wie es beendet werden kann („dienst“ oder „befehlsdatei“).' };
+    const zeit = new Date(this.jetzt()).toISOString();
+    let wie;
+    if (m.dienst) {
+      try { await this.dienste.beenden(m.dienst); }
+      catch (fehler) {
+        if (!(fehler instanceof DienstFehler)) throw fehler;
+        melde(this.log, 'fehler', `Modul ${id}`, `Windows-Dienst ${m.dienst} konnte nicht beendet werden: ${fehler.message}`);
+        return { fehler: fehler.message };
+      }
+      wie = `Windows-Dienst „${m.dienst}“ gestoppt`;
+    } else {
+      await schreibeAtomar(path.join(m.ordner, BEFEHL_DATEI), { befehl: 'beenden', zeit, von: benutzer });
+      wie = 'Befehl zum Beenden in befehl.json abgelegt';
+    }
+    await this.zustandAendern(id, { beendet: { zeit, von: benutzer } });
+    if (m.dienst) await this.dienstePruefen();
+    const text = `Modul ${id} beendet durch ${benutzer} (${wie}).`;
+    this.log(text);
+    return { ok: true, text };
+  }
+
+  // Startet den in module.json eingetragenen Windows-Dienst eines eigenständigen Moduls.
+  async starten(id, benutzer) {
+    const m = this.finde(id);
+    if (!m || m.fehler) return null;
+    if (m.typ !== 'eigenstaendig' || !m.dienst) return { fehler: 'Nur Module mit eingetragenem Windows-Dienst („dienst“ in module.json) können über die Basis gestartet werden.' };
+    try { await this.dienste.starten(m.dienst); }
+    catch (fehler) {
+      if (!(fehler instanceof DienstFehler)) throw fehler;
+      melde(this.log, 'fehler', `Modul ${id}`, `Windows-Dienst ${m.dienst} konnte nicht gestartet werden: ${fehler.message}`);
+      return { fehler: fehler.message };
+    }
+    await this.zustandAendern(id, { beendet: null });
+    await this.dienstePruefen();
+    const text = `Modul ${id} gestartet durch ${benutzer} (Windows-Dienst „${m.dienst}“).`;
+    this.log(text);
+    return { ok: true, text };
+  }
+
+  // Beim Beenden der Basis: alle eigenständigen Module beenden, die das unterstützen und noch laufen.
+  // Liefert die Liste der Fehlermeldungen (leer = alles beendet).
+  async alleBeenden(benutzer) {
+    const fehler = [];
+    for (const m of this.module) {
+      if (m.fehler || m.typ !== 'eigenstaendig' || !(m.dienst || m.befehlsdatei) || this.zustand[m.id]?.beendet) continue;
+      try {
+        const ergebnis = await this.beenden(m.id, benutzer);
+        if (ergebnis?.fehler) fehler.push(`${m.name}: ${ergebnis.fehler}`);
+      } catch (f) {
+        fehler.push(`${m.name}: ${f.message}`);
+      }
+    }
+    return fehler;
   }
 }

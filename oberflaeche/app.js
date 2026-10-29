@@ -1,6 +1,7 @@
 'use strict';
 
-const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', unbekannt: 'Noch keine Meldung', inaktiv: 'Pausiert', laeuft: 'Läuft …' };
+const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', unbekannt: 'Noch keine Meldung', inaktiv: 'Pausiert', laeuft: 'Läuft …', beendet: 'Beendet', 'dienst-gestoppt': 'Dienst gestoppt' };
+const DIENST_TEXT = { laeuft: 'läuft', gestoppt: 'gestoppt', startet: 'wird gestartet …', stoppt: 'wird beendet …', pausiert: 'angehalten', fehlt: 'nicht installiert', unbekannt: 'Zustand unbekannt', 'nicht-verfuegbar': 'nur unter Windows abfragbar' };
 const $ = (id) => document.getElementById(id);
 let offenesModul = null;
 let istAdmin = false;
@@ -32,6 +33,8 @@ function textZuModul(m) {
   }
   if (m.statusFehler) return `Meldung nicht lesbar: ${m.statusFehler}`;
   if (m.anzeige === 'inaktiv') return 'Pausiert – wird nicht überwacht.';
+  if (m.anzeige === 'beendet') return `Beendet ${relativ(m.beendet)}${m.beendetVon ? ` durch ${m.beendetVon}` : ''} – wird nicht überwacht, bis es sich wieder meldet.`;
+  if (m.anzeige === 'dienst-gestoppt') return m.dienst?.fehler ?? `Windows-Dienst „${m.dienst?.name}“ ist gestoppt.`;
   return m.letztes?.zusammenfassung ?? (m.betriebsart === 'eigenstaendig' ? 'Wartet auf die erste Meldung des Moduls.' : 'Noch nicht geprüft.');
 }
 
@@ -45,7 +48,7 @@ function zeitenText(m) {
   const letzte = m.letztes?.ende ?? m.letztes?.beginn;
   if (letzte) teile.push(`${m.betriebsart === 'eigenstaendig' ? 'Letzte Meldung' : 'Geprüft'} ${relativ(letzte)}`);
   if (m.problemLaeufe && m.problemSeit) teile.push(`Problem seit ${relativ(m.problemSeit)} (${m.problemLaeufe} ${m.problemLaeufe === 1 ? 'Lauf' : 'Läufe'})`);
-  if (m.naechsterLauf && !m.laeuft && m.anzeige !== 'inaktiv' && m.anzeige !== 'keine-meldung') teile.push(`nächster Lauf ${relativ(m.naechsterLauf)}`);
+  if (m.naechsterLauf && !m.laeuft && !['inaktiv', 'beendet', 'keine-meldung', 'dienst-gestoppt'].includes(m.anzeige)) teile.push(`nächster Lauf ${relativ(m.naechsterLauf)}`);
   else if (m.betriebsart === 'basis' && !m.intervallMinuten && !m.fehler) teile.push('nur manuell');
   return teile.join(' · ');
 }
@@ -79,11 +82,12 @@ async function aktualisieren() {
     $('protokoll-oeffnen').hidden = !daten.admin;
     $('benachrichtigung-oeffnen').hidden = !daten.admin;
     $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
+    $('beenden-oeffnen').hidden = !daten.beendenMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
     letzteModule = daten.module;
     const zaehler = { ok: 0, warnung: 0, fehler: 0, 'keine-meldung': 0 };
     for (const m of daten.module) {
-      const s = m.anzeige === 'modulfehler' ? 'fehler' : m.anzeige;
+      const s = ['modulfehler', 'dienst-gestoppt'].includes(m.anzeige) ? 'fehler' : m.anzeige;
       if (s in zaehler) zaehler[s]++;
     }
     for (const [s, n] of Object.entries(zaehler)) $(`anzahl-${s}`).textContent = n;
@@ -126,7 +130,9 @@ async function detailsFuellen(m) {
   $('details-fakten').replaceChildren(
     ...fakt('Betriebsart', m.betriebsart === 'eigenstaendig' ? `Eigenständig${m.intervallMinuten ? `, meldet sich etwa alle ${m.intervallMinuten} min` : ''}` : `Von der Basis gestartet${m.intervallMinuten ? `, alle ${m.intervallMinuten} min` : ', nur manuell'}`),
     ...fakt(m.betriebsart === 'eigenstaendig' ? 'Letzte Meldung' : 'Letzte Prüfung', l ? `${zeit(l.ende ?? l.beginn)}${Number.isFinite(l.dauerMs) ? ` · Dauer ${(l.dauerMs / 1000).toFixed(1)} s` : ''}` : 'noch keine'),
-    ...fakt('Nächster Lauf', m.naechsterLauf ? `${zeit(m.naechsterLauf)} (${relativ(m.naechsterLauf)})` : null),
+    ...fakt('Windows-Dienst', m.dienst ? `${m.dienst.name} – ${DIENST_TEXT[m.dienst.zustand] ?? m.dienst.zustand}` : null),
+    ...fakt('Beendet', m.beendet ? `${zeit(m.beendet)}${m.beendetVon ? ` durch ${m.beendetVon}` : ''}` : null),
+    ...fakt('Nächster Lauf', m.naechsterLauf && !['inaktiv', 'beendet'].includes(m.anzeige) ? `${zeit(m.naechsterLauf)} (${relativ(m.naechsterLauf)})` : null),
     ...fakt('Überfällig seit', m.ueberfaelligSeit ? zeit(m.ueberfaelligSeit) : null),
     ...fakt('Problem seit', m.problemSeit ? `${zeit(m.problemSeit)} · ${m.problemLaeufe} ${m.problemLaeufe === 1 ? 'Lauf' : 'Läufe'} ohne OK` : null),
     ...fakt('Verfügbarkeit 24 h', m.fehler ? null : prozent(m.verfuegbarkeit?.h24)),
@@ -143,6 +149,24 @@ async function detailsFuellen(m) {
     aktualisieren();
   };
   $('details-einstellungen').onclick = () => einstellungenOeffnen(m);
+  // Beenden mit Rückfrage auf demselben Knopf (zweiter Klick innerhalb von 5 s).
+  const beendenKnopf = $('details-beenden');
+  if (beendenKnopf.dataset.modul !== m.id) { beendenKnopf.dataset.modul = m.id; beendenKnopf.dataset.bestaetigen = ''; }
+  beendenKnopf.hidden = !m.kannBeenden;
+  beendenKnopf.title = m.betriebsart === 'eigenstaendig' ? (m.dienst ? `Stoppt den Windows-Dienst ${m.dienst.name}` : 'Bittet das Modul über befehl.json, sich zu beenden') : 'Bricht die laufende Prüfung ab und pausiert das Modul';
+  if (!beendenKnopf.dataset.bestaetigen) beendenKnopf.textContent = m.betriebsart === 'eigenstaendig' ? 'Beenden' : 'Prüfung abbrechen';
+  beendenKnopf.onclick = () => {
+    if (!beendenKnopf.dataset.bestaetigen) {
+      beendenKnopf.dataset.bestaetigen = '1';
+      beendenKnopf.textContent = 'Wirklich beenden?';
+      setTimeout(() => { if (beendenKnopf.dataset.bestaetigen) { beendenKnopf.dataset.bestaetigen = ''; beendenKnopf.textContent = m.betriebsart === 'eigenstaendig' ? 'Beenden' : 'Prüfung abbrechen'; } }, 5000);
+      return;
+    }
+    beendenKnopf.dataset.bestaetigen = '';
+    modulAktion(m, 'beenden', beendenKnopf);
+  };
+  $('details-starten').hidden = !m.kannStarten;
+  $('details-starten').onclick = () => modulAktion(m, 'starten', $('details-starten'));
   const messwerte = Object.entries(l?.messwerte ?? {});
   $('details-messwerte-titel').hidden = !messwerte.length;
   $('details-messwerte').replaceChildren(...messwerte.flatMap(([name, wert]) => fakt(name, wert.toLocaleString('de-DE'))));
@@ -158,10 +182,28 @@ async function detailsFuellen(m) {
   }));
 }
 
+const aktionMeldung = (text, art = '') => { $('details-aktion-meldung').textContent = text; $('details-aktion-meldung').dataset.art = art; };
+
+async function modulAktion(m, aktion, knopf) {
+  knopf.disabled = true;
+  aktionMeldung(aktion === 'beenden' ? 'Wird beendet …' : 'Dienst wird gestartet …');
+  try {
+    const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/${aktion}`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } });
+    const daten = await antwort.json().catch(() => ({}));
+    aktionMeldung(antwort.ok ? (aktion === 'beenden' ? 'Beendet.' : 'Dienst gestartet.') : (daten.fehler || 'Nicht möglich.'), antwort.ok ? 'ok' : 'fehler');
+  } catch (fehler) {
+    if (fehler.message !== 'abgemeldet') aktionMeldung('Keine Verbindung zur Monitoring-Basis.', 'fehler');
+  } finally {
+    knopf.disabled = false;
+    aktualisieren();
+  }
+}
+
 function detailsOeffnen(id) {
   const m = letzteModule.find((x) => x.id === id);
   if (!m) return;
   offenesModul = id;
+  aktionMeldung('');
   detailsFuellen(m);
   if (!$('details').open) $('details').showModal();
 }
@@ -479,7 +521,34 @@ $('neustart-ja').addEventListener('click', async () => {
   await aufNeustartWarten(neustartMeldung);
 });
 
+// ---- Basis beenden (nur Admins) ----
+const beendenMeldung = (text, art = '') => { $('beenden-meldung').textContent = text; $('beenden-meldung').dataset.art = art; };
+$('beenden-oeffnen').addEventListener('click', () => { beendenMeldung(''); $('beenden-module').checked = false; $('beenden-ja').disabled = false; $('beenden').showModal(); });
+$('beenden-schliessen').addEventListener('click', () => $('beenden').close());
+$('beenden-nein').addEventListener('click', () => $('beenden').close());
+$('beenden-ja').addEventListener('click', async () => {
+  $('beenden-ja').disabled = true;
+  const mitModulen = $('beenden-module').checked;
+  let antwort;
+  try { antwort = await senden('/api/beenden', { module: mitModulen }); }
+  catch (fehler) { if (fehler.message !== 'abgemeldet') beendenMeldung('Keine Verbindung zur Monitoring-Basis.', 'fehler'); $('beenden-ja').disabled = false; return; }
+  if (!antwort.ok) {
+    const { fehler } = await antwort.json().catch(() => ({}));
+    beendenMeldung(fehler || 'Beenden nicht möglich.', 'fehler');
+    $('beenden-ja').disabled = false;
+    return;
+  }
+  clearInterval(aktualisierer);
+  $('beenden').close();
+  $('details').close();
+  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen']) $(id).hidden = true;
+  for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
+  $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
+  $('beendet-seite').hidden = false;
+  document.title = 'Monitoring – beendet';
+});
+
 $('details-schliessen').addEventListener('click', () => $('details').close());
 $('details').addEventListener('close', () => { offenesModul = null; });
 aktualisieren();
-setInterval(aktualisieren, 10_000);
+const aktualisierer = setInterval(aktualisieren, 10_000);

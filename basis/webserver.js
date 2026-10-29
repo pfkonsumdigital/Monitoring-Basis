@@ -62,7 +62,7 @@ export function istInterneAdresse(adresse) {
 
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -123,7 +123,19 @@ export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, 
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.ansichten() });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), beendenMoeglich: Boolean(sitzung.admin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.ansichten() });
+      }
+      if (weg === '/api/beenden') {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (!beenden) return json(res, 409, { fehler: 'Beenden ist hier nicht möglich.' });
+        let eingabe;
+        try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const mitModulen = eingabe?.module === true;
+        log(`Beenden angefordert durch ${sitzung.benutzer}${mitModulen ? ' (mit allen Modulen)' : ''}.`);
+        setTimeout(() => beenden({ benutzer: sitzung.benutzer, mitModulen }), 200);
+        return json(res, 202, { beendet: true });
       }
       if (weg === '/api/protokoll' || weg === '/api/protokoll/download' || weg === '/api/neustart') {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
@@ -197,7 +209,7 @@ export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, 
         }
       }
 
-      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv)$/.exec(weg);
+      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten)$/.exec(weg);
       const modul = treffer && module.finde(treffer[1]);
       if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });
       if (treffer?.[2] === 'verlauf' && req.method === 'GET') {
@@ -211,6 +223,15 @@ export function erstelleAnwendung({ module, benachrichtigung = null, anmeldung, 
         if (ergebnis !== 'gestartet') return json(res, 409, { fehler: { fehlerhaft: 'Das Modul ist fehlerhaft konfiguriert.', eigenstaendig: 'Dieses Modul läuft eigenständig und meldet sich selbst.', laeuft: 'Die Prüfung läuft bereits.' }[ergebnis] ?? 'Nicht möglich.' });
         log(`Prüfung von ${modul.id} manuell gestartet durch ${sitzung.benutzer}.`);
         return json(res, 202, { gestartet: true });
+      }
+      if (treffer?.[2] === 'beenden' || treffer?.[2] === 'starten') {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
+        const ergebnis = await (treffer[2] === 'beenden' ? module.beenden(modul.id, sitzung.benutzer) : module.starten(modul.id, sitzung.benutzer));
+        if (!ergebnis) return json(res, 404, { fehler: 'Modul unbekannt.' });
+        return json(res, ergebnis.fehler ? 409 : 200, ergebnis);
       }
       if (treffer?.[2] === 'einstellungen' || treffer?.[2] === 'aktiv') {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });

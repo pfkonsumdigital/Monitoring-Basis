@@ -5,13 +5,24 @@
 //
 // Das Modul braucht die Basis nicht: Es liest einstellungen.json (von der Basis gepflegt) und
 // schreibt nach jedem Lauf status.json in seinen Ordner. Die Basis liest diese Datei.
-import { readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+// Mit "befehlsdatei": true in module.json kann die Basis es beenden: Sie legt befehl.json ab,
+// das Modul sieht spätestens nach 2 Sekunden nach, löscht die Datei und beendet sich.
+import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ORDNER = path.dirname(fileURLToPath(import.meta.url));
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const STANDARD = { max_alter_stunden: 2, leer_ist_fehler: false, takt_minuten: 5 };
+const BEFEHL = path.join(ORDNER, 'befehl.json');
+
+// Liefert true, wenn die Basis das Beenden angefordert hat (und entfernt den Befehl).
+async function beendenAngefordert() {
+  try { if (JSON.parse(await readFile(BEFEHL, 'utf8')).befehl !== 'beenden') return false; }
+  catch { return false; }
+  await rm(BEFEHL, { force: true });
+  return true;
+}
 
 async function einstellungen() {
   try { return { ...STANDARD, ...JSON.parse(await readFile(path.join(ORDNER, 'einstellungen.json'), 'utf8')) }; }
@@ -67,9 +78,15 @@ async function lauf() {
 if (process.argv.includes('--einmal')) {
   await lauf();
 } else {
+  // Ein Befehl von vor dem Start gilt nicht (sonst würde das Modul sofort wieder enden).
+  await rm(BEFEHL, { force: true });
   // Dauerbetrieb: Takt wird bei jedem Lauf neu aus den Einstellungen gelesen.
-  for (;;) {
+  // Zwischen den Läufen alle 2 Sekunden nachsehen, ob die Basis das Beenden angefordert hat.
+  warten: for (;;) {
     const taktMs = await lauf().catch(() => 60_000);
-    await new Promise((r) => setTimeout(r, taktMs));
+    for (let gewartet = 0; gewartet < taktMs; gewartet += 2000) {
+      if (await beendenAngefordert()) break warten;
+      await new Promise((r) => setTimeout(r, Math.min(2000, taktMs - gewartet)));
+    }
   }
 }

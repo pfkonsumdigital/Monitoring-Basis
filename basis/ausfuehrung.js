@@ -47,26 +47,33 @@ function beende(kind) {
   }
 }
 
-// Gerade laufende Modulprozesse, damit Neustart und Beenden sie mitnehmen können.
-const laufende = new Set();
+// Gerade laufende Modulprozesse (Prozess → Modul-ID), damit Neustart und Beenden sie mitnehmen können.
+const laufende = new Map();
+const abgebrochen = new WeakSet();
 
-export function beendeLaufendeModule() {
-  for (const kind of laufende) beende(kind);
-  return laufende.size;
+export function beendeLaufendeModule(modulId = null) {
+  let anzahl = 0;
+  for (const [kind, id] of laufende) {
+    if (modulId !== null && id !== modulId) continue;
+    abgebrochen.add(kind);
+    beende(kind);
+    anzahl++;
+  }
+  return anzahl;
 }
 
-function starte(befehl, argumente, { cwd, env, timeoutMs, spawnImpl }) {
+function starte(befehl, argumente, { cwd, env, timeoutMs, spawnImpl, modulId = null }) {
   return new Promise((resolve) => {
     let stdout = '', stderr = '', zeitUeberschritten = false;
     let kind;
     try { kind = spawnImpl(befehl, argumente, { cwd, env, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] }); }
     catch (fehler) { resolve({ startFehler: fehler }); return; }
-    laufende.add(kind);
+    laufende.set(kind, modulId);
     const timer = setTimeout(() => { zeitUeberschritten = true; beende(kind); }, timeoutMs);
     kind.stdout.on('data', (teil) => { if (stdout.length < MAX_AUSGABE) stdout += teil; });
     kind.stderr.on('data', (teil) => { if (stderr.length < MAX_AUSGABE) stderr += teil; });
     kind.once('error', (fehler) => { laufende.delete(kind); clearTimeout(timer); resolve({ startFehler: fehler }); });
-    kind.once('close', (code) => { laufende.delete(kind); clearTimeout(timer); resolve({ code, stdout, stderr, zeitUeberschritten }); });
+    kind.once('close', (code) => { laufende.delete(kind); clearTimeout(timer); resolve({ code, stdout, stderr, zeitUeberschritten, abgebrochen: abgebrochen.has(kind) }); });
   });
 }
 
@@ -83,12 +90,14 @@ export async function fuehreAus(modul, { spawnImpl = spawn, jetzt = () => new Da
   try { if (modul.einstellungenLaden) einstellungen = await modul.einstellungenLaden(); } catch { /* Vorgaben verwenden */ }
   const env = { ...process.env, MONITOR_MODUL_ID: modul.id, MONITOR_EINSTELLUNGEN: JSON.stringify(einstellungen), MONITOR_MODUL_ORDNER: modul.ordner };
   const lauf = modul.typ === 'plugin'
-    ? await starte(process.execPath, [PLUGIN_HOST, modul.einstieg], { cwd: modul.ordner, env, timeoutMs: modul.timeoutMs, spawnImpl })
-    : await starte(modul.befehl, modul.argumente, { cwd: modul.arbeitsordner, env, timeoutMs: modul.timeoutMs, spawnImpl });
+    ? await starte(process.execPath, [PLUGIN_HOST, modul.einstieg], { cwd: modul.ordner, env, timeoutMs: modul.timeoutMs, spawnImpl, modulId: modul.id })
+    : await starte(modul.befehl, modul.argumente, { cwd: modul.arbeitsordner, env, timeoutMs: modul.timeoutMs, spawnImpl, modulId: modul.id });
 
   let ergebnis;
   if (lauf.startFehler) {
     ergebnis = { status: 'fehler', zusammenfassung: `Modul konnte nicht gestartet werden (${lauf.startFehler.code || 'unbekannt'}). Befehl und Pfad prüfen.`, details: [], messwerte: {} };
+  } else if (lauf.abgebrochen) {
+    ergebnis = { status: 'warnung', zusammenfassung: 'Prüfung wurde über die Basis beendet.', details: [], messwerte: {} };
   } else if (lauf.zeitUeberschritten) {
     ergebnis = { status: 'fehler', zusammenfassung: `Zeitlimit von ${modul.timeoutMs / 1000} Sekunden überschritten; Modul wurde beendet.`, details: [], messwerte: {} };
   } else {

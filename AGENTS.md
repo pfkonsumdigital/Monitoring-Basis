@@ -34,12 +34,14 @@
   Prüfungen gehören in eigenständige Module.
 - Module kennen nur den Andockvertrag: `module.json` (vom Modul),
   `einstellungen.json` (schreibt die Basis), `status.json` (schreibt ein
-  eigenständiges Modul) und das Ergebnis mit `status` (`ok`/`warnung`/`fehler`),
+  eigenständiges Modul), `befehl.json` (Befehl der Basis zum Beenden, nur bei
+  `"befehlsdatei": true`) und das Ergebnis mit `status` (`ok`/`warnung`/`fehler`),
   `zusammenfassung`, `details`, `messwerte`. Programme melden alternativ über
   Exitcode 0/1/2. Änderungen an diesem Vertrag müssen abwärtskompatibel sein
   und in README und CHANGELOG stehen.
 - Module und Basis laufen unabhängig voneinander. Eigenständige Module startet
-  die Basis nie; von der Basis gestartete Module laufen immer in einem eigenen
+  die Basis nie von sich aus – nur einen in `module.json` eingetragenen
+  Windows-Dienst auf Knopfdruck eines Admins; von der Basis gestartete Module laufen immer in einem eigenen
   Prozess mit Zeitlimit. Ein fehlerhaftes Modul darf nur sich selbst betreffen.
 
 ## Arbeitsweise beim Programmieren (Karpathy-Leitlinien)

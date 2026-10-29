@@ -101,8 +101,8 @@ export function pruefeEinstellungen(eingabe, bisher) {
   return Object.keys(feldfehler).length ? { feldfehler } : { werte };
 }
 
-const TITEL = { fehler: 'FEHLER', warnung: 'WARNUNG', 'keine-meldung': 'KEINE MELDUNG', 'wieder-ok': 'WIEDER OK', erinnerung: 'ERINNERUNG' };
-const STATUSTEXT = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', ok: 'OK' };
+const TITEL = { fehler: 'FEHLER', warnung: 'WARNUNG', 'keine-meldung': 'KEINE MELDUNG', 'dienst-gestoppt': 'DIENST GESTOPPT', 'wieder-ok': 'WIEDER OK', erinnerung: 'ERINNERUNG' };
+const STATUSTEXT = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'dienst-gestoppt': 'Dienst gestoppt', ok: 'OK' };
 const zeitText = (ms) => new Date(ms).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'short', timeStyle: 'short' });
 function dauerText(ms) {
   const min = Math.max(1, Math.round(ms / 60_000));
@@ -113,9 +113,10 @@ function dauerText(ms) {
 function kategorie(m, meldenNach) {
   if (m.anzeige === 'modulfehler') return 'fehler';
   if (m.anzeige === 'keine-meldung') return 'keine-meldung';
+  if (m.anzeige === 'dienst-gestoppt') return 'dienst-gestoppt';
   if (m.anzeige === 'ok') return 'ok';
   if (m.anzeige === 'fehler' || m.anzeige === 'warnung') return m.problemLaeufe >= meldenNach ? m.anzeige : null;
-  return null; // inaktiv, unbekannt, läuft
+  return null; // inaktiv, beendet, unbekannt, läuft
 }
 
 export class Benachrichtigung {
@@ -199,7 +200,7 @@ export class Benachrichtigung {
     return this.text([
       `Modul: ${m.name}${m.version ? ` (v${m.version})` : ''}`,
       `Status: ${STATUSTEXT[m.anzeige === 'modulfehler' ? 'fehler' : m.anzeige] ?? m.anzeige}`,
-      m.fehler ? `Problem: ${m.fehler}` : m.anzeige === 'keine-meldung' ? `Letzte Meldung: ${l ? zeitText(Date.parse(l.ende ?? l.beginn)) : 'noch nie'}` : l ? `Meldung: ${l.zusammenfassung}` : null,
+      m.fehler ? `Problem: ${m.fehler}` : m.anzeige === 'dienst-gestoppt' ? `Problem: ${m.dienst?.fehler ?? `Windows-Dienst „${m.dienst?.name}“ ist gestoppt.`}` : m.anzeige === 'keine-meldung' ? `Letzte Meldung: ${l ? zeitText(Date.parse(l.ende ?? l.beginn)) : 'noch nie'}` : l ? `Meldung: ${l.zusammenfassung}` : null,
       art !== 'wieder-ok' && seit ? `Seit: ${zeitText(seit)} (${dauerText(jetzt - seit)})` : null,
       m.problemLaeufe > 1 ? `Läufe ohne OK: ${m.problemLaeufe}` : null,
       ...(art !== 'wieder-ok' && l?.details?.length ? ['', 'Details:', ...l.details.slice(0, 20).map((d) => `- ${d}`), ...(l.details.length > 20 ? [`… und ${l.details.length - 20} weitere`] : [])] : []),
@@ -224,7 +225,7 @@ export class Benachrichtigung {
         if (k !== z.gemeldet) art = k === 'ok' ? 'wieder-ok' : k;
         else if (k !== 'ok' && this.werte.erinnerung_stunden > 0 && z.letzteMail && jetzt - z.letzteMail >= this.werte.erinnerung_stunden * STUNDE) art = 'erinnerung';
         if (!art) continue;
-        const seit = art === 'erinnerung' ? z.seit : (m.problemSeit ? Date.parse(m.problemSeit) : m.ueberfaelligSeit ? Date.parse(m.ueberfaelligSeit) : jetzt);
+        const seit = art === 'erinnerung' ? z.seit : k === 'dienst-gestoppt' ? jetzt : (m.problemSeit ? Date.parse(m.problemSeit) : m.ueberfaelligSeit ? Date.parse(m.ueberfaelligSeit) : jetzt);
         const titel = art === 'erinnerung' ? `ERINNERUNG: ${m.name} – ${STATUSTEXT[k]} seit ${dauerText(jetzt - z.seit)}` : `${TITEL[art]}: ${m.name}`;
         const eintrag = await this.versenden(art, `[Monitoring] ${titel}`, this.mailText(m, art, jetzt, seit), m.id);
         geaendert = true;
@@ -237,6 +238,22 @@ export class Benachrichtigung {
     } finally {
       this.laeuft = false;
     }
+  }
+
+  // Vor dem Beenden der Basis: Bescheid geben, dass bis zum nächsten Start nichts überwacht wird.
+  async basisBeendet(benutzer, mitModulen, fehler = []) {
+    if (!this.werte.aktiv || !this.eingerichtet()) return null;
+    const eintrag = await this.versenden('basis-beendet', `[Monitoring] Basis beendet durch ${benutzer}`, this.text([
+      `Die Monitoring-Basis wurde von ${benutzer} beendet.`,
+      'Bis zum nächsten Start werden keine Module überwacht und keine Benachrichtigungen verschickt.',
+      mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet.' : 'Eigenständige Module laufen weiter.',
+      ...(fehler.length ? ['', 'Nicht beendet:', ...fehler.map((f) => `- ${f}`)] : []),
+      '',
+      'Neu starten: auf dem Worker Start.exe ausführen oder im Aufgabenplaner die Aufgabe „Monitoring-Basis“ starten (oder Rechner neu starten).',
+      `\nZeit: ${zeitText(this.jetzt())}`,
+    ]));
+    await this.zustandSpeichern();
+    return eintrag;
   }
 
   async zustandSpeichern() {

@@ -113,7 +113,7 @@ async function starten(konfig, configDatei, protokoll) {
   };
   await updates.starten();
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -129,16 +129,26 @@ async function starten(konfig, configDatei, protokoll) {
     log(`Monitoring-Basis ${updates.installiert} läuft: https://${konfig.hostname}:${konfig.port}/`);
   }
 
-  const beenden = () => {
-    log('Monitoring-Basis wird beendet.');
+  // Beendet die Basis mit Code 0 – der Starter startet sie dann nicht neu, der Aufgabenplaner auch nicht.
+  // Über die Oberfläche (benutzer gesetzt) auf Wunsch samt eigenständiger Module und mit Mail.
+  let wirdBeendet = false;
+  async function beenden({ benutzer = null, mitModulen = false } = {}) {
+    if (wirdBeendet) return;
+    wirdBeendet = true;
+    log(benutzer ? `Monitoring-Basis wird beendet durch ${benutzer}${mitModulen ? ' (mit allen Modulen)' : ''}.` : 'Monitoring-Basis wird beendet.');
     planer.stop();
     module.stop();
     beendeLaufendeModule();
+    if (benutzer) {
+      const fehler = mitModulen ? await module.alleBeenden(benutzer).catch((f) => [f.message]) : [];
+      for (const f of fehler) melde(log, 'fehler', 'Basis', `Beim Beenden nicht beendet: ${f}`);
+      await Promise.race([benachrichtigung.basisBeendet(benutzer, mitModulen, fehler).catch(() => {}), new Promise((r) => setTimeout(r, 25_000))]);
+    }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
-  };
-  process.once('SIGINT', beenden);
-  process.once('SIGTERM', beenden);
+  }
+  process.once('SIGINT', () => beenden());
+  process.once('SIGTERM', () => beenden());
 }
 
 export async function main(args = process.argv.slice(2)) {
