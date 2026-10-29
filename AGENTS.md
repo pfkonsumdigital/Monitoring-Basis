@@ -13,6 +13,8 @@
   Fehlerbehebungen klar unterscheiden; die Benutzerdokumentation aktuell halten.
 - Bei Programmänderungen `npm test` ausführen, bei Änderungen in `launcher/`
   zusätzlich `go test ./...` und einen Windows-Build (`GOOS=windows`).
+- Versionsschema 0.Y.Z: neue Funktionen erhöhen Y (0.6.0), reine
+  Fehlerbehebungen erhöhen Z (0.5.1, 0.5.2).
 - Eine neue Version wird erst durch einen Tag `vX.Y.Z` als Update angeboten.
   Vorher Version in `package.json`/`package-lock.json` und einen passenden
   Abschnitt `## X.Y.Z` in `CHANGELOG.md` anlegen. Tags nur nach ausdrücklicher
