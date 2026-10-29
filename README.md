@@ -1,15 +1,17 @@
 # Monitoring-Basis
 
 Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
-**keine Fachlogik**. Sie kann nur vier Dinge:
+**keine Fachlogik**. Sie kann nur diese Dinge:
 
-1. Module finden
-2. Module nach Zeitplan oder auf Knopfdruck ausführen
-3. Ergebnisse speichern
-4. Ergebnisse auf einer HTTPS-Seite mit Login anzeigen
+1. Module finden – auch neue, ohne Neustart
+2. Meldungen eigenständiger Module einsammeln oder einfache Module selbst nach Zeitplan starten
+3. Ergebnisse speichern und auswerten (Status, „keine Meldung“, Fehler seit, Verfügbarkeit)
+4. Module über ein Formular einstellen und pausieren
+5. Alles auf einer Webseite mit Login anzeigen
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
-eigenständigen Modulen, die nur an die Basis andocken.
+Modulen. Module laufen unabhängig von der Basis, und die Basis läuft unabhängig
+von den Modulen.
 
 ```
 Monitoring-Basis/
@@ -97,7 +99,7 @@ Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 | `port` | Port der Seite | `8443` |
 | `host` | Netzwerkadresse, auf der gelauscht wird. `0.0.0.0` bedeutet alle Netzwerkkarten. | `0.0.0.0` |
 | `module_ordner`, `daten_ordner` | Ordner, relativ zur config.json | `modules`, `data` |
-| `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `200` |
+| `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `1000` |
 | `sitzung_stunden` | Dauer, bis eine erneute Anmeldung nötig ist | `12` |
 | `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, sonst Zertifikat, siehe unten | – |
 | `benutzer` | wird von `--benutzer-anlegen` gepflegt; `"admin": true` über `--admin` | – |
@@ -181,11 +183,98 @@ einen Hinweis ins Protokoll.
 
 Jedes Modul ist ein Unterordner in `modules/` mit einer `module.json`. Der
 Ordnername muss der `id` entsprechen und darf nur Kleinbuchstaben, Ziffern
-und Bindestriche enthalten. Nach dem Hinzufügen oder Ändern die Basis neu
-starten. Mit `node basis/main.js --module-pruefen` lassen sich alle Module
-vorab prüfen. Fehlerhafte Module erscheinen auch rot in der Oberfläche.
+und Bindestriche enthalten. Die Basis liest den Ordner alle 15 Sekunden neu
+ein: **neue, geänderte oder entfernte Module wirken ohne Neustart.** Mit
+`node basis/main.js --module-pruefen` lassen sich alle Module vorab prüfen.
+Ein fehlerhaftes Modul erscheint rot in der Oberfläche und stört die anderen
+nicht.
 
-### Variante 1: eigenständiges Programm (beliebige Sprache)
+Es gibt zwei Betriebsarten:
+
+| Betriebsart | `typ` | Wer startet das Modul? |
+| --- | --- | --- |
+| **Eigenständig** (empfohlen) | `eigenstaendig` | Das Modul selbst – eigener Dauerprozess, Dienst oder Aufgabe im Aufgabenplaner. Es läuft auch, wenn die Basis aus ist. |
+| **Von der Basis gestartet** | `programm`, `plugin` | Die Basis im Takt `intervall_minuten` oder über „Jetzt prüfen“, jeweils in einem eigenen Prozess mit Zeitlimit. |
+
+### Austausch über drei Dateien im Modulordner
+
+```
+modules\ftp\
+  module.json         vom Modul:  Name, Typ, Version, Einstellungsfelder, erwarteter Takt
+  einstellungen.json  schreibt die Basis (Formular „Einstellungen“), liest das Modul
+  status.json         schreibt das eigenständige Modul nach jedem Lauf, liest die Basis
+```
+
+Basis und Modul sprechen sonst nicht miteinander. Ist die Basis aus, prüft das
+Modul mit den zuletzt gespeicherten Einstellungen weiter.
+
+### Eigenständiges Modul
+
+```json
+{
+  "id": "ordnerpruefung",
+  "name": "Ordner auf veraltete Dateien prüfen",
+  "beschreibung": "Prüft, ob die Dateien jünger als X Stunden sind.",
+  "version": "1.0.0",
+  "typ": "eigenstaendig",
+  "intervall_minuten": 5,
+  "toleranz_minuten": 10,
+  "einstellungsfelder": [
+    { "schluessel": "ordner", "bezeichnung": "Ordner", "typ": "text", "pflicht": true },
+    { "schluessel": "max_alter_stunden", "bezeichnung": "Max. Dateialter (h)", "typ": "zahl", "min": 0.1, "standard": 2 }
+  ]
+}
+```
+
+Nach jedem Lauf schreibt das Modul `status.json`:
+
+```json
+{
+  "status": "warnung",
+  "zusammenfassung": "1 von 2 Dateien älter als 2 h.",
+  "details": ["alt.csv (geändert 29.10.2026, 10:29)"],
+  "messwerte": { "dateien": 2, "veraltet": 1 },
+  "zeit": "2026-10-29T14:30:01Z",
+  "beginn": "2026-10-29T14:30:00Z",
+  "dauer_ms": 1200,
+  "naechster_lauf": "2026-10-29T14:35:01Z",
+  "version": "1.0.0"
+}
+```
+
+- Pflicht sind `status` (`ok`, `warnung`, `fehler`) und `zeit` (Ende des
+  Laufs, ISO 8601). Alles andere ist optional.
+- Die Datei **erst temporär schreiben und dann umbenennen**, damit die Basis
+  nie eine halbe Datei liest. Eine einmal unlesbare Datei überspringt die Basis;
+  erst wenn sie etwa eine Minute lang unlesbar bleibt, zeigt sie einen Hinweis.
+- **Keine Meldung:** Meldet sich das Modul nicht bis `naechster_lauf` (oder,
+  ohne diese Angabe, bis letzte Meldung + `intervall_minuten`) plus
+  `toleranz_minuten` (Standard 10), zeigt die Basis „Keine Meldung“.
+- `beispiele/ordnerpruefung/modul.js` ist eine vollständige Vorlage: Dauerbetrieb
+  mit Takt aus den Einstellungen oder einmalig mit `--einmal`.
+
+### Einstellungsfelder
+
+| Feld | Bedeutung |
+| --- | --- |
+| `schluessel` | Name in `einstellungen.json` (Kleinbuchstaben, Ziffern, `_`) |
+| `bezeichnung`, `beschreibung` | Beschriftung und Hilfetext im Formular |
+| `typ` | `text`, `zahl` (mit `min`, `max`, `ganzzahl`), `schalter`, `auswahl` (mit `optionen`), `passwort` |
+| `pflicht` | Feld muss ausgefüllt sein |
+| `standard` | Wert, solange nichts gespeichert ist (nicht bei Passwörtern) |
+
+Nur Admins sehen und ändern Einstellungen. Passwörter zeigt die Basis nie
+wieder an („gesetzt“); ein leeres Passwortfeld lässt das gespeicherte
+unverändert. Jede Änderung steht mit Benutzer und Feldnamen (ohne Werte) im
+Protokoll, Passwörter werden aus Protokollen und Ergebnissen herausgefiltert.
+Sie liegen vorerst im Klartext in `einstellungen.json` (Verschlüsselung mit
+DPAPI ist vorgemerkt) – die Datei deshalb wie `config.json` schützen.
+
+**Pausieren:** Admins können ein Modul in den Details pausieren. Von der Basis
+gestartete Module laufen dann nicht; eigenständige Module werden nicht mehr
+überwacht (keine „Keine Meldung“). Die Pause übersteht Neustarts.
+
+### Von der Basis gestartet: Programm (beliebige Sprache)
 
 ```json
 {
@@ -208,11 +297,12 @@ Das Ergebnis meldet das Programm auf eine von zwei Arten:
   `{"status":"warnung","zusammenfassung":"2 Dateien zu alt","details":["a.csv: 2,4 h"],"messwerte":{"veraltet":2}}`
 
 `.cmd`- und `.bat`-Dateien werden über `cmd.exe` gestartet, siehe
-`beispiele/skript-beispiel`. Die Basis nutzt bewusst keine Shell.
-Einstellungen aus `"einstellungen"` erhält das Programm als JSON in der
-Umgebungsvariable `MONITOR_EINSTELLUNGEN`.
+`beispiele/skript-beispiel`. Die Basis nutzt bewusst keine Shell. Die
+Einstellungen (Vorgaben aus `"einstellungen"` plus gespeicherte Werte aus
+`einstellungen.json`) erhält das Programm als JSON in der Umgebungsvariable
+`MONITOR_EINSTELLUNGEN`.
 
-### Variante 2: Node.js-Plugin
+### Von der Basis gestartet: Node.js-Plugin
 
 ```json
 { "id": "speicherplatz", "name": "Speicherplatz", "typ": "plugin", "einstieg": "index.js", "intervall_minuten": 15, "einstellungen": { "pfad": "C:\\" } }
@@ -224,18 +314,23 @@ export async function pruefen({ einstellungen, modulId, modulOrdner }) {
 }
 ```
 
-### Für beide Varianten
+Für beide gilt: eigener Prozess mit Zeitlimit (`timeout_sekunden`, Standard
+60), ohne `intervall_minuten` nur über **„Jetzt prüfen“**, nie doppelt, der
+nächste Lauf zählt ab Ende des vorherigen. `"aktiv": false` in `module.json`
+pausiert ein Modul von Anfang an.
 
-- Jedes Modul läuft in einem **eigenen Prozess** mit Zeitlimit
-  (`timeout_sekunden`, Standard 60). Ein hängendes oder abstürzendes Modul
-  wird beendet, als Fehler angezeigt und beeinträchtigt die Basis nicht.
-- Ohne `intervall_minuten` läuft ein Modul nur über **„Jetzt prüfen“**.
-- `"aktiv": false` deaktiviert ein Modul.
-- Ein Modul läuft nie doppelt. Der nächste Lauf wird ab Ende des vorherigen
-  gezählt.
+### Für alle Module
 
 `status` ist immer `ok`, `warnung` oder `fehler`. `details` ist eine Liste
-von Texten, `messwerte` enthält nur Zahlen.
+von Texten (höchstens 100), `messwerte` enthält nur Zahlen. Die Basis behält
+je Modul die letzten `verlauf_anzahl` Läufe (Standard 1000), Details nur bei
+den neuesten 50.
+
+Die Übersicht zeigt je Modul den Status (OK, Warnung, Fehler, Keine Meldung,
+Pausiert, Modul fehlerhaft), die letzte Meldung, den nächsten Lauf, seit wann
+ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
+Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
+Problemen stehen oben.
 
 ## Updates
 

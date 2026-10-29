@@ -78,7 +78,10 @@ function letzteZeile(text) {
 // Führt ein Modul aus und liefert immer ein Ergebnis (nie eine Ausnahme).
 export async function fuehreAus(modul, { spawnImpl = spawn, jetzt = () => new Date() } = {}) {
   const beginn = jetzt();
-  const env = { ...process.env, MONITOR_MODUL_ID: modul.id, MONITOR_EINSTELLUNGEN: JSON.stringify(modul.einstellungen ?? {}) };
+  // Aktuelle Einstellungen (einstellungen.json, von der Basis gepflegt) bei jedem Lauf neu lesen.
+  let einstellungen = modul.einstellungen ?? {};
+  try { if (modul.einstellungenLaden) einstellungen = await modul.einstellungenLaden(); } catch { /* Vorgaben verwenden */ }
+  const env = { ...process.env, MONITOR_MODUL_ID: modul.id, MONITOR_EINSTELLUNGEN: JSON.stringify(einstellungen), MONITOR_MODUL_ORDNER: modul.ordner };
   const lauf = modul.typ === 'plugin'
     ? await starte(process.execPath, [PLUGIN_HOST, modul.einstieg], { cwd: modul.ordner, env, timeoutMs: modul.timeoutMs, spawnImpl })
     : await starte(modul.befehl, modul.argumente, { cwd: modul.arbeitsordner, env, timeoutMs: modul.timeoutMs, spawnImpl });

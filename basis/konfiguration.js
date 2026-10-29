@@ -8,7 +8,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) throw new BasisFehler('config.json muss ein JSON-Objekt sein.');
   const port = roh.port ?? 8443;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new BasisFehler('Ungültiger Port in config.json.');
-  const verlauf = roh.verlauf_anzahl ?? 200;
+  const verlauf = roh.verlauf_anzahl ?? 1000;
   if (!Number.isInteger(verlauf) || verlauf < 1 || verlauf > 10000) throw new BasisFehler('verlauf_anzahl muss zwischen 1 und 10000 liegen.');
   const stunden = roh.sitzung_stunden ?? 12;
   if (typeof stunden !== 'number' || !(stunden > 0) || stunden > 720) throw new BasisFehler('sitzung_stunden muss zwischen 0 und 720 liegen.');

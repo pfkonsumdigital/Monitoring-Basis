@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pruefeFelder } from './einstellungen.js';
 
 const ID_MUSTER = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const istText = (wert) => typeof wert === 'string' && wert.trim() !== '' && !/[\r\n\0]/.test(wert);
@@ -18,13 +19,25 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 3600) return fehler('timeout_sekunden muss eine ganze Zahl zwischen 1 und 3600 sein');
   const einstellungen = roh.einstellungen ?? {};
   if (typeof einstellungen !== 'object' || Array.isArray(einstellungen) || einstellungen === null) return fehler('einstellungen muss ein Objekt sein');
+  const { felder, fehler: feldFehler } = pruefeFelder(roh.einstellungsfelder);
+  if (feldFehler) return fehler(feldFehler);
+  if (roh.version !== undefined && (!istText(roh.version) || roh.version.length > 40)) return fehler('version ist ungültig');
+  if (roh.beschreibung !== undefined && (typeof roh.beschreibung !== 'string' || roh.beschreibung.length > 1000)) return fehler('beschreibung ist ungültig');
+  if (roh.repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(roh.repo)) return fehler('repo muss die Form "besitzer/repo" haben');
+  const toleranz = roh.toleranz_minuten ?? 10;
+  if (typeof toleranz !== 'number' || !(toleranz >= 1) || toleranz > 10080) return fehler('toleranz_minuten muss zwischen 1 und 10080 liegen');
 
   const modul = {
     id: roh.id, name: roh.name, typ: roh.typ, ordner: modulOrdner,
     aktiv: roh.aktiv !== false, intervallMinuten: intervall ?? null,
-    timeoutMs: timeout * 1000, einstellungen,
+    timeoutMs: timeout * 1000, einstellungen, felder,
+    version: roh.version ?? null, beschreibung: roh.beschreibung ?? '', repo: roh.repo ?? null,
+    toleranzMinuten: toleranz,
   };
-  if (roh.typ === 'programm') {
+  if (roh.typ === 'eigenstaendig') {
+    // Läuft selbst (eigener Dienst/Aufgabe) und schreibt status.json; die Basis startet es nie.
+    // intervall_minuten = erwarteter Abstand der Meldungen (für „keine Meldung“).
+  } else if (roh.typ === 'programm') {
     if (!istText(roh.befehl)) return fehler('befehl fehlt');
     const argumente = roh.argumente ?? [];
     if (!Array.isArray(argumente) || argumente.some((a) => typeof a !== 'string' || /[\0]/.test(a))) return fehler('argumente muss eine Liste von Texten sein');
@@ -38,7 +51,7 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
     if (path.relative(modulOrdner, einstieg).startsWith('..') || path.isAbsolute(path.relative(modulOrdner, einstieg))) return fehler('einstieg muss im Modulordner liegen');
     modul.einstieg = einstieg;
   } else {
-    return fehler('typ muss "programm" oder "plugin" sein');
+    return fehler('typ muss "eigenstaendig", "programm" oder "plugin" sein');
   }
   return { modul };
 }

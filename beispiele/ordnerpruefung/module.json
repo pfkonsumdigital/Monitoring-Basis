@@ -1,0 +1,14 @@
+{
+  "id": "ordnerpruefung",
+  "name": "Beispiel: Ordner auf veraltete Dateien prüfen",
+  "beschreibung": "Eigenständiges Beispielmodul. Prüft, ob die Dateien in einem Ordner jünger als eine einstellbare Anzahl Stunden sind. Vorlage für eigene Module.",
+  "version": "1.0.0",
+  "typ": "eigenstaendig",
+  "intervall_minuten": 5,
+  "einstellungsfelder": [
+    { "schluessel": "ordner", "bezeichnung": "Ordner", "typ": "text", "pflicht": true, "beschreibung": "Vollständiger Pfad, z. B. D:\\Austausch\\eingang" },
+    { "schluessel": "max_alter_stunden", "bezeichnung": "Max. Dateialter (Stunden)", "typ": "zahl", "min": 0.1, "max": 720, "standard": 2 },
+    { "schluessel": "leer_ist_fehler", "bezeichnung": "Leerer Ordner ist ein Fehler", "typ": "schalter", "standard": false },
+    { "schluessel": "takt_minuten", "bezeichnung": "Prüfen alle (Minuten)", "typ": "zahl", "min": 1, "max": 1440, "ganzzahl": true, "standard": 5 }
+  ]
+}

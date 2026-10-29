@@ -8,6 +8,17 @@ import path from 'node:path';
 import { Anmeldung, hashPasswort, passwortStimmt } from '../basis/anmeldung.js';
 import { erstelleAnwendung, starteServer } from '../basis/webserver.js';
 import { brauchtErneuerung, CloudflareDns, Zertifikatsverwaltung } from '../basis/zertifikat.js';
+import { berechneAnsicht } from '../basis/modulansicht.js';
+
+// Schlanke Modulverwaltung für Webserver-Tests (gleiche Schnittstelle wie basis/modulverwaltung.js).
+function testModule(liste, planer, speicher) {
+  return {
+    ansichten: () => liste.map((m) => ({ ...berechneAnsicht(m, { verlauf: !m.fehler && speicher.letztes?.(m.id) ? [speicher.letztes(m.id)] : [], laeuft: planer.laeuft?.(m.id) ?? false }) })),
+    finde: (id) => liste.find((m) => m.id === id) ?? null,
+    verlauf: (id, n) => speicher.verlauf(id, n),
+    jetztPruefen: (id) => { const m = liste.find((x) => x.id === id); return m.fehler ? 'fehlerhaft' : planer.jetztPruefen(id) ? 'gestartet' : 'laeuft'; },
+  };
+}
 
 async function testZertifikat(tage = 90, name = 'localhost') {
   const ordner = await mkdtemp(path.join(tmpdir(), 'mb-zert-'));
@@ -64,7 +75,7 @@ test('Webserver: HTTPS, Login, geschützte API, manuelle Prüfung, Abmelden', as
   const planer = { laeuft: () => false, naechster: () => null, jetztPruefen: (id) => { gestartet.push(id); return gestartet.length < 2; } };
   const speicher = { letztes: (id) => ({ status: 'ok', zusammenfassung: `alles gut ${id}` }), verlauf: () => [{ status: 'ok' }] };
   const anmeldung = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
-  const server = await starteServer({ anwendung: erstelleAnwendung({ module, planer, speicher, anmeldung, sitzungMs: 60_000 }), tls, host: '127.0.0.1', port: 0 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule(module, planer, speicher), anmeldung, sitzungMs: 60_000 }), tls, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const ca = tls.cert;
   try {
@@ -212,7 +223,7 @@ test('Webserver: Updates nur für Admins und nur mit Schutzkopf', async () => {
   const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
   const planer = { laeuft: () => false, naechster: () => null };
   const speicher = { letztes: () => null };
-  const server = await starteServer({ anwendung: erstelleAnwendung({ module: [], planer, speicher, anmeldung, updates, sitzungMs: 60_000 }), tls, host: '127.0.0.1', port: 0 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule([], planer, speicher), anmeldung, updates, sitzungMs: 60_000 }), tls, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const ca = tls.cert;
   const form = { 'content-type': 'application/x-www-form-urlencoded' };
@@ -258,7 +269,7 @@ test('Webserver: Fehlerprotokoll und Neustart nur für Admins; 500er landen im P
   const benutzer = { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } };
   const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
   const kaputt = { laeuft: () => { throw new Error('Planer kaputt'); }, naechster: () => null };
-  const server = await starteServer({ anwendung: erstelleAnwendung({ module: [{ id: 'x', name: 'x' }], planer: kaputt, speicher: { letztes: () => null }, anmeldung, protokoll, neustart: () => { neugestartet++; }, sitzungMs: 60_000, log: protokoll.alsFunktion() }), tls, host: '127.0.0.1', port: 0 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: { ansichten: () => kaputt.laeuft(), finde: () => null }, anmeldung, protokoll, neustart: () => { neugestartet++; }, sitzungMs: 60_000, log: protokoll.alsFunktion() }), tls, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const ca = tls.cert;
   const form = { 'content-type': 'application/x-www-form-urlencoded' };
@@ -307,7 +318,7 @@ test('Webserver ohne Verschlüsselung: HTTP-Login, Cookie ohne Secure, kein HSTS
   const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
   const anmeldung = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
   const planer = { laeuft: () => false, naechster: () => null };
-  const anwendung = erstelleAnwendung({ module: [], planer, speicher: { letztes: () => null }, anmeldung, sitzungMs: 60_000, verschluesselt: false, nurIntern: true, log });
+  const anwendung = erstelleAnwendung({ module: testModule([], planer, { letztes: () => null }), anmeldung, sitzungMs: 60_000, verschluesselt: false, nurIntern: true, log });
   const server = await starteServer({ anwendung, tls: null, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
@@ -345,4 +356,68 @@ test('Webserver ohne Verschlüsselung: HTTP-Login, Cookie ohne Secure, kein HSTS
     assert.match(res.text, /internen Netz/);
   }
   assert.equal(meldungen.filter(([s, m]) => s === 'warnung' && m.includes('8.8.8.8')).length, 1);
+});
+
+test('Webserver: Moduleinstellungen und Pause nur für Admins, Passwörter verborgen, eigenständige Module nicht startbar', async () => {
+  const http = await import('node:http');
+  const { Modulverwaltung } = await import('../basis/modulverwaltung.js');
+  const { Ergebnisspeicher } = await import('../basis/speicher.js');
+  const { Planer } = await import('../basis/planer.js');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-webmod-'));
+  const ordner = path.join(wurzel, 'modules', 'ftp');
+  await (await import('node:fs/promises')).mkdir(ordner, { recursive: true });
+  await writeFile(path.join(ordner, 'module.json'), JSON.stringify({ id: 'ftp', name: 'FTP', typ: 'eigenstaendig', intervall_minuten: 5, einstellungsfelder: [
+    { schluessel: 'server', bezeichnung: 'Server', typ: 'text', pflicht: true },
+    { schluessel: 'passwort', bezeichnung: 'Passwort', typ: 'passwort' },
+  ] }));
+  const speicher = new Ergebnisspeicher(path.join(wurzel, 'data'), 50);
+  const planer = new Planer({ ausfuehren: async () => ({}), speichern: async () => {} });
+  const module = new Modulverwaltung({ moduleOrdner: path.join(wurzel, 'modules'), datenOrdner: path.join(wurzel, 'data'), speicher, planer, uebernehmen: (id, e) => speicher.hinzufuegen(id, e) });
+  await module.start();
+  module.stop();
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, text: daten, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    const status = (await hole('GET', '/api/status', gast)).json();
+    assert.equal(status.module[0].anzeige, 'unbekannt');
+    assert.equal(status.module[0].betriebsart, 'eigenstaendig');
+    assert.equal(status.module[0].ordner, undefined, 'keine Pfade an die Oberfläche');
+
+    assert.equal((await hole('GET', '/api/module/ftp/einstellungen', gast)).status, 403);
+    assert.equal((await hole('POST', '/api/module/ftp/aktiv', { ...gast, ...schutz }, '{"aktiv":false}')).status, 403);
+    assert.equal((await hole('POST', '/api/module/ftp/einstellungen', chef, '{"werte":{}}')).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole('POST', '/api/module/ftp/pruefen', { ...gast, ...schutz })).status, 409, 'eigenständig');
+
+    const fehlt = await hole('POST', '/api/module/ftp/einstellungen', { ...chef, ...schutz }, '{"werte":{"passwort":"Ganz-Geheim-9"}}');
+    assert.equal(fehlt.status, 400);
+    assert.deepEqual(fehlt.json().feldfehler, { server: 'Pflichtfeld' });
+    const ok = await hole('POST', '/api/module/ftp/einstellungen', { ...chef, ...schutz }, '{"werte":{"server":"ftp.firma.de","passwort":"Ganz-Geheim-9"}}');
+    assert.equal(ok.status, 200);
+    assert.deepEqual(ok.json().werte, { server: 'ftp.firma.de', passwort: { gesetzt: true } });
+    const lesen = await hole('GET', '/api/module/ftp/einstellungen', chef);
+    assert.doesNotMatch(lesen.text, /Ganz-Geheim-9/);
+    assert.equal(lesen.json().felder.length, 2);
+
+    assert.equal((await hole('POST', '/api/module/ftp/aktiv', { ...chef, ...schutz }, '{"aktiv":"nein"}')).status, 400);
+    assert.equal((await hole('POST', '/api/module/ftp/aktiv', { ...chef, ...schutz }, '{"aktiv":false}')).status, 200);
+    assert.equal((await hole('GET', '/api/status', chef)).json().module[0].anzeige, 'inaktiv');
+    assert.equal((await hole('GET', '/api/module/gibtsnicht/einstellungen', chef)).status, 404);
+  } finally {
+    server.close();
+    await rm(wurzel, { recursive: true, force: true });
+  }
 });

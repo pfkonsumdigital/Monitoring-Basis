@@ -1,8 +1,10 @@
 'use strict';
 
-const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', unbekannt: 'Noch nicht geprüft', inaktiv: 'Inaktiv', laeuft: 'Läuft …' };
+const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', unbekannt: 'Noch keine Meldung', inaktiv: 'Pausiert', laeuft: 'Läuft …' };
 const $ = (id) => document.getElementById(id);
 let offenesModul = null;
+let istAdmin = false;
+let letzteModule = [];
 
 function relativ(iso) {
   if (!iso) return null;
@@ -12,38 +14,56 @@ function relativ(iso) {
   return sekunden < 0 ? `vor ${text}` : `in ${text}`;
 }
 const zeit = (iso) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'medium' });
-
-function anzeigeStatus(modul) {
-  if (modul.fehler) return 'fehler';
-  if (modul.laeuft) return 'laeuft';
-  if (!modul.aktiv) return 'inaktiv';
-  return modul.letztes?.status ?? 'unbekannt';
-}
+const el = (tag, eigenschaften = {}, ...kinder) => { const e = document.createElement(tag); Object.assign(e, eigenschaften); e.append(...kinder); return e; };
 
 async function api(weg, optionen = {}) {
   const antwort = await fetch(weg, { credentials: 'same-origin', ...optionen });
   if (antwort.status === 401) { location.href = '/login'; throw new Error('abgemeldet'); }
   return antwort;
 }
+const senden = (weg, koerper) => api(weg, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(koerper) });
 
-function kachelBauen(modul) {
+function textZuModul(m) {
+  if (m.fehler) return m.fehler;
+  if (m.anzeige === 'keine-meldung') {
+    const letzte = m.letztes?.ende ?? m.letztes?.beginn;
+    return letzte ? `Keine Meldung seit ${relativ(letzte).replace(/^vor /, '')} – läuft das Modul noch?` : 'Das Modul hat sich noch nie gemeldet – läuft es?';
+  }
+  if (m.statusFehler) return `Meldung nicht lesbar: ${m.statusFehler}`;
+  if (m.anzeige === 'inaktiv') return 'Pausiert – wird nicht überwacht.';
+  return m.letztes?.zusammenfassung ?? (m.betriebsart === 'eigenstaendig' ? 'Wartet auf die erste Meldung des Moduls.' : 'Noch nicht geprüft.');
+}
+
+function leisteFuellen(container, verlauf) {
+  container.replaceChildren(...verlauf.map((v) => el('span', { title: `${zeit(v.zeit)} – ${STATUS_TEXT[v.status] ?? v.status}`, className: `segment ${v.status}` })));
+  container.hidden = !verlauf.length;
+}
+
+function zeitenText(m) {
+  const teile = [];
+  const letzte = m.letztes?.ende ?? m.letztes?.beginn;
+  if (letzte) teile.push(`${m.betriebsart === 'eigenstaendig' ? 'Letzte Meldung' : 'Geprüft'} ${relativ(letzte)}`);
+  if (m.problemLaeufe && m.problemSeit) teile.push(`Problem seit ${relativ(m.problemSeit)} (${m.problemLaeufe} ${m.problemLaeufe === 1 ? 'Lauf' : 'Läufe'})`);
+  if (m.naechsterLauf && !m.laeuft && m.anzeige !== 'inaktiv' && m.anzeige !== 'keine-meldung') teile.push(`nächster Lauf ${relativ(m.naechsterLauf)}`);
+  else if (m.betriebsart === 'basis' && !m.intervallMinuten && !m.fehler) teile.push('nur manuell');
+  return teile.join(' · ');
+}
+
+function kachelBauen(m) {
   const kachel = $('kachel-vorlage').content.firstElementChild.cloneNode(true);
-  const status = anzeigeStatus(modul);
-  kachel.dataset.status = status;
-  kachel.querySelector('.name').textContent = modul.name;
+  kachel.dataset.status = m.anzeige;
+  kachel.querySelector('.name').textContent = m.name;
   const pill = kachel.querySelector('.status');
-  pill.textContent = STATUS_TEXT[status] ?? status;
-  pill.dataset.status = status;
-  kachel.querySelector('.zusammenfassung').textContent = modul.fehler ?? modul.letztes?.zusammenfassung ?? '';
-  const zeiten = [];
-  if (modul.letztes) zeiten.push(`Geprüft ${relativ(modul.letztes.beginn)}`);
-  if (modul.naechsterLauf && !modul.laeuft) zeiten.push(`nächste Prüfung ${relativ(modul.naechsterLauf)}`);
-  else if (!modul.intervallMinuten && !modul.fehler) zeiten.push('nur manuell');
-  kachel.querySelector('.zeiten').textContent = zeiten.join(' · ');
+  pill.textContent = STATUS_TEXT[m.anzeige] ?? m.anzeige;
+  pill.dataset.status = m.anzeige;
+  kachel.querySelector('.zusammenfassung').textContent = textZuModul(m);
+  leisteFuellen(kachel.querySelector('.leiste'), m.verlaufKurz ?? []);
+  kachel.querySelector('.zeiten').textContent = zeitenText(m);
   const knopf = kachel.querySelector('.pruefen');
-  knopf.disabled = Boolean(modul.fehler || modul.laeuft);
-  knopf.addEventListener('click', () => pruefen(modul.id, knopf));
-  kachel.querySelector('.mehr').addEventListener('click', () => detailsOeffnen(modul));
+  knopf.hidden = !m.kannPruefen;
+  knopf.disabled = m.laeuft;
+  knopf.addEventListener('click', () => pruefen(m.id, knopf));
+  kachel.querySelector('.mehr').addEventListener('click', () => detailsOeffnen(m.id));
   return kachel;
 }
 
@@ -51,22 +71,25 @@ async function aktualisieren() {
   try {
     const daten = await (await api('/api/status')).json();
     $('verbindung').hidden = true;
+    istAdmin = daten.admin;
     $('benutzer').textContent = daten.benutzer;
     $('version').textContent = daten.version ? `v${daten.version}` : '';
     $('updates-oeffnen').hidden = !daten.admin;
     $('protokoll-oeffnen').hidden = !daten.admin;
     $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
-    const zaehler = { ok: 0, warnung: 0, fehler: 0 };
+    letzteModule = daten.module;
+    const zaehler = { ok: 0, warnung: 0, fehler: 0, 'keine-meldung': 0 };
     for (const m of daten.module) {
-      const s = m.fehler ? 'fehler' : m.letztes?.status;
+      const s = m.anzeige === 'modulfehler' ? 'fehler' : m.anzeige;
       if (s in zaehler) zaehler[s]++;
     }
     for (const [s, n] of Object.entries(zaehler)) $(`anzahl-${s}`).textContent = n;
     $('kacheln').replaceChildren(...daten.module.map(kachelBauen));
     $('leer').hidden = daten.module.length > 0;
-    $('stand').textContent = `Stand ${new Date().toLocaleTimeString('de-DE')}`;
-    document.title = zaehler.fehler ? `(${zaehler.fehler}) Monitoring` : 'Monitoring';
+    $('stand').textContent = `${daten.module.length} ${daten.module.length === 1 ? 'Modul' : 'Module'} · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    const probleme = zaehler.fehler + zaehler['keine-meldung'];
+    document.title = probleme ? `(${probleme}) Monitoring` : 'Monitoring';
     if (offenesModul) {
       const neu = daten.module.find((m) => m.id === offenesModul);
       if (neu) detailsFuellen(neu);
@@ -89,35 +112,119 @@ async function pruefen(id, knopf) {
   setTimeout(aktualisieren, 800);
 }
 
-async function detailsFuellen(modul) {
-  $('details-titel').textContent = modul.name;
-  const letztes = modul.letztes;
-  $('details-zusammenfassung').textContent = modul.fehler ?? (letztes ? `${STATUS_TEXT[letztes.status]}: ${letztes.zusammenfassung} (${zeit(letztes.beginn)}, ${(letztes.dauerMs / 1000).toFixed(1)} s)` : 'Noch nicht geprüft.');
-  $('details-messwerte').replaceChildren(...Object.entries(letztes?.messwerte ?? {}).flatMap(([name, wert]) => {
-    const dt = document.createElement('dt'); dt.textContent = name;
-    const dd = document.createElement('dd'); dd.textContent = wert.toLocaleString('de-DE');
-    return [dt, dd];
-  }));
-  $('details-liste').replaceChildren(...(letztes?.details ?? []).map((d) => { const li = document.createElement('li'); li.textContent = d; return li; }));
-  $('details-ausgabe').hidden = !letztes?.fehlerausgabe;
-  $('details-ausgabe').textContent = letztes?.fehlerausgabe ?? '';
-  if (modul.fehler) { $('details-verlauf').replaceChildren(); return; }
-  const { verlauf } = await (await api(`/api/module/${encodeURIComponent(modul.id)}/verlauf?anzahl=30`)).json();
+function fakt(name, wert) { return wert ? [el('dt', { textContent: name }), el('dd', { textContent: wert })] : []; }
+const prozent = (v) => (v ? `${v.prozent.toLocaleString('de-DE')} % (${v.laeufe} ${v.laeufe === 1 ? 'Lauf' : 'Läufe'}${v.unvollstaendig ? ', Verlauf kürzer' : ''})` : '–');
+
+async function detailsFuellen(m) {
+  $('details-titel').textContent = m.version ? `${m.name} (v${m.version})` : m.name;
+  $('details-beschreibung').textContent = m.beschreibung;
+  $('details-beschreibung').hidden = !m.beschreibung;
+  $('details-zusammenfassung').textContent = `${STATUS_TEXT[m.anzeige] ?? m.anzeige}: ${textZuModul(m)}`;
+  const l = m.letztes;
+  $('details-fakten').replaceChildren(
+    ...fakt('Betriebsart', m.betriebsart === 'eigenstaendig' ? `Eigenständig${m.intervallMinuten ? `, meldet sich etwa alle ${m.intervallMinuten} min` : ''}` : `Von der Basis gestartet${m.intervallMinuten ? `, alle ${m.intervallMinuten} min` : ', nur manuell'}`),
+    ...fakt(m.betriebsart === 'eigenstaendig' ? 'Letzte Meldung' : 'Letzte Prüfung', l ? `${zeit(l.ende ?? l.beginn)}${Number.isFinite(l.dauerMs) ? ` · Dauer ${(l.dauerMs / 1000).toFixed(1)} s` : ''}` : 'noch keine'),
+    ...fakt('Nächster Lauf', m.naechsterLauf ? `${zeit(m.naechsterLauf)} (${relativ(m.naechsterLauf)})` : null),
+    ...fakt('Überfällig seit', m.ueberfaelligSeit ? zeit(m.ueberfaelligSeit) : null),
+    ...fakt('Problem seit', m.problemSeit ? `${zeit(m.problemSeit)} · ${m.problemLaeufe} ${m.problemLaeufe === 1 ? 'Lauf' : 'Läufe'} ohne OK` : null),
+    ...fakt('Verfügbarkeit 24 h', m.fehler ? null : prozent(m.verfuegbarkeit?.h24)),
+    ...fakt('Verfügbarkeit 7 Tage', m.fehler ? null : prozent(m.verfuegbarkeit?.d7)),
+  );
+  leisteFuellen($('details-leiste'), m.verlaufKurz ?? []);
+  $('details-admin').hidden = !istAdmin || Boolean(m.fehler);
+  $('details-einstellungen').hidden = !m.hatEinstellungen;
+  $('details-pause').textContent = m.aktiv ? 'Pausieren' : 'Fortsetzen';
+  $('details-pause').onclick = async () => {
+    $('details-pause').disabled = true;
+    await senden(`/api/module/${encodeURIComponent(m.id)}/aktiv`, { aktiv: !m.aktiv });
+    $('details-pause').disabled = false;
+    aktualisieren();
+  };
+  $('details-einstellungen').onclick = () => einstellungenOeffnen(m);
+  const messwerte = Object.entries(l?.messwerte ?? {});
+  $('details-messwerte-titel').hidden = !messwerte.length;
+  $('details-messwerte').replaceChildren(...messwerte.flatMap(([name, wert]) => fakt(name, wert.toLocaleString('de-DE'))));
+  $('details-liste').replaceChildren(...(l?.details ?? []).map((d) => el('li', { textContent: d })));
+  $('details-ausgabe').hidden = !l?.fehlerausgabe;
+  $('details-ausgabe').textContent = l?.fehlerausgabe ?? '';
+  if (m.fehler) { $('details-verlauf').replaceChildren(); return; }
+  const { verlauf } = await (await api(`/api/module/${encodeURIComponent(m.id)}/verlauf?anzahl=30`)).json();
   $('details-verlauf').replaceChildren(...verlauf.map((e) => {
-    const li = document.createElement('li');
+    const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.ende ?? e.beginn)} – ${e.zusammenfassung}` }));
     li.dataset.status = e.status;
-    const punkt = document.createElement('span'); punkt.className = 'punkt';
-    const text = document.createElement('span'); text.textContent = `${zeit(e.beginn)} – ${e.zusammenfassung}`;
-    li.append(punkt, text);
     return li;
   }));
 }
 
-function detailsOeffnen(modul) {
-  offenesModul = modul.id;
-  detailsFuellen(modul);
+function detailsOeffnen(id) {
+  const m = letzteModule.find((x) => x.id === id);
+  if (!m) return;
+  offenesModul = id;
+  detailsFuellen(m);
   if (!$('details').open) $('details').showModal();
 }
+
+// ---- Moduleinstellungen (nur Admins) ----
+let einstModul = null;
+const einstMeldung = (text, art = '') => { $('einst-meldung').textContent = text; $('einst-meldung').dataset.art = art; };
+
+function feldBauen(f, wert) {
+  const id = `einst-${f.schluessel}`;
+  let eingabe;
+  if (f.typ === 'schalter') {
+    eingabe = el('input', { type: 'checkbox', id, checked: wert === true });
+  } else if (f.typ === 'auswahl') {
+    eingabe = el('select', { id }, ...(f.pflicht ? [] : [new Option('–', '')]), ...f.optionen.map((o) => new Option(o.text, o.wert)));
+    eingabe.value = wert ?? '';
+  } else {
+    eingabe = el('input', { id, type: f.typ === 'zahl' ? 'number' : f.typ === 'passwort' ? 'password' : 'text', autocomplete: f.typ === 'passwort' ? 'new-password' : 'off' });
+    if (f.typ === 'zahl') { eingabe.step = f.ganzzahl ? '1' : 'any'; if (f.min !== null) eingabe.min = f.min; if (f.max !== null) eingabe.max = f.max; }
+    if (f.typ === 'passwort') eingabe.placeholder = wert?.gesetzt ? 'gesetzt – leer lassen, um es zu behalten' : 'nicht gesetzt';
+    else eingabe.value = wert ?? '';
+  }
+  eingabe.dataset.schluessel = f.schluessel;
+  eingabe.dataset.typ = f.typ;
+  const label = el('label', { htmlFor: id, textContent: f.bezeichnung + (f.pflicht ? ' *' : '') });
+  const hilfe = el('small', { className: 'leise', textContent: f.beschreibung + (f.standard !== undefined && f.typ !== 'schalter' ? `${f.beschreibung ? ' · ' : ''}Standard: ${f.standard}` : '') });
+  const fehler = el('small', { className: 'feldfehler', id: `${id}-fehler` });
+  return el('div', { className: `feld ${f.typ}` }, label, eingabe, hilfe, fehler);
+}
+
+async function einstellungenOeffnen(m) {
+  einstModul = m;
+  $('einst-titel').textContent = `Einstellungen: ${m.name}`;
+  einstMeldung('Wird geladen …');
+  $('einst-felder').replaceChildren();
+  $('einstellungen').showModal();
+  const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/einstellungen`);
+  if (!antwort.ok) { einstMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); return; }
+  const { felder, werte } = await antwort.json();
+  $('einst-felder').replaceChildren(...felder.map((f) => feldBauen(f, werte[f.schluessel])));
+  einstMeldung('');
+}
+
+$('einst-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const werte = {};
+  for (const e of $('einst-felder').querySelectorAll('[data-schluessel]')) {
+    werte[e.dataset.schluessel] = e.dataset.typ === 'schalter' ? e.checked : e.value;
+  }
+  for (const f of $('einst-felder').querySelectorAll('.feldfehler')) f.textContent = '';
+  $('einst-speichern').disabled = true;
+  einstMeldung('Wird gespeichert …');
+  const antwort = await senden(`/api/module/${encodeURIComponent(einstModul.id)}/einstellungen`, { werte });
+  const daten = await antwort.json().catch(() => ({}));
+  $('einst-speichern').disabled = false;
+  if (!antwort.ok) {
+    for (const [k, text] of Object.entries(daten.feldfehler ?? {})) { const f = $(`einst-${k}-fehler`); if (f) f.textContent = text; }
+    einstMeldung(daten.feldfehler?._ ?? daten.fehler ?? 'Speichern nicht möglich.', 'fehler');
+    return;
+  }
+  $('einst-felder').replaceChildren(...daten.felder.map((f) => feldBauen(f, daten.werte[f.schluessel])));
+  einstMeldung(daten.geaendert.length ? 'Gespeichert. Das Modul übernimmt die Änderung beim nächsten Lauf.' : 'Keine Änderungen.', 'ok');
+});
+$('einst-schliessen').addEventListener('click', () => $('einstellungen').close());
+$('einst-abbrechen').addEventListener('click', () => $('einstellungen').close());
 
 // ---- Updates (nur Admins) ----
 const PHASEN = { suche: 'Suche nach Updates …', herunterladen: 'Paket wird heruntergeladen …', pruefen: 'Prüfsumme wird kontrolliert …', entpacken: 'Paket wird entpackt …', selbsttest: 'Neue Version wird getestet …', neustart: 'Die Basis startet neu …' };

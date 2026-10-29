@@ -12,6 +12,7 @@ import { ladeModule } from './module.js';
 import { fuehreAus } from './ausfuehrung.js';
 import { Ergebnisspeicher } from './speicher.js';
 import { Planer } from './planer.js';
+import { Modulverwaltung } from './modulverwaltung.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
@@ -70,25 +71,22 @@ async function benutzerAnlegen(configDatei, name, admin) {
 
 async function starten(konfig, configDatei, protokoll) {
   const log = protokoll.alsFunktion();
-  const module = await ladeModule(konfig.moduleOrdner);
-  for (const m of module) {
-    if (m.fehler) melde(log, 'fehler', `Modul ${m.name}`, `Modul fehlerhaft: ${m.fehler}`);
-    else log(`Modul ${m.id} (${m.typ}) geladen${m.aktiv ? '' : ', inaktiv'}.`);
-  }
   if (!Object.keys(konfig.benutzer).length) throw new BasisFehler('Es ist noch kein Benutzer angelegt. Zuerst: node basis/main.js --benutzer-anlegen <Name>');
 
   const speicher = new Ergebnisspeicher(konfig.datenOrdner, konfig.verlaufAnzahl);
-  await speicher.laden(module.filter((m) => !m.fehler).map((m) => m.id));
-  const planer = new Planer({
-    module, ausfuehren: (m) => fuehreAus(m), log,
-    speichern: async (id, roh) => {
-      // Geheimnisse der Basis (Tokens, Hashes) nie in gespeicherten oder angezeigten Ergebnissen.
-      const e = { ...roh, zusammenfassung: bereinige(roh.zusammenfassung, protokoll.geheimnisse), details: (roh.details ?? []).map((d) => bereinige(d, protokoll.geheimnisse)), ...(roh.fehlerausgabe ? { fehlerausgabe: bereinige(roh.fehlerausgabe, protokoll.geheimnisse) } : {}) };
-      await speicher.hinzufuegen(id, e);
-      // Auffällige Ergebnisse zusätzlich ins Fehlerprotokoll, mit Fehlerausgabe des Moduls als Details.
-      if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
-    },
+  const uebernehmen = async (id, roh) => {
+    // Geheimnisse der Basis (Tokens, Hashes, Modul-Passwörter) nie in gespeicherten oder angezeigten Ergebnissen.
+    const e = { ...roh, zusammenfassung: bereinige(roh.zusammenfassung, protokoll.geheimnisse), details: (roh.details ?? []).map((d) => bereinige(d, protokoll.geheimnisse)), ...(roh.fehlerausgabe ? { fehlerausgabe: bereinige(roh.fehlerausgabe, protokoll.geheimnisse) } : {}) };
+    await speicher.hinzufuegen(id, e);
+    // Auffällige Ergebnisse zusätzlich ins Fehlerprotokoll, mit Fehlerausgabe des Moduls als Details.
+    if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
+  };
+  const planer = new Planer({ ausfuehren: (m) => fuehreAus(m), speichern: uebernehmen, log });
+  const module = new Modulverwaltung({
+    moduleOrdner: konfig.moduleOrdner, datenOrdner: konfig.datenOrdner, speicher, planer, uebernehmen,
+    geheimnisse: protokoll.geheimnisse, log,
   });
+  await module.start();
   const anmeldung = new Anmeldung({ benutzer: konfig.benutzer, sitzungMs: konfig.sitzungMs });
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
@@ -103,13 +101,14 @@ async function starten(konfig, configDatei, protokoll) {
   const neustarten = () => {
     log('Neustart der Basis und aller Module.');
     planer.stop();
+    module.stop();
     beendeLaufendeModule();
     server?.close();
     setTimeout(() => process.exit(NEUSTART_CODE), 300);
   };
   await updates.starten();
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -128,6 +127,7 @@ async function starten(konfig, configDatei, protokoll) {
   const beenden = () => {
     log('Monitoring-Basis wird beendet.');
     planer.stop();
+    module.stop();
     beendeLaufendeModule();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 5000).unref();
@@ -171,7 +171,7 @@ export async function main(args = process.argv.slice(2)) {
     if (values['module-pruefen']) {
       const module = await ladeModule(konfig.moduleOrdner);
       if (!module.length) console.log(`Keine Module in ${konfig.moduleOrdner}.`);
-      for (const m of module) console.log(m.fehler ? `FEHLER ${m.name}: ${m.fehler}` : `OK     ${m.id}: ${m.name} (${m.typ}, ${m.intervallMinuten ? `alle ${m.intervallMinuten} min` : 'nur manuell'}${m.aktiv ? '' : ', inaktiv'})`);
+      for (const m of module) console.log(m.fehler ? `FEHLER ${m.name}: ${m.fehler}` : `OK     ${m.id}: ${m.name} (${m.typ}, ${m.typ === 'eigenstaendig' ? `meldet sich selbst${m.intervallMinuten ? `, erwartet alle ${m.intervallMinuten} min` : ''}` : m.intervallMinuten ? `alle ${m.intervallMinuten} min` : 'nur manuell'}${m.aktiv ? '' : ', inaktiv'})`);
       return module.some((m) => m.fehler) ? 2 : 0;
     }
     if (values.zertifikat) {

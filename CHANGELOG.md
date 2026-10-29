@@ -1,5 +1,30 @@
 # Änderungen
 
+## 0.5.0
+
+### Neu
+
+- **Eigenständige Module** (`"typ": "eigenstaendig"`): Das Modul läuft selbst (eigener Prozess, Dienst oder Aufgabe) und schreibt nach jedem Lauf `status.json` in seinen Ordner; die Basis liest sie alle 15 Sekunden. Module laufen weiter, wenn die Basis aus ist.
+- **Keine Meldung:** Meldet sich ein eigenständiges Modul nicht bis zum erwarteten nächsten Lauf plus Toleranz (`toleranz_minuten`, Standard 10), zeigt die Basis „Keine Meldung“.
+- **Einstellungen aus der Basis:** Module beschreiben ihre Felder in `module.json` (`einstellungsfelder`: Text, Zahl, Schalter, Auswahl, Passwort). Admins bearbeiten sie in einem Formular; die Basis prüft die Eingaben und schreibt `einstellungen.json`. Passwörter werden nie wieder angezeigt und aus Protokollen gefiltert; Änderungen stehen mit Benutzer im Protokoll.
+- **Pausieren/Fortsetzen** eines Moduls durch Admins; die Pause übersteht Neustarts (`data/modulzustand.json`).
+- **Neue, geänderte und entfernte Module ohne Neustart** der Basis.
+- Übersicht: Zähler „Keine Meldung“, Anzahl Module, Farbleiste der letzten 30 Läufe, „Problem seit … (n Läufe)“, Module mit Problemen zuerst.
+- Details: Beschreibung, Version, Betriebsart, letzte Meldung mit Dauer, nächster Lauf, überfällig seit, Problem seit, Verfügbarkeit 24 h / 7 Tage.
+- `module.json` kennt zusätzlich `version`, `beschreibung`, `repo` (für spätere Modul-Updates) und `toleranz_minuten`.
+- Beispiel und Vorlage `beispiele/ordnerpruefung`: eigenständiges Modul mit Einstellungen, Dauerbetrieb oder `--einmal`.
+
+### Geändert
+
+- Von der Basis gestartete Module erhalten bei jedem Lauf die aktuellen Einstellungen (Vorgaben aus `module.json` plus `einstellungen.json`).
+- `verlauf_anzahl` Standard 1000 statt 200; Details und Fehlerausgabe nur bei den neuesten 50 Einträgen.
+- „Jetzt prüfen“ nur noch bei Modulen, die die Basis startet.
+
+### Prüfung
+
+- `npm test`: 59 Tests, neu u. a. Einstellungsfelder und -werte, Speichern mit Pflichtfeldern und verborgenen Passwörtern, nur echte Änderungen, `status.json` (gültig, ungültig, halb geschrieben, nicht doppelt, nach Neustart), „Keine Meldung“, Problem seit, Verfügbarkeit, Pause, Module kommen und gehen, kaputtes Modul stört andere nicht, Planer zur Laufzeit, Admin-Endpunkte, Beispielmodul ohne Basis.
+- Gesamttest mit Browser: Übersicht mit fehlerhaftem, stummem, Plugin- und eigenständigem Modul; Einstellungen mit Pflichtfeld; Meldung des Moduls erscheint; Pause; neues Modul ohne Neustart; Handy-Ansicht.
+
 ## 0.4.0
 
 ### Neu

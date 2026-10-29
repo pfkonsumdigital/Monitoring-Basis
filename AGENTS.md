@@ -30,11 +30,15 @@
 
 - Die Basis (`basis/`, `oberflaeche/`) enthält keine Fachlogik. Fachliche
   Prüfungen gehören in eigenständige Module.
-- Module kennen nur den Andockvertrag: `module.json`, Ergebnis mit `status`
-  (`ok`/`warnung`/`fehler`), `zusammenfassung`, `details`, `messwerte`.
-  Programme melden alternativ über Exitcode 0/1/2. Änderungen an diesem Vertrag
-  müssen abwärtskompatibel sein und in README und CHANGELOG stehen.
-- Module laufen immer in einem eigenen Prozess mit Zeitlimit.
+- Module kennen nur den Andockvertrag: `module.json` (vom Modul),
+  `einstellungen.json` (schreibt die Basis), `status.json` (schreibt ein
+  eigenständiges Modul) und das Ergebnis mit `status` (`ok`/`warnung`/`fehler`),
+  `zusammenfassung`, `details`, `messwerte`. Programme melden alternativ über
+  Exitcode 0/1/2. Änderungen an diesem Vertrag müssen abwärtskompatibel sein
+  und in README und CHANGELOG stehen.
+- Module und Basis laufen unabhängig voneinander. Eigenständige Module startet
+  die Basis nie; von der Basis gestartete Module laufen immer in einem eigenen
+  Prozess mit Zeitlimit. Ein fehlerhaftes Modul darf nur sich selbst betreffen.
 
 ## Arbeitsweise beim Programmieren (Karpathy-Leitlinien)
 

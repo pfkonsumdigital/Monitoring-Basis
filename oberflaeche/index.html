@@ -24,23 +24,47 @@
     <div class="zaehler" data-status="ok"><span id="anzahl-ok">–</span>OK</div>
     <div class="zaehler" data-status="warnung"><span id="anzahl-warnung">–</span>Warnung</div>
     <div class="zaehler" data-status="fehler"><span id="anzahl-fehler">–</span>Fehler</div>
+    <div class="zaehler" data-status="keine-meldung"><span id="anzahl-keine-meldung">–</span>Keine Meldung</div>
     <p id="stand" class="leise"></p>
   </section>
   <p id="verbindung" class="meldung" role="alert" hidden></p>
   <section id="kacheln" class="kacheln" aria-live="polite"></section>
-  <p id="leer" class="leer" hidden>Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an und starte die Basis neu.</p>
+  <p id="leer" class="leer" hidden>Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an – das Modul erscheint nach spätestens einer Minute, ohne Neustart.</p>
 </main>
-<dialog id="details">
+<dialog id="details" class="breit">
   <div class="dialog-kopf">
     <h2 id="details-titel"></h2>
     <button type="button" id="details-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
   </div>
+  <p id="details-beschreibung" class="leise"></p>
   <p id="details-zusammenfassung"></p>
+  <dl id="details-fakten" class="messwerte"></dl>
+  <div id="details-leiste" class="leiste gross" aria-hidden="true"></div>
+  <div id="details-admin" class="aktionen" hidden>
+    <button type="button" id="details-einstellungen" class="zweitrangig">Einstellungen</button>
+    <button type="button" id="details-pause" class="zweitrangig">Pausieren</button>
+  </div>
+  <h3 id="details-messwerte-titel">Kennzahlen</h3>
   <dl id="details-messwerte" class="messwerte"></dl>
   <ul id="details-liste" class="details-liste"></ul>
   <pre id="details-ausgabe" hidden></pre>
   <h3>Verlauf</h3>
   <ol id="details-verlauf" class="verlauf"></ol>
+</dialog>
+<dialog id="einstellungen" class="breit">
+  <div class="dialog-kopf">
+    <h2 id="einst-titel">Einstellungen</h2>
+    <button type="button" id="einst-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p class="leise">Das Modul übernimmt geänderte Einstellungen bei seinem nächsten Lauf.</p>
+  <form id="einst-formular" novalidate>
+    <div id="einst-felder" class="felder"></div>
+    <p id="einst-meldung" class="upd-meldung" role="status"></p>
+    <div class="aktionen">
+      <button type="submit" id="einst-speichern">Speichern</button>
+      <button type="button" id="einst-abbrechen" class="zweitrangig">Schließen</button>
+    </div>
+  </form>
 </dialog>
 <dialog id="updates">
   <div class="dialog-kopf">
@@ -108,6 +132,7 @@
       <span class="status"></span>
     </div>
     <p class="zusammenfassung"></p>
+    <div class="leiste" aria-hidden="true"></div>
     <p class="zeiten leise"></p>
     <div class="aktionen">
       <button type="button" class="pruefen">Jetzt prüfen</button>

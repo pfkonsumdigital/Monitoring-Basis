@@ -60,19 +60,9 @@ export function istInterneAdresse(adresse) {
   return a === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(a) || /^fe[89ab][0-9a-f]?:/.test(a);
 }
 
-function modulAnsicht(modul, planer, speicher) {
-  return {
-    id: modul.id, name: modul.name, typ: modul.typ ?? null,
-    aktiv: modul.fehler ? false : modul.aktiv, intervallMinuten: modul.intervallMinuten ?? null,
-    fehler: modul.fehler ?? null,
-    laeuft: planer.laeuft(modul.id), naechsterLauf: planer.naechster(modul.id),
-    letztes: modul.fehler ? null : speicher.letztes(modul.id),
-  };
-}
-
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+export function erstelleAnwendung({ module, anmeldung, updates, protokoll, neustart, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -133,7 +123,7 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.map((m) => modulAnsicht(m, planer, speicher)) });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(), module: module.ansichten() });
       }
       if (weg === '/api/protokoll' || weg === '/api/protokoll/download' || weg === '/api/neustart') {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
@@ -178,20 +168,37 @@ export function erstelleAnwendung({ module, planer, speicher, anmeldung, updates
         }
       }
 
-      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen)$/.exec(weg);
-      const modul = treffer && module.find((m) => m.id === treffer[1]);
+      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv)$/.exec(weg);
+      const modul = treffer && module.finde(treffer[1]);
       if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });
       if (treffer?.[2] === 'verlauf' && req.method === 'GET') {
         const anzahl = Math.min(Math.max(Number.parseInt(url.searchParams.get('anzahl') ?? '50', 10) || 50, 1), 1000);
-        return json(res, 200, { id: modul.id, verlauf: speicher.verlauf(modul.id, anzahl) });
+        return json(res, 200, { id: modul.id, verlauf: module.verlauf(modul.id, anzahl) });
       }
       if (treffer?.[2] === 'pruefen' && req.method === 'POST') {
         // Eigener Kopf erzwingt eine Same-Origin-Anfrage per fetch; einfache Formulare fremder Seiten scheitern.
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
-        if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
-        if (!planer.jetztPruefen(modul.id)) return json(res, 409, { fehler: 'Die Prüfung läuft bereits.' });
+        const ergebnis = module.jetztPruefen(modul.id);
+        if (ergebnis !== 'gestartet') return json(res, 409, { fehler: { fehlerhaft: 'Das Modul ist fehlerhaft konfiguriert.', eigenstaendig: 'Dieses Modul läuft eigenständig und meldet sich selbst.', laeuft: 'Die Prüfung läuft bereits.' }[ergebnis] ?? 'Nicht möglich.' });
         log(`Prüfung von ${modul.id} manuell gestartet durch ${sitzung.benutzer}.`);
         return json(res, 202, { gestartet: true });
+      }
+      if (treffer?.[2] === 'einstellungen' || treffer?.[2] === 'aktiv') {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
+        if (treffer[2] === 'einstellungen' && req.method === 'GET') return json(res, 200, await module.einstellungen(modul.id));
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req, 100_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        if (treffer[2] === 'aktiv') {
+          if (typeof eingabe?.aktiv !== 'boolean') return json(res, 400, { fehler: 'aktiv muss true oder false sein.' });
+          await module.setzeAktiv(modul.id, eingabe.aktiv, sitzung.benutzer);
+          return json(res, 200, { aktiv: eingabe.aktiv });
+        }
+        const ergebnis = await module.einstellungenAendern(modul.id, eingabe?.werte, sitzung.benutzer);
+        if (ergebnis.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: ergebnis.feldfehler });
+        return json(res, 200, { geaendert: ergebnis.geaendert, ...(await module.einstellungen(modul.id)) });
       }
       return senden(res, 404, 'Nicht gefunden.');
     } catch (fehler) {
