@@ -25,6 +25,16 @@ async function api(weg, optionen = {}) {
 }
 const senden = (weg, koerper) => api(weg, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(koerper) });
 
+const KEINE_VERBINDUNG = 'Keine Verbindung zur Monitoring-Basis.';
+// Sperrt Schaltflächen während einer Anfrage und gibt sie immer wieder frei – auch wenn die Verbindung abbricht.
+// Bei einem Verbindungsfehler erscheint die Meldung über „melden“; das Ergebnis ist dann undefined.
+async function gesperrt(knoepfe, melden, arbeit) {
+  for (const k of knoepfe) k.disabled = true;
+  try { return await arbeit(); }
+  catch (fehler) { if (fehler.message !== 'abgemeldet') melden(KEINE_VERBINDUNG, 'fehler'); return undefined; }
+  finally { for (const k of knoepfe) k.disabled = false; }
+}
+
 function textZuModul(m) {
   if (m.fehler) return m.fehler;
   if (m.anzeige === 'keine-meldung') {
@@ -110,8 +120,15 @@ async function aktualisieren() {
 
 async function pruefen(id, knopf) {
   knopf.disabled = true;
+  const vorher = knopf.textContent;
   knopf.textContent = 'Wird gestartet …';
-  const antwort = await api(`/api/module/${encodeURIComponent(id)}/pruefen`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } });
+  let antwort;
+  try { antwort = await api(`/api/module/${encodeURIComponent(id)}/pruefen`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } }); }
+  catch (fehler) {
+    knopf.disabled = false;
+    knopf.textContent = fehler.message === 'abgemeldet' ? vorher : 'Keine Verbindung';
+    return;
+  }
   if (!antwort.ok) {
     const { fehler } = await antwort.json().catch(() => ({}));
     knopf.textContent = fehler || 'Nicht möglich';
@@ -143,12 +160,10 @@ async function detailsFuellen(m) {
   $('details-admin').hidden = !istAdmin || Boolean(m.fehler);
   $('details-einstellungen').hidden = !m.hatEinstellungen;
   $('details-pause').textContent = m.aktiv ? 'Pausieren' : 'Fortsetzen';
-  $('details-pause').onclick = async () => {
-    $('details-pause').disabled = true;
+  $('details-pause').onclick = () => gesperrt([$('details-pause')], aktionMeldung, async () => {
     await senden(`/api/module/${encodeURIComponent(m.id)}/aktiv`, { aktiv: !m.aktiv });
-    $('details-pause').disabled = false;
     aktualisieren();
-  };
+  });
   $('details-einstellungen').onclick = () => einstellungenOeffnen(m);
   // Beenden mit Rückfrage auf demselben Knopf (zweiter Klick innerhalb von 5 s).
   const beendenKnopf = $('details-beenden');
@@ -231,7 +246,13 @@ async function modulUpdateLaden(id, nachVorgang = false) {
 async function modulUpdateAktion(id, aktion, koerper = {}) {
   for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = true;
   mupdMeldung(aktion === 'suchen' ? MUPD_PHASEN.suche : 'Wird gestartet …');
-  const antwort = await senden(`/api/module/${encodeURIComponent(id)}/update/${aktion}`, koerper);
+  let antwort;
+  try { antwort = await senden(`/api/module/${encodeURIComponent(id)}/update/${aktion}`, koerper); }
+  catch (fehler) {
+    if (fehler.message !== 'abgemeldet') mupdMeldung(KEINE_VERBINDUNG, 'fehler');
+    for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = false;
+    return;
+  }
   const daten = await antwort.json().catch(() => ({}));
   if (!antwort.ok) {
     if (daten.status) modulUpdateZeigen(daten.status);
@@ -355,11 +376,13 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
     werte[e.dataset.schluessel] = e.dataset.typ === 'schalter' ? e.checked : e.dataset.typ === 'liste' ? listeLesen(e) : e.value;
   }
   for (const f of $('einst-felder').querySelectorAll('.feldfehler')) f.textContent = '';
-  $('einst-speichern').disabled = true;
   einstMeldung('Wird gespeichert …');
-  const antwort = await senden(`/api/module/${encodeURIComponent(einstModul.id)}/einstellungen`, { werte });
-  const daten = await antwort.json().catch(() => ({}));
-  $('einst-speichern').disabled = false;
+  const ergebnis = await gesperrt([$('einst-speichern')], einstMeldung, async () => {
+    const antwort = await senden(`/api/module/${encodeURIComponent(einstModul.id)}/einstellungen`, { werte });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
   if (!antwort.ok) {
     for (const [k, text] of Object.entries(daten.feldfehler ?? {})) { const f = $(`einst-${k}-fehler`); if (f) f.textContent = text; }
     einstMeldung(daten.feldfehler?._ ?? daten.fehler ?? 'Speichern nicht möglich.', 'fehler');
@@ -411,21 +434,21 @@ $('ben-formular').addEventListener('submit', async (ereignis) => {
   const werte = { aktiv: $('ben-aktiv').checked };
   for (const k of BEN_FELDER) werte[k] = $(`ben-${k}`).value;
   benFehlerZeigen();
-  $('ben-speichern').disabled = true;
   benMeldung('Wird gespeichert …');
-  const antwort = await senden('/api/benachrichtigung', { werte });
-  const daten = await antwort.json().catch(() => ({}));
-  $('ben-speichern').disabled = false;
+  const ergebnis = await gesperrt([$('ben-speichern')], benMeldung, async () => {
+    const antwort = await senden('/api/benachrichtigung', { werte });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
   if (!antwort.ok) { benFehlerZeigen(daten.feldfehler); benMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
   benZeigen(daten);
   benMeldung(daten.geaendert.length ? 'Gespeichert.' : 'Keine Änderungen.', 'ok');
 });
 $('ben-test').addEventListener('click', async () => {
-  $('ben-test').disabled = true;
   benMeldung('Testmail wird gesendet …');
-  const antwort = await senden('/api/benachrichtigung/test', {});
-  const daten = await antwort.json().catch(() => ({}));
-  $('ben-test').disabled = false;
+  const daten = await gesperrt([$('ben-test')], benMeldung, async () => (await senden('/api/benachrichtigung/test', {})).json().catch(() => ({})));
+  if (!daten) return;
   if (daten.verlauf) benZeigen(daten);
   benMeldung(daten.ok ? 'Testmail gesendet. Bitte Posteingang prüfen.' : `Nicht gesendet: ${daten.fehler ?? 'unbekannter Fehler'}`, daten.ok ? 'ok' : 'fehler');
 });
@@ -478,33 +501,48 @@ function tokenZeigen(t) {
   $('tok-entfernen').hidden = t.quelle !== 'oberflaeche';
 }
 
+// Liefert { ok, daten } oder null, wenn keine Verbindung bestand (Meldung ist dann schon angezeigt).
 async function tokenAktion(weg, koerper, laeuft) {
   tokMeldung(laeuft);
-  for (const k of ['tok-speichern', 'tok-pruefen', 'tok-entfernen']) $(k).disabled = true;
-  const antwort = await senden(weg, koerper ?? {});
-  const daten = await antwort.json().catch(() => ({}));
-  for (const k of ['tok-speichern', 'tok-pruefen', 'tok-entfernen']) $(k).disabled = false;
-  const st = daten.status ?? daten;
+  const ergebnis = await gesperrt(['tok-speichern', 'tok-pruefen', 'tok-entfernen'].map((k) => $(k)), tokMeldung, async () => {
+    const antwort = await senden(weg, koerper ?? {});
+    return { ok: antwort.ok, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return null;
+  const st = ergebnis.daten.status ?? ergebnis.daten;
   if (st.token) updateZeigen(st);
-  return { ok: antwort.ok, daten };
+  return ergebnis;
 }
 $('tok-formular').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
-  const { ok, daten } = await tokenAktion('/api/updates/token', { token: $('tok-wert').value.trim() }, 'Token wird bei GitHub geprüft …');
+  const ergebnis = await tokenAktion('/api/updates/token', { token: $('tok-wert').value.trim() }, 'Token wird bei GitHub geprüft …');
+  if (!ergebnis) return;
+  const { ok, daten } = ergebnis;
   if (ok) $('tok-wert').value = '';
   tokMeldung(ok ? 'Token gespeichert. Jetzt kann nach Updates gesucht werden.' : daten.fehler ?? 'Speichern nicht möglich.', ok ? 'ok' : 'fehler');
 });
 $('tok-pruefen').addEventListener('click', async () => {
-  const { daten } = await tokenAktion('/api/updates/token/pruefen', {}, 'Token wird geprüft …');
+  const ergebnis = await tokenAktion('/api/updates/token/pruefen', {}, 'Token wird geprüft …');
+  if (!ergebnis) return;
+  const { daten } = ergebnis;
   tokMeldung(daten.token?.ok ? 'Der Token funktioniert.' : `Der Token funktioniert nicht: ${daten.token?.fehler ?? 'unbekannt'}`, daten.token?.ok ? 'ok' : 'fehler');
 });
 $('tok-entfernen').addEventListener('click', async () => {
-  const { ok } = await tokenAktion('/api/updates/token', { entfernen: true }, 'Wird entfernt …');
+  const ergebnis = await tokenAktion('/api/updates/token', { entfernen: true }, 'Wird entfernt …');
+  if (!ergebnis) return;
+  const { ok } = ergebnis;
   tokMeldung(ok ? 'Token entfernt.' : 'Entfernen nicht möglich.', ok ? 'ok' : 'fehler');
 });
 
 async function updateAktion(weg, koerper) {
-  const antwort = await api(`/api/updates/${weg}`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: koerper ? JSON.stringify(koerper) : undefined });
+  let antwort;
+  try { antwort = await api(`/api/updates/${weg}`, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: koerper ? JSON.stringify(koerper) : undefined }); }
+  catch (fehler) {
+    if (fehler.message !== 'abgemeldet') updateMeldung(KEINE_VERBINDUNG, 'fehler');
+    if (updateStatus) updateZeigen(updateStatus); // Schaltflächen wieder wie vorher
+    else $('upd-suchen').disabled = false;
+    return null;
+  }
   const daten = await antwort.json().catch(() => ({}));
   if (!antwort.ok) { if (daten.status) updateZeigen(daten.status); updateMeldung(daten.fehler || 'Aktion nicht möglich.', 'fehler'); return null; }
   updateZeigen(daten);
@@ -612,7 +650,13 @@ $('neustart-schliessen').addEventListener('click', () => $('neustart').close());
 $('neustart-nein').addEventListener('click', () => $('neustart').close());
 $('neustart-ja').addEventListener('click', async () => {
   $('neustart-ja').disabled = true;
-  const antwort = await api('/api/neustart', { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } });
+  let antwort;
+  try { antwort = await api('/api/neustart', { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } }); }
+  catch (fehler) {
+    if (fehler.message !== 'abgemeldet') neustartMeldung(KEINE_VERBINDUNG, 'fehler');
+    $('neustart-ja').disabled = false;
+    return;
+  }
   if (!antwort.ok) {
     const { fehler } = await antwort.json().catch(() => ({}));
     neustartMeldung(fehler || 'Neustart nicht möglich.', 'fehler');

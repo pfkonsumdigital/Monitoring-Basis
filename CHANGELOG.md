@@ -1,5 +1,30 @@
 # Änderungen
 
+## 0.8.1
+
+Fehlerbehebungen nach einer externen Code-Prüfung von 0.8.0.
+
+### Behoben
+
+- **Zeitstempel aus der Zukunft** (falsche Uhr, Zeitzonenfehler im Modul) konnten die Überwachung dauerhaft auf „grün“ halten: Spätere, korrekt datierte Meldungen – auch Fehler – wurden ignoriert. Jetzt werden solche Meldungen auf die Empfangszeit verschoben (Warnung im Log und als erste Detailzeile ab 5 Minuten Abweichung), doppelte Meldungen über die vom Modul gemeldete Zeit erkannt, und früher gespeicherte Einträge aus der Zukunft blockieren nicht mehr. `naechster_lauf` zählt höchstens 7 Tage nach der Meldung, sonst gilt das Intervall – „Keine Meldung“ wird nicht mehr verhindert.
+- **Modul-Update ohne Einstellungen:** Konnten `einstellungen.json` oder `status.json` nicht in die neue Version übernommen werden, lief das Update trotzdem weiter. Jetzt wird der Austausch rückgängig gemacht und die bisherige Version läuft weiter („Datei gibt es nicht“ ist weiterhin kein Fehler).
+- **Modul-Update ohne Stoppbestätigung:** Bestätigte ein laufendes Modul das Beenden über `befehl.json` nicht, wurde nach 60 Sekunden trotzdem ausgetauscht. Jetzt bricht das Update ab, `befehl.json` wird entfernt, nichts wird ausgetauscht. Ein Modul, das sich zuletzt nicht mehr gemeldet hat, gilt als nicht laufend und kann wie bisher aktualisiert werden.
+- **Gestoppte Dienste:** Ein Update startete den Dienst eines Moduls auch dann, wenn er vorher bewusst gestoppt war. Jetzt bleibt ein vorher gestoppter Dienst gestoppt, und ein „Beendet“ bleibt erhalten.
+- **Gesperrte Schaltflächen:** Brach die Verbindung zur Basis während einer Aktion ab, blieben Schaltflächen gesperrt (Token, Einstellungen, Benachrichtigung, Testmail, Pause, Modul-Update, Prüfen, Update suchen, Neustart). Jetzt werden sie immer wieder freigegeben, und es erscheint „Keine Verbindung zur Monitoring-Basis.“
+
+### Neu
+
+- Workflow „Tests“: `npm test` und `go test` bei jedem Push auf `main` und bei Pull Requests.
+
+### Zurückgestellt
+
+- `logs\starter-ausgabe.log` wird noch nicht begrenzt (wächst langsam, nur Konsolenausgaben). Da Start.exe nicht online aktualisiert wird, kommt das mit der nächsten ohnehin nötigen Änderung an Start.exe.
+
+### Prüfung
+
+- `npm test`: neue Tests stellen jeden Fehler nach (Meldung aus 2099 mit späterer Fehlermeldung, alter Eintrag aus der Zukunft, `naechster_lauf` 2099; Kopierfehler beim Update; Modul ohne Stoppbestätigung; vorher gestoppter Dienst) und schlagen mit dem Code von 0.8.0 fehl.
+- Browsertest mit abgebrochenen Anfragen: Mit 0.8.0 blieben alle 7 geprüften Schaltflächen gesperrt, jetzt werden sie freigegeben und die Meldung erscheint; keine JavaScript-Fehler.
+
 ## 0.8.0
 
 ### Neu

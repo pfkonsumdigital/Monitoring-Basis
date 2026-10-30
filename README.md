@@ -245,6 +245,10 @@ Nach jedem Lauf schreibt das Modul `status.json`:
 
 - Pflicht sind `status` (`ok`, `warnung`, `fehler`) und `zeit` (Ende des
   Laufs, ISO 8601). Alles andere ist optional.
+- Liegt `zeit` nach dem Zeitpunkt, zu dem die Basis die Datei liest (falsche
+  Uhr, Zeitzonenfehler), verschiebt die Basis die Zeiten der Meldung auf die
+  Empfangszeit und warnt ab 5 Minuten Abweichung. `naechster_lauf` zählt
+  höchstens 7 Tage nach der Meldung.
 - Die Datei **erst temporär schreiben und dann umbenennen**, damit die Basis
   nie eine halbe Datei liest. Eine einmal unlesbare Datei überspringt die Basis;
   erst wenn sie etwa eine Minute lang unlesbar bleibt, zeigt sie einen Hinweis.
@@ -354,13 +358,17 @@ Ablauf der Installation:
 2. Modul beenden: Windows-Dienst stoppen (`dienst`), `befehl.json` ablegen
    (`befehlsdatei`) oder – bei von der Basis gestarteten Modulen – pausieren.
    Eigenständige Module ohne `dienst`/`befehlsdatei` lassen sich nicht über die
-   Basis aktualisieren.
+   Basis aktualisieren. Hält der Dienst nicht an oder bestätigt ein laufendes
+   Modul das Beenden nicht innerhalb von 60 Sekunden (es löscht `befehl.json`
+   nicht), bricht das Update ab und es wird nichts ausgetauscht. Ein Modul, das
+   sich zuletzt nicht mehr gemeldet hat, gilt als nicht laufend.
 3. Den Modulordner nach `data\modul-versionen\<id>\` sichern und die neue
    Version einsetzen. `einstellungen.json` und `status.json` bleiben erhalten,
-   aus dem Paket werden sie nie übernommen.
-4. Modul wieder starten (Dienst starten bzw. Pause aufheben). Module ohne
-   Dienst startest du auf dem Worker; bis sie sich melden, stehen sie auf
-   „Beendet“.
+   aus dem Paket werden sie nie übernommen. Lassen sie sich nicht übernehmen,
+   wird der Austausch rückgängig gemacht und die bisherige Version läuft weiter.
+4. Modul wieder starten (Dienst starten bzw. Pause aufheben) – ein Dienst, der
+   vor dem Update gestoppt war, bleibt gestoppt. Module ohne Dienst startest du
+   auf dem Worker; bis sie sich melden, stehen sie auf „Beendet“.
 
 „Zurück zu vX.Y.Z“ tauscht genauso mit der zuletzt gesicherten Version (die
 aktuellen Einstellungen bleiben). Aufbewahrt werden die zwei neuesten

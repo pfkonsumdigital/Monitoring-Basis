@@ -206,3 +206,81 @@ test('Modul-Update: Modul mit befehl.json und von der Basis gestartetes Modul', 
     await rm(prog.wurzel, { recursive: true, force: true });
   }
 });
+
+test('Modul-Update: Einstellungen lassen sich nicht übernehmen – Austausch rückgängig, alte Version läuft weiter', async () => {
+  const u = await aufbau(FTP, { dienstStand: { MonitoringFTP: 'laeuft' } });
+  try {
+    // status.json als Ordner: copyFile scheitert mit einem anderen Fehler als „Datei fehlt“.
+    await rm(path.join(u.ordner, 'status.json'));
+    await mkdir(path.join(u.ordner, 'status.json'));
+    const paket = await paketBauen(u.wurzel, { 'module.json': json({ ...FTP, version: '1.1.0' }), 'modul.js': 'neu' });
+    const mu = u.neu(githubSimuliert({ id: 'ftp', version: '1.1.0', paket }));
+    await mu.suchen('ftp');
+    await mu.installieren('ftp', '1.1.0', 'patrick');
+    await mu.laufend.get('ftp');
+    assert.match((await mu.status('ftp')).fehler, /^status\.json konnte nicht in die neue Version übernommen werden \(E[A-Z]+\)\. Der Austausch wurde rückgängig gemacht/);
+    assert.equal(await readFile(path.join(u.ordner, 'modul.js'), 'utf8'), 'alt');
+    assert.deepEqual(await lies(path.join(u.ordner, 'einstellungen.json')), { server: 'ftp.firma.de' });
+    assert.deepEqual(u.dienste.aufrufe, [['beenden', 'MonitoringFTP'], ['starten', 'MonitoringFTP']], 'alte Version wieder gestartet');
+    assert.equal(u.verwaltung.finde('ftp').version, '1.0.0');
+    assert.deepEqual((await readdir(path.join(u.datenOrdner, 'modul-versionen', 'ftp'))).filter((n) => !n.startsWith('.')), [], 'keine halbe Sicherung');
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+
+  // Fehlt einstellungen.json (Modul nie eingestellt), läuft das Update normal.
+  const o = await aufbau(FTP, { dienstStand: { MonitoringFTP: 'laeuft' } });
+  try {
+    await rm(path.join(o.ordner, 'einstellungen.json'));
+    const paket = await paketBauen(o.wurzel, { 'module.json': json({ ...FTP, version: '1.1.0' }), 'modul.js': 'neu' });
+    const mu = o.neu(githubSimuliert({ id: 'ftp', version: '1.1.0', paket }));
+    await mu.suchen('ftp');
+    await mu.installieren('ftp', '1.1.0', 'patrick');
+    await mu.laufend.get('ftp');
+    assert.equal((await mu.status('ftp')).fehler, null);
+    assert.equal(await readFile(path.join(o.ordner, 'modul.js'), 'utf8'), 'neu');
+  } finally {
+    await rm(o.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Modul-Update: laufendes Modul bestätigt das Beenden nicht – Update abgebrochen, nichts ausgetauscht', async () => {
+  const modul = { id: 'ordner', name: 'Ordner', typ: 'eigenstaendig', version: '1.0.0', repo: 'a/b', befehlsdatei: true, intervall_minuten: 5 };
+  const u = await aufbau(modul);
+  try {
+    // Das Modul hat sich gerade gemeldet, reagiert aber nicht auf befehl.json.
+    await u.verwaltung.speicher.hinzufuegen('ordner', { status: 'ok', zusammenfassung: 'x', ende: new Date().toISOString(), beginn: new Date().toISOString() });
+    const paket = await paketBauen(u.wurzel, { 'module.json': json({ ...modul, version: '1.1.0' }), 'modul.js': 'neu' });
+    const mu = u.neu(githubSimuliert({ id: 'ordner', version: '1.1.0', paket }));
+    await mu.suchen('ordner');
+    await mu.installieren('ordner', '1.1.0', 'patrick');
+    await mu.laufend.get('ordner');
+    assert.match((await mu.status('ordner')).fehler, /^Das Modul hat das Beenden nicht innerhalb von 0 Sekunden bestätigt\. Update abgebrochen/);
+    assert.equal(await readFile(path.join(u.ordner, 'modul.js'), 'utf8'), 'alt');
+    await assert.rejects(readFile(path.join(u.ordner, 'befehl.json')), /ENOENT/, 'Befehl zurückgenommen');
+    assert.equal(u.verwaltung.zustand.ordner?.beendet ?? null, null, 'nicht als „Beendet“ markiert');
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Modul-Update: vorher gestoppter Dienst bleibt gestoppt, „Beendet“ bleibt erhalten', async () => {
+  const u = await aufbau(FTP, { dienstStand: { MonitoringFTP: 'gestoppt' } });
+  try {
+    const beendet = { zeit: '2026-10-30T08:00:00.000Z', von: 'patrick' };
+    await u.verwaltung.zustandAendern('ftp', { beendet });
+    const paket = await paketBauen(u.wurzel, { 'module.json': json({ ...FTP, version: '1.1.0' }), 'modul.js': 'neu' });
+    const mu = u.neu(githubSimuliert({ id: 'ftp', version: '1.1.0', paket }));
+    await mu.suchen('ftp');
+    await mu.installieren('ftp', '1.1.0', 'patrick');
+    await mu.laufend.get('ftp');
+    const st = await mu.status('ftp');
+    assert.equal(st.fehler, null);
+    assert.match(st.hinweis, /war vorher nicht gestartet und bleibt es/);
+    assert.equal(await readFile(path.join(u.ordner, 'modul.js'), 'utf8'), 'neu');
+    assert.equal(u.dienste.aufrufe.some(([a]) => a === 'starten'), false, 'kein Start');
+    assert.deepEqual(u.verwaltung.zustand.ftp.beendet, beendet);
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});

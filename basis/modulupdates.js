@@ -18,6 +18,8 @@ import { prozess, tarProgramm, vergleicheVersionen, zerlegeVersion } from './upd
 const MAX_PAKET = 300 * 1024 * 1024;
 const BEHALTEN = 2;
 const BLEIBT = ['einstellungen.json', 'status.json'];
+// Dienstzustände, nach denen ein Update den Dienst nicht von sich aus startet.
+const DIENST_GESTOPPT = ['gestoppt', 'fehlt', 'pausiert'];
 const TAG = 86_400_000;
 export const modulPaketName = (id, version) => `${id}-${version}.tar.gz`;
 
@@ -237,8 +239,30 @@ export class Modulupdates {
       await rename(sicherung, m.ordner).catch(() => {});
       throw new BasisFehler(`Die neue Version konnte nicht eingesetzt werden (${fehler.code ?? fehler.message}). Die bisherige Version wurde wiederhergestellt.`);
     }
-    for (const datei of BLEIBT) await copyFile(path.join(sicherung, datei), path.join(m.ordner, datei)).catch(() => {});
+    for (const datei of BLEIBT) {
+      try { await copyFile(path.join(sicherung, datei), path.join(m.ordner, datei)); }
+      catch (fehler) {
+        if (fehler.code === 'ENOENT') continue; // Datei gab es nicht (z. B. Modul nie eingestellt)
+        // Ohne Einstellungen darf die neue Version nicht laufen: Austausch rückgängig machen.
+        const zurueck = await rename(m.ordner, neu).then(() => rename(sicherung, m.ordner)).then(() => true, () => false);
+        throw new BasisFehler(zurueck
+          ? `${datei} konnte nicht in die neue Version übernommen werden (${fehler.code ?? fehler.message}). Der Austausch wurde rückgängig gemacht; die bisherige Version bleibt.`
+          : `${datei} konnte nicht übernommen werden (${fehler.code ?? fehler.message}), und die bisherige Version ließ sich nicht automatisch zurückholen. Sie liegt unverändert in ${sicherung}.`);
+      }
+    }
     await this.verwaltung.einlesen();
+  }
+
+  // Gilt ein eigenständiges Modul als laufend? Ja, wenn es nicht beendet ist und sich zuletzt rechtzeitig gemeldet hat
+  // (bis zum erwarteten nächsten Lauf plus Toleranz; ohne Angabe: Intervall bzw. 60 Minuten).
+  laeuftVermutlich(m) {
+    const v = this.verwaltung;
+    if (v.zustand[m.id]?.beendet) return false;
+    const letztes = v.speicher.letztes(m.id);
+    if (!letztes) return false;
+    const ende = Date.parse(letztes.ende ?? letztes.beginn);
+    const erwartet = letztes.naechsterLauf ? Date.parse(letztes.naechsterLauf) : ende + (m.intervallMinuten ?? 60) * 60_000;
+    return this.jetzt() <= erwartet + (m.toleranzMinuten ?? 10) * 60_000;
   }
 
   // Hält das Modul an und liefert eine Funktion, die es danach wieder startet (Rückgabe: Hinweis oder null).
@@ -257,15 +281,27 @@ export class Modulupdates {
       };
     }
     if (!m.dienst && !m.befehlsdatei) throw new BasisFehler('Das Modul kann nicht automatisch beendet werden: In module.json fehlt „dienst“ oder „befehlsdatei“. Modul auf dem Worker beenden und Ordner von Hand austauschen.');
+    // Zustand vor dem Update merken: Ein bewusst beendetes Modul bzw. ein gestoppter Dienst bleibt so.
+    const vorherBeendet = v.zustand[m.id]?.beendet ?? null;
+    const liefVorher = this.laeuftVermutlich(m);
     // „Beendet“ verhindert Alarme (Keine Meldung, Dienst gestoppt), solange das Modul für das Update steht.
     await v.zustandAendern(m.id, { beendet: { zeit: new Date(this.jetzt()).toISOString(), von: grund } });
     if (m.dienst) {
+      let dienstVorher;
       try {
+        dienstVorher = (await v.dienste.zustand(m.dienst)).zustand;
         await v.dienste.beenden(m.dienst);
         await this.warten(async () => ['gestoppt', 'fehlt'].includes((await v.dienste.zustand(m.dienst)).zustand), `Der Windows-Dienst ${m.dienst} hält nicht an.`);
       } catch (fehler) {
-        await v.zustandAendern(m.id, { beendet: null });
+        await v.zustandAendern(m.id, { beendet: vorherBeendet });
         throw fehler instanceof BasisFehler ? fehler : new BasisFehler(`Der Windows-Dienst ${m.dienst} konnte nicht beendet werden: ${fehler.message}`);
+      }
+      if (DIENST_GESTOPPT.includes(dienstVorher)) {
+        return async () => {
+          await v.zustandAendern(m.id, { beendet: vorherBeendet });
+          await v.dienstePruefen();
+          return `${grund}: erledigt. Der Dienst ${m.dienst} war vorher nicht gestartet und bleibt es.`;
+        };
       }
       return async () => {
         try { await v.dienste.starten(m.dienst); }
@@ -277,8 +313,18 @@ export class Modulupdates {
     const befehl = path.join(m.ordner, BEFEHL_DATEI);
     await schreibeAtomar(befehl, { befehl: 'beenden', zeit: new Date(this.jetzt()).toISOString(), von: grund });
     // Ein laufendes Modul löscht befehl.json und beendet sich. Läuft es nicht, bleibt die Datei liegen.
-    await this.warten(async () => !(await stat(befehl).then(() => true, () => false)), null);
-    return async () => `${grund}: erledigt. Das Modul läuft nicht als Dienst – bitte auf dem Worker wieder starten. Bis es sich meldet, steht es auf „Beendet“.`;
+    const bestaetigt = await this.warten(async () => !(await stat(befehl).then(() => true, () => false)), null);
+    if (!bestaetigt && liefVorher) {
+      // Das Modul hat sich zuletzt regelmäßig gemeldet, aber das Beenden nicht bestätigt: nicht austauschen,
+      // sonst könnte der alte Prozess weiterlaufen und in den neuen Ordner schreiben.
+      await rm(befehl, { force: true }).catch(() => {});
+      await v.zustandAendern(m.id, { beendet: vorherBeendet });
+      throw new BasisFehler(`Das Modul hat das Beenden nicht innerhalb von ${Math.round(this.maxWartenMs / 1000)} Sekunden bestätigt. Update abgebrochen; die bisherige Version läuft unverändert weiter. Modul auf dem Worker prüfen oder von Hand beenden und das Update wiederholen.`);
+    }
+    return async () => {
+      if (vorherBeendet) await v.zustandAendern(m.id, { beendet: vorherBeendet });
+      return `${grund}: erledigt. Das Modul läuft nicht als Dienst – bitte auf dem Worker wieder starten. Bis es sich meldet, steht es auf „Beendet“.`;
+    };
   }
 
   async warten(bedingung, fehlertext) {

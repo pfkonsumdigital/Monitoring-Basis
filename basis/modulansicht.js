@@ -25,6 +25,35 @@ export function leseStatus(text) {
   return { eintrag };
 }
 
+// Zeitstempel einer Meldung absichern: Liegt „zeit“ nach der Empfangszeit (falsche Uhr, Zeitzonenfehler im Modul),
+// werden ende, beginn und naechster_lauf um diesen Versatz zurückgeschoben. Sonst würde eine Meldung aus der
+// Zukunft alle späteren, korrekt datierten Meldungen verdrängen und „Keine Meldung“ verhindern.
+// „naechster_lauf“ zählt nur bis 7 Tage nach der Meldung (größtes erlaubtes Intervall).
+export const ZUKUNFT_TOLERANZ_MS = 5 * MINUTE;
+const NAECHSTER_LAUF_MAX_MS = 7 * 24 * 60 * MINUTE;
+const dauerText = (ms) => (ms >= 2 * 24 * 60 * MINUTE ? `${Math.round(ms / (24 * 60 * MINUTE))} Tage` : ms >= 2 * 60 * MINUTE ? `${Math.round(ms / (60 * MINUTE))} Stunden` : `${Math.round(ms / MINUTE)} Minuten`);
+
+export function zeitBegrenzen(eintrag, empfangen) {
+  const versatz = Math.max(0, Date.parse(eintrag.ende) - empfangen);
+  const e = { ...eintrag };
+  if (versatz > 0) {
+    const schieben = (iso) => new Date(Date.parse(iso) - versatz).toISOString();
+    e.gemeldet = eintrag.ende;
+    e.ende = schieben(eintrag.ende);
+    e.beginn = schieben(eintrag.beginn);
+    if (e.naechsterLauf) e.naechsterLauf = schieben(e.naechsterLauf);
+  }
+  if (e.naechsterLauf) {
+    const abstand = Date.parse(e.naechsterLauf) - Date.parse(e.ende);
+    if (abstand < 0 || abstand > NAECHSTER_LAUF_MAX_MS) delete e.naechsterLauf;
+  }
+  const warnung = versatz > ZUKUNFT_TOLERANZ_MS
+    ? `Der Zeitstempel der Meldung liegt ${dauerText(versatz)} in der Zukunft (${eintrag.ende}); verwendet wird die Empfangszeit. Uhr des Rechners bzw. Zeitangabe im Modul prüfen.`
+    : null;
+  if (warnung) e.details = [`Hinweis der Basis: ${warnung}`, ...(e.details ?? [])];
+  return { eintrag: e, warnung };
+}
+
 // Rangfolge für die Sortierung: Probleme zuerst.
 export const SCHWERE = { modulfehler: 0, fehler: 1, 'dienst-gestoppt': 1, 'keine-meldung': 2, warnung: 3, unbekannt: 4, laeuft: 5, ok: 6, inaktiv: 7, beendet: 7 };
 

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ladeModule } from './module.js';
-import { berechneAnsicht, leseStatus } from './modulansicht.js';
+import { berechneAnsicht, leseStatus, zeitBegrenzen } from './modulansicht.js';
 import { ansicht as einstellungsAnsicht, passwoerter, schreibeAtomar, speichern as einstellungenSpeichern, wirksameWerte } from './einstellungen.js';
 import { melde } from './protokoll.js';
 import { beendeLaufendeModule } from './ausfuehrung.js';
@@ -102,13 +102,21 @@ export class Modulverwaltung {
       }
       merker.fehlversuche = 0;
       merker.fehler = null;
+      const empfangen = this.jetzt();
       const letztes = this.speicher.letztes(m.id);
-      if (letztes?.ende === eintrag.ende) continue;
-      if (letztes && Date.parse(letztes.ende ?? letztes.beginn) > Date.parse(eintrag.ende)) continue;
-      await this.uebernehmen(m.id, eintrag);
+      // Dieselbe Meldung nur einmal übernehmen (Vergleich mit der Zeit, die das Modul gemeldet hat).
+      if ((letztes?.gemeldet ?? letztes?.ende) === eintrag.ende) continue;
+      // Ältere Meldung als die zuletzt übernommene: ignorieren. Ein (früher gespeicherter) Eintrag aus der
+      // Zukunft zählt dabei nicht, sonst würde er alle weiteren Meldungen blockieren.
+      const letzteZeit = letztes ? Date.parse(letztes.ende ?? letztes.beginn) : NaN;
+      if (letzteZeit <= empfangen && letzteZeit > Date.parse(eintrag.ende)) continue;
+      const { eintrag: neu, warnung } = zeitBegrenzen(eintrag, empfangen);
+      if (warnung && !merker.zukunftGemeldet) melde(this.log, 'warnung', `Modul ${m.id}`, warnung);
+      merker.zukunftGemeldet = Boolean(warnung);
+      await this.uebernehmen(m.id, neu);
       // Ein beendetes Modul, das sich danach wieder meldet, läuft wieder.
       const beendet = this.zustand[m.id]?.beendet;
-      if (beendet && Date.parse(eintrag.ende) > Date.parse(beendet.zeit)) {
+      if (beendet && Date.parse(neu.ende) > Date.parse(beendet.zeit)) {
         await this.zustandAendern(m.id, { beendet: null });
         this.log(`Modul ${m.id} meldet sich wieder und gilt nicht mehr als beendet.`);
       }

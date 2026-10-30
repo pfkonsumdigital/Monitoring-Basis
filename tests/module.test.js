@@ -188,6 +188,49 @@ test('Modulverwaltung: status.json übernehmen, nicht doppelt, ungültige Datei 
   }
 });
 
+test('Modulverwaltung: Zeitstempel aus der Zukunft blockieren spätere Meldungen nicht (Fehler 2099)', async () => {
+  const u = await aufbau({ 'ftp/module.json': { id: 'ftp', name: 'FTP', typ: 'eigenstaendig', intervall_minuten: 5, toleranz_minuten: 10 } });
+  try {
+    const v = u.neu();
+    await v.start();
+    v.stop();
+    const status = path.join(u.moduleOrdner, 'ftp', 'status.json');
+    // Modul meldet versehentlich das Jahr 2099 (inkl. nächstem Lauf in 2099).
+    await schreibeJson(status, { status: 'ok', zusammenfassung: 'alles gut', zeit: '2099-01-01T00:00:00Z', beginn: '2098-12-31T23:59:58Z', naechster_lauf: '2099-01-01T00:05:00Z' });
+    await v.statusLesen();
+    await v.statusLesen();
+    assert.equal(u.uebernommen.length, 1, 'nur einmal übernommen');
+    const e1 = u.speicher.letztes('ftp');
+    assert.deepEqual([e1.ende, e1.beginn, e1.gemeldet, e1.naechsterLauf], ['2026-10-29T12:00:00.000Z', '2026-10-29T11:59:58.000Z', '2099-01-01T00:00:00.000Z', '2026-10-29T12:05:00.000Z'], 'auf Empfangszeit verschoben');
+    assert.match(e1.details[0], /^Hinweis der Basis: Der Zeitstempel der Meldung liegt \d+ Tage in der Zukunft/);
+    assert.equal(u.meldungen.filter(([s]) => s === 'warnung').length, 1);
+
+    // Danach korrekt datierte Meldungen – auch Fehler – werden übernommen.
+    u.uhr('2026-10-29T12:06:00Z');
+    await schreibeJson(status, { status: 'fehler', zusammenfassung: 'Login fehlgeschlagen', zeit: '2026-10-29T12:05:30Z' });
+    await v.statusLesen();
+    assert.deepEqual(u.uebernommen.at(-1), ['ftp', 'fehler']);
+    assert.equal(v.ansichten()[0].anzeige, 'fehler');
+
+    // Ein früher (vor 0.8.1) gespeicherter Eintrag aus der Zukunft blockiert ebenfalls nicht mehr.
+    await u.speicher.hinzufuegen('ftp', { status: 'ok', zusammenfassung: 'alt', ende: '2099-06-01T00:00:00.000Z', beginn: '2099-06-01T00:00:00.000Z', naechsterLauf: '2099-06-01T00:05:00.000Z' });
+    u.uhr('2026-10-29T12:11:00Z');
+    await schreibeJson(status, { status: 'fehler', zusammenfassung: 'Login fehlgeschlagen', zeit: '2026-10-29T12:10:30Z' });
+    await v.statusLesen();
+    assert.equal(u.speicher.letztes('ftp').zusammenfassung, 'Login fehlgeschlagen');
+
+    // „naechster_lauf“ weit in der Zukunft verhindert „Keine Meldung“ nicht: Es gilt das Intervall.
+    u.uhr('2026-10-29T12:16:00Z');
+    await schreibeJson(status, { status: 'ok', zusammenfassung: 'gut', zeit: '2026-10-29T12:15:00Z', naechster_lauf: '2099-01-01T00:00:00Z' });
+    await v.statusLesen();
+    assert.equal(u.speicher.letztes('ftp').naechsterLauf, undefined);
+    u.uhr('2026-10-29T12:31:00Z');
+    assert.equal(v.ansichten()[0].anzeige, 'keine-meldung');
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
 test('Modulverwaltung: Module kommen und gehen ohne Neustart; ein kaputtes Modul stört die anderen nicht', async () => {
   const u = await aufbau({ 'a/module.json': { id: 'a', name: 'A', typ: 'eigenstaendig' } });
   try {
