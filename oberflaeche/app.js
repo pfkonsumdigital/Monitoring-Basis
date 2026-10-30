@@ -92,6 +92,7 @@ async function aktualisieren() {
     $('updates-oeffnen').hidden = !daten.admin;
     $('protokoll-oeffnen').hidden = !daten.admin;
     $('benachrichtigung-oeffnen').hidden = !daten.admin;
+    $('benutzerverwaltung-oeffnen').hidden = !daten.admin;
     $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
     $('beenden-oeffnen').hidden = !daten.beendenMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
@@ -453,6 +454,110 @@ $('ben-test').addEventListener('click', async () => {
   benMeldung(daten.ok ? 'Testmail gesendet. Bitte Posteingang prüfen.' : `Nicht gesendet: ${daten.fehler ?? 'unbekannter Fehler'}`, daten.ok ? 'ok' : 'fehler');
 });
 
+// ---- Benutzer (nur Admins) ----
+const bvMeldung = (text, art = '') => { $('bv-meldung').textContent = text; $('bv-meldung').dataset.art = art; };
+const uhrzeit = (iso) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+
+function bvZeigen(daten) {
+  const ich = $('benutzer').textContent;
+  $('bv-liste').replaceChildren(...daten.benutzer.map((b) => {
+    const zelle = el('td', { className: 'aktionen-zelle' });
+    if (b.name !== ich) {
+      const admin = el('button', { type: 'button', className: 'zweitrangig', textContent: b.admin ? 'Admin-Recht entziehen' : 'Zum Admin machen' });
+      admin.addEventListener('click', () => bvAktion(`/api/benutzer/${b.name}/admin`, { admin: !b.admin }, [admin], b.admin ? `Admin-Recht von ${b.name} entzogen.` : `${b.name} ist jetzt Admin.`));
+      const loeschen = el('button', { type: 'button', className: 'zweitrangig gefahr', textContent: 'Löschen' });
+      // Zweimal klicken: erst nachfragen, dann löschen.
+      loeschen.addEventListener('click', () => {
+        if (loeschen.dataset.sicher !== '1') {
+          loeschen.dataset.sicher = '1';
+          loeschen.textContent = `${b.name} wirklich löschen?`;
+          setTimeout(() => { loeschen.dataset.sicher = ''; loeschen.textContent = 'Löschen'; }, 5000);
+          return;
+        }
+        bvAktion(`/api/benutzer/${b.name}/loeschen`, {}, [loeschen], `Benutzer ${b.name} gelöscht.`);
+      });
+      zelle.append(admin, loeschen);
+    } else {
+      zelle.append(el('span', { className: 'leise', textContent: 'eigenes Konto' }));
+    }
+    return el('tr', {}, el('td', { textContent: b.name }), el('td', { textContent: b.admin ? 'Admin' : 'Benutzer' }),
+      el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), zelle);
+  }));
+  const auswahl = $('bv-setzen-name');
+  const vorher = auswahl.value;
+  auswahl.replaceChildren(...daten.benutzer.map((b) => new Option(b.name, b.name)));
+  if (daten.benutzer.some((b) => b.name === vorher)) auswahl.value = vorher;
+  $('bv-sitzungen-leer').hidden = daten.sitzungen.length > 0;
+  $('bv-sitzungen').replaceChildren(...daten.sitzungen.map((s) => el('tr', {},
+    el('td', { textContent: `${s.benutzer}${s.admin ? ' (Admin)' : ''}${s.eigene ? ' – diese Sitzung' : ''}` }),
+    el('td', { textContent: s.adresse.replace(/^::ffff:/, '') }), el('td', { textContent: uhrzeit(s.seit) }),
+    el('td', { textContent: relativ(s.zuletzt) }), el('td', { textContent: uhrzeit(s.bis) }))));
+}
+
+async function bvLaden() {
+  const antwort = await api('/api/benutzer');
+  if (!antwort.ok) { bvMeldung('Benutzer konnten nicht geladen werden.', 'fehler'); return; }
+  bvZeigen(await antwort.json());
+}
+
+// Führt eine Änderung aus, zeigt die neue Liste und eine Meldung; liefert true bei Erfolg.
+async function bvAktion(weg, koerper, knoepfe, erfolg) {
+  bvMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt(knoepfe, bvMeldung, async () => {
+    const antwort = await senden(weg, koerper);
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return false;
+  const { antwort, daten } = ergebnis;
+  if (daten.benutzer) bvZeigen(daten);
+  if (!antwort.ok) { bvMeldung(daten.fehler ?? 'Nicht möglich.', 'fehler'); return false; }
+  bvMeldung(erfolg, 'ok');
+  return true;
+}
+
+$('benutzerverwaltung-oeffnen').addEventListener('click', async () => {
+  bvMeldung('');
+  $('bv-anlegen').reset();
+  $('bv-setzen').reset();
+  $('benutzerverwaltung').showModal();
+  await bvLaden().catch(() => bvMeldung(KEINE_VERBINDUNG, 'fehler'));
+});
+$('bv-schliessen').addEventListener('click', () => $('benutzerverwaltung').close());
+$('bv-anlegen').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const name = $('bv-name').value.trim();
+  if ($('bv-passwort').value !== $('bv-passwort2').value) { bvMeldung('Die Passwörter stimmen nicht überein.', 'fehler'); return; }
+  if (await bvAktion('/api/benutzer', { name, passwort: $('bv-passwort').value, admin: $('bv-admin').checked }, [$('bv-anlegen-knopf')], `Benutzer ${name} angelegt.`)) $('bv-anlegen').reset();
+});
+$('bv-setzen').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const name = $('bv-setzen-name').value;
+  if (!name) return;
+  if ($('bv-setzen-passwort').value !== $('bv-setzen-passwort2').value) { bvMeldung('Die Passwörter stimmen nicht überein.', 'fehler'); return; }
+  if (await bvAktion(`/api/benutzer/${name}/passwort`, { passwort: $('bv-setzen-passwort').value }, [$('bv-setzen-knopf')], `Passwort von ${name} gesetzt.`)) {
+    $('bv-setzen-passwort').value = '';
+    $('bv-setzen-passwort2').value = '';
+  }
+});
+
+// ---- Eigenes Passwort (alle Benutzer) ----
+const pwMeldung = (text, art = '') => { $('pw-meldung').textContent = text; $('pw-meldung').dataset.art = art; };
+$('passwort-oeffnen').addEventListener('click', () => { $('pw-formular').reset(); pwMeldung(''); $('passwort').showModal(); });
+$('pw-schliessen').addEventListener('click', () => $('passwort').close());
+$('pw-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  if ($('pw-neu').value !== $('pw-neu2').value) { pwMeldung('Die neuen Passwörter stimmen nicht überein.', 'fehler'); return; }
+  pwMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt([$('pw-speichern')], pwMeldung, async () => {
+    const antwort = await senden('/api/passwort', { alt: $('pw-alt').value, neu: $('pw-neu').value });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  if (!ergebnis.antwort.ok) { pwMeldung(ergebnis.daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  $('pw-formular').reset();
+  pwMeldung('Passwort geändert.', 'ok');
+});
+
 // ---- Updates (nur Admins) ----
 const PHASEN = { suche: 'Suche nach Updates …', herunterladen: 'Paket wird heruntergeladen …', pruefen: 'Prüfsumme wird kontrolliert …', entpacken: 'Paket wird entpackt …', selbsttest: 'Neue Version wird getestet …', neustart: 'Die Basis startet neu …' };
 let updateStatus = null;
@@ -686,7 +791,7 @@ $('beenden-ja').addEventListener('click', async () => {
   clearInterval(aktualisierer);
   $('beenden').close();
   $('details').close();
-  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen']) $(id).hidden = true;
+  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen', 'benutzerverwaltung-oeffnen', 'passwort-oeffnen']) $(id).hidden = true;
   for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
   $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
   $('beendet-seite').hidden = false;

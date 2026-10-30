@@ -40,8 +40,8 @@ export class Anmeldung {
     return Boolean(eintrag && eintrag.anzahl >= this.maxFehlversuche && this.jetzt() < eintrag.bis);
   }
 
-  // Liefert ein Sitzungstoken oder null. 'gesperrt' bei zu vielen Fehlversuchen.
-  async anmelden(name, passwort, adresse) {
+  // Prüft Benutzer und Passwort mit Sperre nach Fehlversuchen: true, false oder 'gesperrt'.
+  async pruefen(name, passwort, adresse) {
     if (this.gesperrt(adresse)) return 'gesperrt';
     const eintrag = Object.hasOwn(this.benutzer, name) ? this.benutzer[name] : null;
     const ok = await passwortStimmt(passwort, eintrag ? eintrag.hash : await this.platzhalter) && Boolean(eintrag);
@@ -49,20 +49,51 @@ export class Anmeldung {
       const alt = this.fehlversuche.get(adresse);
       const anzahl = alt && this.jetzt() < alt.bis ? alt.anzahl + 1 : 1;
       this.fehlversuche.set(adresse, { anzahl, bis: this.jetzt() + this.sperreMs });
-      return this.gesperrt(adresse) ? 'gesperrt' : null;
+      return this.gesperrt(adresse) ? 'gesperrt' : false;
     }
     this.fehlversuche.delete(adresse);
+    return true;
+  }
+
+  // Liefert ein Sitzungstoken oder null. 'gesperrt' bei zu vielen Fehlversuchen.
+  async anmelden(name, passwort, adresse) {
+    const ok = await this.pruefen(name, passwort, adresse);
+    if (ok !== true) return ok === 'gesperrt' ? 'gesperrt' : null;
     const token = randomBytes(32).toString('base64url');
-    this.sitzungen.set(token, { benutzer: name, admin: eintrag.admin === true, bis: this.jetzt() + this.sitzungMs });
+    const jetzt = this.jetzt();
+    this.sitzungen.set(token, { benutzer: name, admin: this.benutzer[name].admin === true, adresse: String(adresse ?? ''), seit: jetzt, zuletzt: jetzt, bis: jetzt + this.sitzungMs });
     return token;
   }
 
+  // Gültige Sitzung zum Token (oder null); merkt sich die letzte Aktivität.
   sitzung(token) {
     const s = typeof token === 'string' ? this.sitzungen.get(token) : undefined;
     if (!s) return null;
     if (this.jetzt() >= s.bis) { this.sitzungen.delete(token); return null; }
+    s.zuletzt = this.jetzt();
     return s;
   }
 
   abmelden(token) { this.sitzungen.delete(token); }
+
+  // Angemeldete Sitzungen für die Anzeige (ohne Token), neueste Aktivität zuerst; „eigene“ markiert die anfragende.
+  liste(eigenesToken = null) {
+    const jetzt = this.jetzt();
+    const iso = (ms) => new Date(ms).toISOString();
+    return [...this.sitzungen].filter(([, s]) => jetzt < s.bis)
+      .map(([token, s]) => ({ benutzer: s.benutzer, admin: s.admin, adresse: s.adresse, seit: iso(s.seit), zuletzt: iso(s.zuletzt), bis: iso(s.bis), eigene: token === eigenesToken }))
+      .sort((a, b) => b.zuletzt.localeCompare(a.zuletzt));
+  }
+
+  // Beendet alle Sitzungen eines Benutzers, außer der mit „ausser“ (z. B. die eigene beim Passwortwechsel).
+  sitzungenBeenden(name, ausser = null) {
+    let anzahl = 0;
+    for (const [token, s] of this.sitzungen) if (s.benutzer === name && token !== ausser) { this.sitzungen.delete(token); anzahl++; }
+    return anzahl;
+  }
+
+  // Admin-Recht in laufenden Sitzungen sofort übernehmen.
+  adminUebernehmen(name, admin) {
+    for (const s of this.sitzungen.values()) if (s.benutzer === name) s.admin = admin;
+  }
 }

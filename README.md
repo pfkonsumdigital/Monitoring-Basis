@@ -102,7 +102,7 @@ Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 | `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `1000` |
 | `sitzung_stunden` | Dauer, bis eine erneute Anmeldung nötig ist | `12` |
 | `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, sonst Zertifikat, siehe unten | – |
-| `benutzer` | wird von `--benutzer-anlegen` gepflegt; `"admin": true` über `--admin` | – |
+| `benutzer` | wird in der Oberfläche unter **Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin | – |
 | `updates` | optional, siehe „Updates“ | aus |
 
 `config.json` enthält Passwort-Hashes und gegebenenfalls Tokens. Die Datei
@@ -611,6 +611,31 @@ Stufe und Quelle, mit aufklappbaren Details und einem Download als Textdatei.
 
 In der Windows-Firewall eingehend TCP auf den gewählten Port nur aus dem
 Firmennetz freigeben.
+
+## Benutzer und Anmeldung
+
+Den ersten Admin legt `--benutzer-anlegen <Name> --admin` an (siehe oben). Danach
+geht alles in der Oberfläche:
+
+- **Benutzer** (Knopf oben, nur Admins):
+  - Benutzer mit Passwort anlegen, optional als Admin.
+  - Passwort eines Benutzers neu setzen. Alle Sitzungen dieses Benutzers enden
+    dabei sofort; beim eigenen Konto bleibt die aktuelle Sitzung bestehen.
+  - Admin-Recht vergeben oder entziehen.
+  - Benutzer löschen (zweimal klicken). Seine Sitzungen enden sofort.
+  - Liste **Angemeldet**: wer mit welcher Adresse seit wann angemeldet ist,
+    wann zuletzt aktiv (eine offene Seite fragt alle 10 Sekunden nach) und wann
+    die Sitzung endet.
+  - Das eigene Konto kann man weder löschen noch sich selbst das Admin-Recht
+    entziehen; der letzte Admin bleibt immer Admin.
+- **Passwort ändern** (Knopf oben, alle Benutzer): eigenes Passwort ändern, mit
+  dem bisherigen Passwort als Bestätigung. Falsche Eingaben zählen wie
+  Fehlversuche bei der Anmeldung. Andere Sitzungen mit diesem Konto enden.
+
+Passwörter: mindestens 10, höchstens 200 Zeichen. Gespeichert wird in
+`config.json` (nur scrypt-Hashes), ohne Neustart. Vorher legt die Basis eine
+Sicherung `config.json.vor-benutzeraenderung.json` an. Jede Änderung steht im
+Protokoll („Benutzer bob angelegt durch anna.“), Passwörter nie.
 
 ## Sicherheit
 

@@ -17,7 +17,9 @@
     <button type="button" id="neustart-oeffnen" class="zweitrangig" hidden>Neu starten</button>
     <button type="button" id="beenden-oeffnen" class="zweitrangig" hidden>Beenden</button>
     <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
+    <button type="button" id="benutzerverwaltung-oeffnen" class="zweitrangig" hidden>Benutzer</button>
     <span id="benutzer" class="leise"></span>
+    <button type="button" id="passwort-oeffnen" class="zweitrangig" title="Eigenes Passwort ändern">Passwort ändern</button>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
   </div>
 </header>
@@ -154,6 +156,57 @@
       <button type="button" id="tok-pruefen" class="zweitrangig">Token prüfen</button>
       <button type="button" id="tok-entfernen" class="zweitrangig" hidden>Token entfernen</button>
     </div>
+  </form>
+</dialog>
+<dialog id="benutzerverwaltung" class="breit">
+  <div class="dialog-kopf">
+    <h2>Benutzer</h2>
+    <button type="button" id="bv-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p class="leise">Änderungen gelten sofort und werden in config.json gespeichert (Passwörter nur als Hash). Nach einem neuen Passwort werden alle Sitzungen dieses Benutzers beendet.</p>
+  <p id="bv-meldung" class="upd-meldung" role="status"></p>
+  <div class="liste-rahmen">
+    <table class="liste-tabelle bv-tabelle">
+      <thead><tr><th>Name</th><th>Rolle</th><th>Angemeldet</th><th></th></tr></thead>
+      <tbody id="bv-liste"></tbody>
+    </table>
+  </div>
+  <h3>Neuen Benutzer anlegen</h3>
+  <form id="bv-anlegen" class="felder" novalidate>
+    <div class="feld"><label for="bv-name">Benutzername</label><input id="bv-name" autocomplete="off" maxlength="64"><small class="leise">Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich.</small></div>
+    <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen.</small></div>
+    <div class="feld"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
+    <div class="feld schalter"><input type="checkbox" id="bv-admin"><label for="bv-admin">Admin (darf Einstellungen, Updates, Benutzer usw. ändern)</label></div>
+    <div class="aktionen"><button type="submit" id="bv-anlegen-knopf">Benutzer anlegen</button></div>
+  </form>
+  <h3>Passwort neu setzen</h3>
+  <form id="bv-setzen" class="felder" novalidate>
+    <div class="feld"><label for="bv-setzen-name">Benutzer</label><select id="bv-setzen-name"></select></div>
+    <div class="feld"><label for="bv-setzen-passwort">Neues Passwort</label><input id="bv-setzen-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen. Alle Sitzungen dieses Benutzers werden beendet.</small></div>
+    <div class="feld"><label for="bv-setzen-passwort2">Passwort wiederholen</label><input id="bv-setzen-passwort2" type="password" autocomplete="new-password"></div>
+    <div class="aktionen"><button type="submit" id="bv-setzen-knopf">Passwort setzen</button></div>
+  </form>
+  <h3>Angemeldet</h3>
+  <p id="bv-sitzungen-leer" class="leise" hidden>Niemand angemeldet.</p>
+  <div class="liste-rahmen">
+    <table class="liste-tabelle bv-tabelle">
+      <thead><tr><th>Benutzer</th><th>Adresse</th><th>Angemeldet seit</th><th>Zuletzt aktiv</th><th>Sitzung endet</th></tr></thead>
+      <tbody id="bv-sitzungen"></tbody>
+    </table>
+  </div>
+  <p class="leise">„Zuletzt aktiv“ zählt jede Anfrage – eine offene Seite fragt alle 10 Sekunden nach. Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
+</dialog>
+<dialog id="passwort">
+  <div class="dialog-kopf">
+    <h2>Eigenes Passwort ändern</h2>
+    <button type="button" id="pw-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <form id="pw-formular" class="felder" novalidate>
+    <div class="feld"><label for="pw-alt">Bisheriges Passwort</label><input id="pw-alt" type="password" autocomplete="current-password"></div>
+    <div class="feld"><label for="pw-neu">Neues Passwort</label><input id="pw-neu" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen. Andere Sitzungen mit diesem Konto werden beendet, diese bleibt angemeldet.</small></div>
+    <div class="feld"><label for="pw-neu2">Neues Passwort wiederholen</label><input id="pw-neu2" type="password" autocomplete="new-password"></div>
+    <p id="pw-meldung" class="upd-meldung" role="status"></p>
+    <div class="aktionen"><button type="submit" id="pw-speichern">Passwort ändern</button></div>
   </form>
 </dialog>
 <dialog id="protokoll" class="breit">

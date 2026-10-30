@@ -187,3 +187,5 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 #details-admin[hidden] { display: none; }
 #tok-status[data-art="fehler"] { color: var(--fehler); }
 #updates .felder { margin-top: 4px; }
+.bv-tabelle td { padding-right: 14px; }
+.bv-tabelle td.aktionen-zelle { display: flex; gap: 6px; flex-wrap: wrap; }

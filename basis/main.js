@@ -16,6 +16,7 @@ import { Modulverwaltung } from './modulverwaltung.js';
 import { Benachrichtigung } from './benachrichtigung.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
+import { Benutzerverwaltung } from './benutzerverwaltung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
@@ -68,7 +69,7 @@ async function benutzerAnlegen(configDatei, name, admin) {
   const temp = `${configDatei}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(roh, null, 2) + '\n', { mode: 0o600 });
   await rename(temp, configDatei);
-  console.log(`Benutzer ${name}${istAdmin ? ' (Admin)' : ''} gespeichert. Eine laufende Basis übernimmt die Änderung nach einem Neustart.`);
+  console.log(`Benutzer ${name}${istAdmin ? ' (Admin)' : ''} gespeichert. Eine laufende Basis übernimmt die Änderung nach einem Neustart oder bei der nächsten Änderung in der Oberfläche (Benutzer).`);
 }
 
 async function starten(konfig, configDatei, protokoll) {
@@ -93,6 +94,7 @@ async function starten(konfig, configDatei, protokoll) {
   });
   await module.start();
   const anmeldung = new Anmeldung({ benutzer: konfig.benutzer, sitzungMs: konfig.sitzungMs });
+  const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, log });
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
   let server;
@@ -115,7 +117,7 @@ async function starten(konfig, configDatei, protokoll) {
   await updates.starten();
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

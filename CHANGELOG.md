@@ -1,5 +1,24 @@
 # Änderungen
 
+## 0.9.0
+
+### Neu
+
+- **Benutzerverwaltung in der Oberfläche** (Knopf „Benutzer“, nur Admins): Benutzer mit Passwort anlegen (optional als Admin), Passwort eines Benutzers neu setzen, Admin-Recht vergeben oder entziehen, Benutzer löschen. Änderungen gelten sofort ohne Neustart und werden in `config.json` gespeichert (nur scrypt-Hashes, vorher Sicherung `config.json.vor-benutzeraenderung.json`).
+- **Wer ist angemeldet:** Liste aller Sitzungen mit Benutzer, Adresse, angemeldet seit, zuletzt aktiv und Ende der Sitzung.
+- **Eigenes Passwort ändern** (Knopf „Passwort ändern“, alle Benutzer) mit dem bisherigen Passwort als Bestätigung.
+
+### Geändert
+
+- Neues Passwort (durch Admin): alle Sitzungen dieses Benutzers enden. Eigenes Passwort: andere Sitzungen enden, die aktuelle bleibt. Gelöschte Benutzer werden sofort abgemeldet, ein geändertes Admin-Recht gilt sofort.
+- Schutzregeln: Das eigene Konto kann man nicht löschen und sich selbst nicht das Admin-Recht entziehen; der letzte Admin bleibt Admin. Falsche bisherige Passwörter zählen als Fehlversuche (Sperre wie bei der Anmeldung).
+- Alle Änderungen stehen im Protokoll, ohne Passwörter oder Hashes. `--benutzer-anlegen` funktioniert weiter; eine laufende Basis übernimmt solche Änderungen bei der nächsten Änderung in der Oberfläche oder nach einem Neustart.
+
+### Prüfung
+
+- `npm test`: 100 Tests, neu u. a. Benutzerverwaltung (anlegen, Fehlerfälle, Passwort setzen beendet Sitzungen, Admin-Recht wirkt sofort, letzter Admin, löschen), eigenes Passwort mit Sperre, Sitzungsliste ohne Token, Webserver-API (nur Admins, Herkunft und Anfragekopf, keine Hashes in Antworten); Gegenprobe mit absichtlich entfernten Schutzregeln.
+- Browsertest mit echter Basis: anlegen, eigenes Passwort, Liste „Angemeldet“, Admin vergeben, Passwort setzen (Sitzung des Benutzers endet), löschen; keine JavaScript-Fehler.
+
 ## 0.8.1
 
 Fehlerbehebungen nach einer externen Code-Prüfung von 0.8.0.

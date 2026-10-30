@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { melde } from './protokoll.js';
+import { Benutzerfehler, BenutzerUnbekannt } from './benutzerverwaltung.js';
 
 const OEFFENTLICH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'oberflaeche');
 const DATEIEN = {
@@ -62,7 +63,7 @@ export function istInterneAdresse(adresse) {
 
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -125,6 +126,38 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
       if (weg === '/api/status' && req.method === 'GET') {
         return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), beendenMoeglich: Boolean(sitzung.admin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
           module: module.ansichten().map((m) => (sitzung.admin && modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m)) });
+      }
+      // Eigenes Passwort ändern (jeder angemeldete Benutzer, bisheriges Passwort nötig).
+      if (weg === '/api/passwort') {
+        if (!benutzerverwaltung || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        try { await benutzerverwaltung.eigenesPasswort(sitzung.benutzer, eingabe?.alt, eingabe?.neu, token, req.socket.remoteAddress); }
+        catch (fehler) { if (fehler instanceof Benutzerfehler) return json(res, 400, { fehler: fehler.message }); throw fehler; }
+        return json(res, 200, { geaendert: true });
+      }
+      // Benutzerverwaltung (nur Admins): Liste und Sitzungen, anlegen, Passwort setzen, Admin-Recht, löschen.
+      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen))?$/.exec(weg);
+      if (ben) {
+        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!benutzerverwaltung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        if (!ben[1] && req.method === 'GET') return json(res, 200, benutzerverwaltung.ansicht(token));
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const name = ben[1];
+        try {
+          if (!ben[2]) await benutzerverwaltung.anlegen({ name: eingabe?.name, passwort: eingabe?.passwort, admin: eingabe?.admin === true }, sitzung.benutzer);
+          else if (ben[2] === 'passwort') await benutzerverwaltung.passwortSetzen(name, eingabe?.passwort, sitzung.benutzer, token);
+          else if (ben[2] === 'admin') await benutzerverwaltung.adminSetzen(name, eingabe?.admin, sitzung.benutzer);
+          else await benutzerverwaltung.loeschen(name, sitzung.benutzer);
+        } catch (fehler) {
+          if (fehler instanceof Benutzerfehler) return json(res, fehler instanceof BenutzerUnbekannt ? 404 : 400, { fehler: fehler.message, ...benutzerverwaltung.ansicht(token) });
+          throw fehler;
+        }
+        return json(res, 200, benutzerverwaltung.ansicht(token));
       }
       if (weg === '/api/beenden') {
         if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
