@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { schreibeAtomar } from './einstellungen.js';
 import { melde } from './protokoll.js';
+import { istKlartext, istVerschluesselt } from './geheimnis.js';
 
 // Zentrale Benachrichtigung per Mail über Microsoft 365 (Graph, App-Registrierung mit
 // Client-Secret, Anwendungsberechtigung Mail.Send – per RBAC for Applications auf das
@@ -132,8 +133,8 @@ function kategorie(m, meldenNach) {
 }
 
 export class Benachrichtigung {
-  constructor({ datenOrdner, log = () => {}, geheimnisse = [], fetchImpl = fetch, jetzt = () => Date.now() }) {
-    Object.assign(this, { log, geheimnisse, fetchImpl, jetzt });
+  constructor({ datenOrdner, log = () => {}, geheimnisse = [], fetchImpl = fetch, jetzt = () => Date.now(), tresor = null }) {
+    Object.assign(this, { log, geheimnisse, fetchImpl, jetzt, tresor });
     this.datei = path.join(datenOrdner, 'benachrichtigung.json');
     this.zustandDatei = path.join(datenOrdner, 'benachrichtigung-zustand.json');
     this.werte = { ...STANDARD };
@@ -142,9 +143,32 @@ export class Benachrichtigung {
 
   async laden() {
     try { this.werte = { ...STANDARD, ...JSON.parse(await readFile(this.datei, 'utf8')) }; } catch { /* noch nicht eingerichtet */ }
+    // Der geheime Schlüssel liegt verschlüsselt in der Datei (siehe geheimnis.js), im Speicher als Klartext.
+    if (istVerschluesselt(this.werte.client_secret)) {
+      try { this.werte.client_secret = await this.tresor.einzeln(this.werte.client_secret); }
+      catch (fehler) {
+        this.werte.client_secret = '';
+        melde(this.log, 'fehler', 'Benachrichtigung', `Der geheime Schlüssel für den Mailversand lässt sich nicht entschlüsseln (${fehler.message}). Bitte unter „Benachrichtigung“ neu eintragen.`);
+      }
+    }
     try { this.zustand = { module: {}, verlauf: [], ...JSON.parse(await readFile(this.zustandDatei, 'utf8')) }; } catch { /* erster Start */ }
     this.geheimnisMerken();
     this.mail = null;
+  }
+
+  // Schreibt die Einstellungen; der geheime Schlüssel wird unter Windows verschlüsselt gespeichert.
+  async schreiben(werte) {
+    const datei = this.tresor?.verfuegbar && istKlartext(werte.client_secret) ? { ...werte, client_secret: (await this.tresor.schuetzen([werte.client_secret], 'basis'))[0] } : werte;
+    await schreibeAtomar(this.datei, datei);
+  }
+
+  // Umstellung älterer Installationen: Klartext in der Datei verschlüsseln. Liefert die Anzahl.
+  async verschluesseln() {
+    let roh;
+    try { roh = JSON.parse(await readFile(this.datei, 'utf8')); } catch { return 0; }
+    if (!istKlartext(roh?.client_secret)) return 0;
+    await this.schreiben({ ...roh, client_secret: roh.client_secret });
+    return 1;
   }
 
   geheimnisMerken() {
@@ -173,7 +197,7 @@ export class Benachrichtigung {
     const vorher = this.werte;
     this.werte = werte;
     this.mail = null;
-    await schreibeAtomar(this.datei, werte);
+    await this.schreiben(werte);
     this.geheimnisMerken();
     const geaendert = Object.keys(werte).filter((k) => JSON.stringify(werte[k]) !== JSON.stringify(vorher[k]));
     if (geaendert.length) this.log(`Benachrichtigung geändert durch ${benutzer}: ${geaendert.map((k) => (k === 'client_secret' ? 'geheimer Schlüssel' : k)).join(', ')}.`);
@@ -191,7 +215,7 @@ export class Benachrichtigung {
     const alle = { ...(this.werte.modul_empfaenger ?? {}) };
     if (liste.length) alle[id] = liste; else delete alle[id];
     this.werte = { ...this.werte, modul_empfaenger: alle };
-    await schreibeAtomar(this.datei, this.werte);
+    await this.schreiben(this.werte);
     if (JSON.stringify(vorher) !== JSON.stringify(liste)) this.log(`Empfänger für Modul ${id} geändert durch ${benutzer}: ${liste.length ? liste.join(', ') : 'keine zusätzlichen'}.`);
     return { empfaenger: liste };
   }

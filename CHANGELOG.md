@@ -1,5 +1,25 @@
 # Änderungen
 
+## 0.12.0
+
+Geheimnisse verschlüsselt speichern.
+
+### Neu
+
+- **Verschlüsselung mit der Windows-Datenschutz-API (DPAPI), an diesen Rechner gebunden:** Tokens in `config.json` (Hetzner, Cloudflare, GitHub), die Schlüssel der Authenticator-Apps, der GitHub-Token aus der Oberfläche (`data\github.json`), der geheime Schlüssel für den Mailversand (`data\benachrichtigung.json`) und Passwörter von Modulen, die das unterstützen (`"geheimnisse": "dpapi"` in `module.json`, z. B. FTP-Modul ab 2.2.0). Die Werte der Basis sind zusätzlich an die Schlüsseldatei `data\geheimnis.schluessel` gebunden.
+- **Automatische Umstellung** nach dem ersten erfolgreichen Start; ebenso für Tokens, die später von Hand im Klartext eingetragen werden. Danach löscht die Basis ihre alten Sicherungskopien der `config.json` (sie enthielten den Klartext).
+- **Dateirechte:** Die Ordner `data` und `modules` sind nur noch für SYSTEM, Administratoren und das Konto der Basis zugänglich (wird bei jedem Start gesetzt) Läuft der Windows-Dienst eines Moduls unter einem eigenen Konto, bekommt dieses Konto Zugriff auf seinen Modulordner.
+
+### Geändert
+
+- Kein „Zurück“ mehr auf Versionen vor 0.12.0 (sie könnten die verschlüsselten Werte nicht lesen). Die automatische Rückkehr bei einem fehlgeschlagenen Update bleibt möglich, weil erst nach erfolgreichem Start verschlüsselt wird.
+- Fehlt die Schlüsseldatei oder lässt sich ein Wert nicht öffnen, startet die Basis nicht und nennt die Abhilfe. Ein nicht lesbarer Mail-Schlüssel oder GitHub-Token aus der Oberfläche gilt als nicht gesetzt (mit Hinweis im Protokoll).
+
+### Prüfung
+
+- `npm test`: 125 Tests (dazu 2 nur unter Windows), neu u. a. Ver- und Entschlüsselung mit falschem und fehlendem Schlüssel, Umstellung aller Dateien, Löschen nur der eigenen Sicherungskopien, Dateirechte über SIDs, Module mit und ohne Verschlüsselung, Sperre des Zurück-Knopfs.
+- Neuer Testlauf auf Windows (GitHub Actions) mit echter DPAPI und echten Dateirechten.
+
 ## 0.11.0
 
 Absicherung der Anmeldung – unabhängig davon, ob die Basis intern, über VPN oder von außen erreicht wird.

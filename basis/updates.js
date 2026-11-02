@@ -4,9 +4,11 @@ import { access, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs
 import path from 'node:path';
 import { BasisFehler } from './fehler.js';
 import { melde } from './protokoll.js';
+import { istKlartext, istVerschluesselt } from './geheimnis.js';
 
 const MAX_PAKET = 200 * 1024 * 1024;
 const BEHALTEN = 3;
+export const ERSTE_VERSCHLUESSELTE = '0.12.0';
 export const NEUSTART_CODE = 3;
 const STANDARD_REPO = 'pfkonsumdigital/Monitoring-Basis';
 const TAG = 86_400_000;
@@ -87,7 +89,8 @@ export async function zugriffVerweigert(antwort, jetzt = Date.now()) {
 }
 
 export class Updateverwaltung {
-  constructor({ installOrdner, programmOrdner, configDatei, updates, installiert, viaStarter, neustart, datenOrdner = null, geheimnisse = [], log = () => {}, fetchImpl = fetch, spawnImpl = spawn, jetzt = () => Date.now() }) {
+  constructor({ installOrdner, programmOrdner, configDatei, updates, installiert, viaStarter, neustart, datenOrdner = null, geheimnisse = [], tresor = null, log = () => {}, fetchImpl = fetch, spawnImpl = spawn, jetzt = () => Date.now() }) {
+    this.tresor = tresor;
     this.installOrdner = installOrdner;
     this.programmOrdner = programmOrdner;
     this.configDatei = configDatei;
@@ -262,6 +265,10 @@ export class Updateverwaltung {
     if (!this.viaStarter) throw new BasisFehler('Die Basis wurde nicht über start.js gestartet und kann sich deshalb nicht selbst neu starten.');
     const vorherige = await this.vorherigeErmitteln();
     if (!vorherige) throw new BasisFehler('Es gibt keine vorherige Version.');
+    // Ab 0.12.0 sind Geheimnisse verschlüsselt; ältere Versionen könnten config.json nicht mehr lesen.
+    if (this.tresor?.verfuegbar && vergleicheVersionen(vorherige.version, ERSTE_VERSCHLUESSELTE) < 0) {
+      throw new BasisFehler(`Zurück auf ${vorherige.version} ist nicht möglich: Versionen vor ${ERSTE_VERSCHLUESSELTE} können die verschlüsselten Tokens und Zwei-Faktor-Schlüssel nicht lesen.`);
+    }
     return this.exklusiv('neustart', async () => {
       const { aktiv } = await leseAktiv(this.installOrdner);
       await schreibeAktiv(this.installOrdner, { aktiv: vorherige.ordner, vorher: aktiv, probe: false });
@@ -295,7 +302,15 @@ export class Updateverwaltung {
   async tokenLaden() {
     if (this.tokenDatei) {
       const wert = await jsonLesen(this.tokenDatei).catch(() => null);
-      this.oberflaechenToken = typeof wert?.github_token === 'string' && wert.github_token ? wert.github_token : null;
+      let token = typeof wert?.github_token === 'string' && wert.github_token ? wert.github_token : null;
+      if (istVerschluesselt(token)) {
+        try { token = await this.tresor.einzeln(token); }
+        catch (fehler) {
+          token = null;
+          melde(this.log, 'fehler', 'Updates', `Der gespeicherte GitHub-Token lässt sich nicht entschlüsseln (${fehler.message}). Bitte unter „Updates“ neu eintragen.`);
+        }
+      }
+      this.oberflaechenToken = token;
     }
     this.zugangSetzen();
   }
@@ -327,13 +342,28 @@ export class Updateverwaltung {
     const zugang = { repo: this.konfigUpdates?.repo ?? STANDARD_REPO, githubToken: token.trim() };
     if (!this.geheimnisse.includes(zugang.githubToken)) this.geheimnisse.push(zugang.githubToken);
     const { ablauf } = await this.tokenPruefen(zugang);
-    await atomarSchreiben(this.tokenDatei, { github_token: zugang.githubToken });
+    await this.tokenSchreiben(zugang.githubToken);
     this.oberflaechenToken = zugang.githubToken;
     this.zugangSetzen();
     this.tokenInfo = { ablauf, geprueft: new Date(this.jetzt()).toISOString(), ok: true, fehler: null };
     this.log(`GitHub-Token für Updates gespeichert durch ${benutzer}${ablauf ? ` (gültig bis ${ablauf.slice(0, 10)})` : ''}.`);
     this.ablaufWarnen();
     return this.status();
+  }
+
+  // Unter Windows wird der Token verschlüsselt gespeichert (siehe geheimnis.js).
+  async tokenSchreiben(token) {
+    const wert = this.tresor?.verfuegbar ? (await this.tresor.schuetzen([token], 'basis'))[0] : token;
+    await atomarSchreiben(this.tokenDatei, { github_token: wert });
+  }
+
+  // Umstellung: Klartext in data/github.json verschlüsseln. Liefert die Anzahl.
+  async tokenVerschluesseln() {
+    if (!this.tokenDatei) return 0;
+    const wert = await jsonLesen(this.tokenDatei).catch(() => null);
+    if (!istKlartext(wert?.github_token)) return 0;
+    await this.tokenSchreiben(wert.github_token);
+    return 1;
   }
 
   async tokenEntfernen(benutzer) {
@@ -367,7 +397,9 @@ export class Updateverwaltung {
 
   async starten() {
     await this.tokenLaden();
-    this.zustand.vorherige = await this.vorherigeErmitteln().catch(() => null);
+    const vorherige = await this.vorherigeErmitteln().catch(() => null);
+    // Versionen vor der Verschlüsselung können config.json nicht mehr lesen: kein Zurück-Knopf dafür.
+    this.zustand.vorherige = vorherige && !(this.tresor?.verfuegbar && vergleicheVersionen(vorherige.version, ERSTE_VERSCHLUESSELTE) < 0) ? vorherige : null;
     await this.aufraeumen();
   }
 }

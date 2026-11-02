@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ladeModule } from './module.js';
 import { berechneAnsicht, leseStatus, zeitBegrenzen } from './modulansicht.js';
-import { ansicht as einstellungsAnsicht, passwoerter, schreibeAtomar, speichern as einstellungenSpeichern, wirksameWerte } from './einstellungen.js';
+import { ansicht as einstellungsAnsicht, passwoerter, schreibeAtomar, speichern as einstellungenSpeichern, verschluesseln as einstellungenVerschluesseln, wirksameWerte } from './einstellungen.js';
 import { melde } from './protokoll.js';
 import { beendeLaufendeModule } from './ausfuehrung.js';
 import { DienstFehler, Dienststeuerung } from './dienste.js';
@@ -15,8 +15,9 @@ const FEHLVERSUCHE_BIS_MELDUNG = 4;
 // eigenständiger Module in den Verlauf und verwaltet Einstellungen und „aktiv“ (Pause).
 // Ein fehlerhaftes Modul betrifft immer nur sich selbst.
 export class Modulverwaltung {
-  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, nachTakt = null, dienste = new Dienststeuerung(), abbrechen = beendeLaufendeModule, geheimnisse = [], log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
-    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, nachTakt, dienste, abbrechen, geheimnisse, log, jetzt, intervallMs });
+  constructor({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen, nachTakt = null, dienste = new Dienststeuerung(), abbrechen = beendeLaufendeModule, geheimnisse = [], tresor = null, log = () => {}, jetzt = () => Date.now(), intervallMs = 15_000 }) {
+    Object.assign(this, { moduleOrdner, speicher, planer, uebernehmen, nachTakt, dienste, abbrechen, geheimnisse, tresor, log, jetzt, intervallMs });
+    this.verschluesselnAktiv = false; // erst nach erfolgreichem Start (siehe main.js, Umstellung)
     this.dienstZustand = new Map();
     this.zustandDatei = path.join(datenOrdner, 'modulzustand.json');
     this.module = [];
@@ -69,7 +70,9 @@ export class Modulverwaltung {
       else this.log(`Modul ${m.id} (${m.typ}${m.version ? ` ${m.version}` : ''}) ${bekannt ? 'geändert' : 'geladen'}${this.aktiv(m) ? '' : ', pausiert'}.`);
       if (!m.fehler) {
         await this.speicher.sicherstellen(m.id);
-        for (const p of await passwoerter(m)) if (!this.geheimnisse.includes(p)) this.geheimnisse.push(p);
+        // Neues oder aktualisiertes Modul mit „geheimnisse“: „dpapi“: Klartext-Passwörter sofort verschlüsseln.
+        if (this.verschluesselnAktiv && m.geheimnisse) await this.modulVerschluesseln(m);
+        for (const p of await passwoerter(m, this.tresor)) if (!this.geheimnisse.includes(p)) this.geheimnisse.push(p);
       }
     }
     for (const id of [...this.signaturen.keys()]) if (!ids.has(id)) { this.signaturen.delete(id); this.statusMerker.delete(id); this.dienstZustand.delete(id); }
@@ -78,7 +81,31 @@ export class Modulverwaltung {
   }
 
   planbar() {
-    return this.module.map((m) => ({ ...m, aktiv: this.aktiv(m), einstellungenLaden: () => wirksameWerte(m) }));
+    return this.module.map((m) => ({ ...m, aktiv: this.aktiv(m), einstellungenLaden: () => wirksameWerte(m, this.tresor) }));
+  }
+
+  async modulVerschluesseln(m) {
+    try {
+      const anzahl = await einstellungenVerschluesseln(m, this.tresor);
+      if (anzahl) this.log(`Modul ${m.id}: ${anzahl} Passwort${anzahl === 1 ? '' : 'e'} verschlüsselt gespeichert.`);
+      return anzahl;
+    } catch (fehler) {
+      melde(this.log, 'warnung', `Modul ${m.name}`, `Passwörter konnten nicht verschlüsselt werden: ${fehler.message}`);
+      return 0;
+    }
+  }
+
+  // Umstellung nach dem Start: alle Module, die verschlüsselte Passwörter lesen können. Liefert { verschluesselt, klartext: [Namen] }.
+  async geheimnisseVerschluesseln() {
+    this.verschluesselnAktiv = Boolean(this.tresor?.verfuegbar);
+    let verschluesselt = 0;
+    const klartext = [];
+    for (const m of this.module) {
+      if (m.fehler) continue;
+      if (m.geheimnisse && this.verschluesselnAktiv) verschluesselt += await this.modulVerschluesseln(m);
+      else if ((await passwoerter(m)).length) klartext.push(m.name);
+    }
+    return { verschluesselt, klartext };
   }
 
   // Übernimmt neue Meldungen eigenständiger Module aus deren status.json.
@@ -182,11 +209,11 @@ export class Modulverwaltung {
   async einstellungenAendern(id, eingabe, benutzer) {
     const m = this.finde(id);
     if (!m || m.fehler) return null;
-    const ergebnis = await einstellungenSpeichern(m, eingabe);
+    const ergebnis = await einstellungenSpeichern(m, eingabe, this.verschluesselnAktiv ? this.tresor : null);
     if (ergebnis.geaendert?.length) {
       const namen = ergebnis.geaendert.map((k) => m.felder.find((f) => f.schluessel === k)?.bezeichnung ?? k);
       this.log(`Einstellungen von Modul ${id} geändert durch ${benutzer}: ${namen.join(', ')}.`);
-      for (const p of await passwoerter(m)) if (!this.geheimnisse.includes(p)) this.geheimnisse.push(p);
+      for (const p of await passwoerter(m, this.tresor)) if (!this.geheimnisse.includes(p)) this.geheimnisse.push(p);
     }
     return ergebnis;
   }

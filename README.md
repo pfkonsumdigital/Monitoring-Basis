@@ -107,9 +107,10 @@ Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 | `benutzer` | wird in der Oberfläche unter **Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
 | `updates` | optional, siehe „Updates“ | aus |
 
-`config.json` enthält Passwort-Hashes und gegebenenfalls Tokens. Die Datei
-deshalb per Windows-Dateirechten auf das Dienstkonto beschränken und niemals
-committen.
+`config.json` enthält Passwort-Hashes und Tokens. Tokens und Zwei-Faktor-Schlüssel
+verschlüsselt die Basis beim Start selbst (siehe „Verschlüsselung der
+Geheimnisse“) – ein neuer Token darf also im Klartext eingetragen werden. Die
+Datei trotzdem niemals committen.
 
 ## Interner Betrieb ohne Zertifikat
 
@@ -336,8 +337,24 @@ Nur Admins sehen und ändern Einstellungen. Passwörter zeigt die Basis nie
 wieder an („gesetzt“); ein leeres Passwortfeld lässt das gespeicherte
 unverändert. Jede Änderung steht mit Benutzer und Feldnamen (ohne Werte) im
 Protokoll, Passwörter werden aus Protokollen und Ergebnissen herausgefiltert.
-Sie liegen vorerst im Klartext in `einstellungen.json` (Verschlüsselung mit
-DPAPI ist vorgemerkt) – die Datei deshalb wie `config.json` schützen.
+In `einstellungen.json` liegen sie verschlüsselt (`dpapi:m1:…`), wenn das Modul
+das kann (siehe unten, `"geheimnisse": "dpapi"`); sonst im Klartext, geschützt
+nur über die Dateirechte des Ordners `modules`.
+
+**Verschlüsselte Passwörter im eigenen Modul:** In `module.json`
+`"geheimnisse": "dpapi"` eintragen. Dann speichert die Basis Passwortfelder als
+`dpapi:m1:<Base64>`: Windows-DPAPI, Bereich LocalMachine, Zusatzentropie die
+UTF-8-Bytes von `Monitoring-Modul/v1`. Entschlüsseln (Beispiel PowerShell):
+
+```powershell
+Add-Type -AssemblyName System.Security
+$roh = [Convert]::FromBase64String($wert.Substring(9))
+$e = [Text.Encoding]::UTF8.GetBytes('Monitoring-Modul/v1')
+[Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($roh, $e, 'LocalMachine'))
+```
+
+Werte ohne Präfix sind Klartext (z. B. vor der Umstellung). Module, die die Basis
+selbst startet (Programm, Plugin), bekommen die Werte immer entschlüsselt.
 
 **Pausieren:** Admins können ein Modul in den Details pausieren. Von der Basis
 gestartete Module laufen dann nicht; eigenständige Module werden nicht mehr
@@ -532,8 +549,8 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
    speichern und **„Testmail senden“**.
 
 Die Einstellungen liegen in `data/benachrichtigung.json`. Der Schlüssel wird in
-der Oberfläche nie angezeigt und aus Protokollen gefiltert, liegt aber vorerst
-im Klartext in der Datei (Verschlüsselung mit DPAPI ist vorgemerkt).
+der Oberfläche nie angezeigt, aus Protokollen gefiltert und in der Datei
+verschlüsselt gespeichert.
 
 ## Updates
 
@@ -574,9 +591,8 @@ werden. „GitHub-Abruflimit erreicht“ nennt die Uhrzeit, ab der es wieder geh
 
 Die Oberfläche zeigt, ob ein Token gesetzt ist, woher er kommt und bis wann er
 gilt. 14 Tage vor Ablauf steht täglich eine Warnung im Fehlerprotokoll. Der
-Token wird nie wieder angezeigt und aus Protokollen gefiltert. Er liegt in
-`data/github.json`, vorerst im Klartext (Verschlüsselung mit Windows-DPAPI ist
-vorgesehen) – den Ordner deshalb über Windows-Dateirechte schützen.
+Token wird nie wieder angezeigt und aus Protokollen gefiltert. Er liegt
+verschlüsselt in `data/github.json`.
 
 Alternativ geht weiterhin der Eintrag in `config.json`; ein in der Oberfläche
 gespeicherter Token hat Vorrang, „Token entfernen“ schaltet zurück:
@@ -721,13 +737,62 @@ Verfahren TOTP nach RFC 6238, 30 Sekunden).
   Bei der nächsten Anmeldung richtet der Benutzer die App neu ein.
 - Ein Passwortwechsel lässt die Zwei-Faktor-Anmeldung bestehen.
 - Gespeichert wird in `config.json` beim Benutzer unter `zwei_faktor`: der
-  Schlüssel der App und die Wiederherstellungscodes nur als SHA-256-Hash. Der
-  Schlüssel muss lesbar sein, um Codes zu prüfen – ein Grund mehr, `config.json`
-  per Dateirechten zu schützen.
+  Schlüssel der App verschlüsselt (siehe unten), die Wiederherstellungscodes nur
+  als SHA-256-Hash.
+
+### Verschlüsselung der Geheimnisse
+
+Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
+(DPAPI) verschlüsselt, gebunden an diesen Rechner:
+
+| Wo | Was | Gespeichert als |
+| --- | --- | --- |
+| `config.json` | `tls.hetzner_token`, `tls.cloudflare_token`, `updates.github_token`, Schlüssel der Authenticator-Apps | `dpapi:v1:…` |
+| `data\github.json` | GitHub-Token aus der Oberfläche | `dpapi:v1:…` |
+| `data\benachrichtigung.json` | geheimer Schlüssel für den Mailversand | `dpapi:v1:…` |
+| `modules\<Modul>\einstellungen.json` | Passwortfelder, wenn das Modul es kann (z. B. FTP-Modul ab 2.2.0) | `dpapi:m1:…` |
+
+- **Umstellung automatisch:** Nach dem ersten Start von 0.12.0 – erst wenn die
+  Basis vollständig läuft – verschlüsselt sie alle Klartext-Werte. Ebenso jeden
+  Token, der später von Hand im Klartext in `config.json` eingetragen wird (beim
+  nächsten Start). Das Protokoll nennt, was umgestellt wurde (ohne Werte).
+- **Alte Sicherungskopien** (`config.json.backup-….json`,
+  `config.json.vor-benutzeraenderung.json`) enthalten den Klartext. Die Basis
+  löscht sie, sobald sie in `config.json` etwas verschlüsselt hat.
+- **Schlüsseldatei `data\geheimnis.schluessel`:** Die Werte der Basis sind
+  zusätzlich an diese Datei gebunden. `config.json` bleibt so für Start.exe
+  lesbar, ohne dass die Werte darin jemandem nützen. **Die Datei nicht löschen
+  und bei einer Sicherung mitsichern.** Fehlt sie, startet die Basis nicht und
+  nennt die Abhilfe: Tokens neu im Klartext in `config.json` eintragen und die
+  Zwei-Faktor-Anmeldungen mit `--zwei-faktor-zuruecksetzen <Name>` zurücksetzen.
+- **Dateirechte:** Beim Start setzt die Basis die Rechte der Ordner `data` und
+  `modules`: nur SYSTEM, Administratoren und das Konto, unter dem die Basis
+  läuft (Vererbung aus, Unterordner übernehmen die Rechte). Läuft der
+  Windows-Dienst eines Moduls (`"dienst"` in `module.json`) unter einem eigenen
+  Konto, bekommt dieses Konto Ändern-Rechte auf seinen eigenen Modulordner – nach
+  einem Kontowechsel beim nächsten Start der Basis. Eine Eingabeaufforderung für
+  Modulbefehle (z. B. `FTPModul.exe --einmal`) deshalb **als Administrator**
+  öffnen.
+- **Was das schützt:** Verlässt eine Datei oder eine Sicherung den Rechner,
+  lassen sich die Werte nicht entschlüsseln; normale Windows-Benutzer auf dem
+  Worker kommen nicht an `data` und `modules`. **Was nicht:** Ein Administrator
+  (oder Schadsoftware mit Admin-Rechten) auf dem Worker selbst kann die Werte
+  lesen – das verhindert keine Verschlüsselung auf demselben Rechner.
+- **Kein Zurück vor 0.12.0:** Ältere Versionen können die verschlüsselten Werte
+  nicht lesen. Der Knopf „Zurück“ unter Updates erscheint dafür nicht mehr.
+  Schlägt das Update auf 0.12.0 beim Start fehl, schaltet der Starter wie bisher
+  zurück – verschlüsselt wird erst nach erfolgreichem Start.
+- **Rechnerwechsel:** Beim Umzug auf einen anderen Rechner alle Geheimnisse dort
+  neu eintragen (Tokens in `config.json`, Mail-Schlüssel und Modul-Passwörter in
+  der Oberfläche) und die Zwei-Faktor-Anmeldungen zurücksetzen.
+- Unter Linux/macOS (Entwicklung) bleibt alles im Klartext; die Basis meldet das
+  beim Start.
 
 ## Sicherheit
 
 - **Zwei-Faktor-Anmeldung für alle** (siehe oben).
+- **Geheimnisse verschlüsselt** (DPAPI, an den Rechner gebunden) und Ordner
+  `data`/`modules` nur für SYSTEM und Administratoren (siehe oben).
 - Nur HTTPS (TLS 1.2 oder neuer), HSTS, strenge Content-Security-Policy.
 - Passwörter als scrypt-Hash nach OWASP-Empfehlung (N=2^17, r=8, p=1). Ältere,
   schwächere Hashes werden bei der nächsten Anmeldung automatisch erneuert.

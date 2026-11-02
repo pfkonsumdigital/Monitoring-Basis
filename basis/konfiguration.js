@@ -74,7 +74,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || !istText(eintrag?.hash)) throw new BasisFehler(`Ungültiger Benutzereintrag: ${name}.`);
     if (eintrag.admin !== undefined && typeof eintrag.admin !== 'boolean') throw new BasisFehler(`benutzer.${name}.admin muss true oder false sein.`);
     const zf = eintrag.zwei_faktor;
-    if (zf !== undefined && (!zf || typeof zf !== 'object' || !/^[A-Z2-7]{16,128}$/.test(zf.geheimnis ?? '') || !Array.isArray(zf.codes) || zf.codes.some((c) => !/^[0-9a-f]{64}$/.test(c)))) {
+    if (zf !== undefined && (!zf || typeof zf !== 'object' || !/^(?:[A-Z2-7]{16,128}|dpapi:v1:[A-Za-z0-9+/]+={0,2})$/.test(zf.geheimnis ?? '') || !Array.isArray(zf.codes) || zf.codes.some((c) => !/^[0-9a-f]{64}$/.test(c)))) {
       throw new BasisFehler(`benutzer.${name}.zwei_faktor ist beschädigt. Zurücksetzen mit: node basis/main.js --zwei-faktor-zuruecksetzen ${name}`);
     }
   }

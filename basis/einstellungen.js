@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { istKlartext, istVerschluesselt } from './geheimnis.js';
 
 // Einstellungen eines Moduls: Das Modul beschreibt die Felder in module.json („einstellungsfelder“),
 // die Basis baut daraus ein Formular und schreibt die Werte nach <Modulordner>/einstellungen.json.
@@ -128,10 +129,38 @@ export async function leseDatei(modulOrdner) {
 }
 
 // Wirksame Werte: Vorgaben aus module.json („einstellungen“), Standardwerte der Felder, gespeicherte Werte.
-export async function wirksameWerte(modul) {
+// Mit tresor werden verschlüsselte Passwörter geöffnet (für Module, die die Basis selbst startet).
+export async function wirksameWerte(modul, tresor = null) {
   const werte = { ...(modul.einstellungen ?? {}) };
   for (const f of modul.felder ?? []) if (f.standard !== undefined) werte[f.schluessel] = f.standard;
-  return { ...werte, ...(await leseDatei(modul.ordner)) };
+  const ergebnis = { ...werte, ...(await leseDatei(modul.ordner)) };
+  if (tresor) {
+    const felder = passwortFelder(modul).filter((k) => istVerschluesselt(ergebnis[k]));
+    const klar = felder.length ? await tresor.oeffnen(felder.map((k) => ergebnis[k])) : [];
+    felder.forEach((k, i) => { ergebnis[k] = klar[i]; });
+  }
+  return ergebnis;
+}
+
+const passwortFelder = (modul) => (modul.felder ?? []).filter((f) => f.typ === 'passwort').map((f) => f.schluessel);
+// Passwörter verschlüsselt speichern, wenn das Modul es kann („geheimnisse“: „dpapi“ in module.json) und Windows da ist.
+const verschluesselt = (modul, tresor) => modul.geheimnisse === 'dpapi' && Boolean(tresor?.verfuegbar);
+async function passwoerterSchuetzen(modul, werte, tresor) {
+  if (!verschluesselt(modul, tresor)) return { werte, anzahl: 0 };
+  const felder = passwortFelder(modul).filter((k) => istKlartext(werte[k]));
+  if (!felder.length) return { werte, anzahl: 0 };
+  const geheim = await tresor.schuetzen(felder.map((k) => werte[k]), 'modul');
+  const neu = { ...werte };
+  felder.forEach((k, i) => { neu[k] = geheim[i]; });
+  return { werte: neu, anzahl: felder.length };
+}
+
+// Umstellung: Klartext-Passwörter in einstellungen.json verschlüsseln. Liefert die Anzahl.
+export async function verschluesseln(modul, tresor) {
+  const bisher = await leseDatei(modul.ordner);
+  const { werte, anzahl } = await passwoerterSchuetzen(modul, bisher, tresor);
+  if (anzahl) await schreibeAtomar(path.join(modul.ordner, DATEI), werte);
+  return anzahl;
 }
 
 // Werte für die Oberfläche: Passwörter werden nie herausgegeben, nur ob sie gesetzt sind.
@@ -146,13 +175,13 @@ export async function ansicht(modul) {
 
 // Prüft eine Eingabe aus dem Formular und speichert sie. Leere Passwortfelder bleiben unverändert.
 // Liefert { geaendert: [Schlüssel] } oder { feldfehler: { schluessel: Meldung } }.
-export async function speichern(modul, eingabe) {
+export async function speichern(modul, eingabe, tresor = null) {
   if (!eingabe || typeof eingabe !== 'object' || Array.isArray(eingabe)) return { feldfehler: { _: 'Ungültige Eingabe.' } };
   const felder = modul.felder ?? [];
   const unbekannt = Object.keys(eingabe).filter((k) => !felder.some((f) => f.schluessel === k));
   if (unbekannt.length) return { feldfehler: { _: `Unbekannte Felder: ${unbekannt.join(', ')}` } };
   const bisher = await leseDatei(modul.ordner);
-  const vorher = await wirksameWerte(modul);
+  const vorher = await wirksameWerte(modul, tresor);
   const neu = { ...bisher };
   const feldfehler = {};
   for (const f of felder) {
@@ -167,9 +196,10 @@ export async function speichern(modul, eingabe) {
     if (f.pflicht && !feldfehler[f.schluessel] && (wert === undefined || wert === null || wert === '' || (Array.isArray(wert) && !wert.length))) feldfehler[f.schluessel] = f.typ === 'liste' ? 'mindestens eine Zeile' : 'Pflichtfeld';
   }
   if (Object.keys(feldfehler).length) return { feldfehler };
-  if (JSON.stringify(neu) !== JSON.stringify(bisher)) await schreibeAtomar(path.join(modul.ordner, DATEI), neu);
+  const { werte: zuSpeichern } = await passwoerterSchuetzen(modul, neu, tresor);
+  if (JSON.stringify(zuSpeichern) !== JSON.stringify(bisher)) await schreibeAtomar(path.join(modul.ordner, DATEI), zuSpeichern);
   // Als geändert gilt, was nach dem Speichern tatsächlich anders wirkt als vorher.
-  const nachher = await wirksameWerte(modul);
+  const nachher = await wirksameWerte(modul, tresor);
   return { geaendert: felder.map((f) => f.schluessel).filter((k) => JSON.stringify(nachher[k]) !== JSON.stringify(vorher[k])) };
 }
 
@@ -185,7 +215,9 @@ export async function schreibeAtomar(datei, wert) {
 }
 
 // Alle gesetzten Passwörter eines Moduls (für den Geheimnisfilter des Protokolls).
-export async function passwoerter(modul) {
+export async function passwoerter(modul, tresor = null) {
   const werte = await leseDatei(modul.ordner);
-  return (modul.felder ?? []).filter((f) => f.typ === 'passwort').map((f) => werte[f.schluessel]).filter(istText);
+  const liste = passwortFelder(modul).map((k) => werte[k]).filter(istText);
+  if (!tresor || !liste.some(istVerschluesselt)) return liste.filter((w) => !istVerschluesselt(w));
+  try { return await tresor.oeffnen(liste); } catch { return liste.filter((w) => !istVerschluesselt(w)); }
 }

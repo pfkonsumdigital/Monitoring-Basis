@@ -25,6 +25,8 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
   if (roh.version !== undefined && (!istText(roh.version) || roh.version.length > 40)) return fehler('version ist ungültig');
   if (roh.beschreibung !== undefined && (typeof roh.beschreibung !== 'string' || roh.beschreibung.length > 1000)) return fehler('beschreibung ist ungültig');
   if (roh.repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(roh.repo)) return fehler('repo muss die Form "besitzer/repo" haben');
+  // „geheimnisse“: „dpapi“ = das Modul kann verschlüsselte Passwörter (dpapi:m1:…) lesen; dann speichert die Basis sie so.
+  if (roh.geheimnisse !== undefined && roh.geheimnisse !== 'dpapi') return fehler('geheimnisse muss "dpapi" sein (oder fehlen)');
   const toleranz = roh.toleranz_minuten ?? 10;
   if (typeof toleranz !== 'number' || !(toleranz >= 1) || toleranz > 10080) return fehler('toleranz_minuten muss zwischen 1 und 10080 liegen');
 
@@ -33,7 +35,7 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
     aktiv: roh.aktiv !== false, intervallMinuten: intervall ?? null,
     timeoutMs: timeout * 1000, einstellungen, felder,
     version: roh.version ?? null, beschreibung: roh.beschreibung ?? '', repo: roh.repo ?? null,
-    toleranzMinuten: toleranz,
+    toleranzMinuten: toleranz, geheimnisse: roh.geheimnisse ?? null,
   };
   if (roh.typ === 'eigenstaendig') {
     // Läuft selbst (eigener Dienst/Aufgabe) und schreibt status.json. Die Basis startet es nie von sich aus,

@@ -18,6 +18,8 @@ import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Benutzerverwaltung, passwortRegelFehler } from './benutzerverwaltung.js';
 import { Sicherheitsmeldungen } from './sicherheit.js';
+import { konfigWerteOeffnen, Tresor } from './geheimnis.js';
+import { geheimnisseUmstellen } from './umstellung.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
@@ -97,7 +99,7 @@ async function benutzerAnlegen(configDatei, name, admin) {
   console.log(`Benutzer ${name}${istAdmin ? ' (Admin)' : ''} gespeichert. Eine laufende Basis übernimmt die Änderung nach einem Neustart oder bei der nächsten Änderung in der Oberfläche (Benutzer).`);
 }
 
-async function starten(konfig, configDatei, protokoll) {
+async function starten(konfig, configDatei, protokoll, tresor) {
   const log = protokoll.alsFunktion();
   if (!Object.keys(konfig.benutzer).length) throw new BasisFehler('Es ist noch kein Benutzer angelegt. Zuerst: node basis/main.js --benutzer-anlegen <Name>');
 
@@ -110,12 +112,12 @@ async function starten(konfig, configDatei, protokoll) {
     if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
   };
   const planer = new Planer({ ausfuehren: (m) => fuehreAus(m), speichern: uebernehmen, log });
-  const benachrichtigung = new Benachrichtigung({ datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, log });
+  const benachrichtigung = new Benachrichtigung({ datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, tresor, log });
   await benachrichtigung.laden();
   const module = new Modulverwaltung({
     moduleOrdner: konfig.moduleOrdner, datenOrdner: konfig.datenOrdner, speicher, planer, uebernehmen,
     nachTakt: (ansichten) => benachrichtigung.pruefen(ansichten),
-    geheimnisse: protokoll.geheimnisse, log,
+    geheimnisse: protokoll.geheimnisse, tresor, log,
   });
   await module.start();
   const adminNetz = adminNetzPruefer(konfig.adminNetze);
@@ -131,14 +133,14 @@ async function starten(konfig, configDatei, protokoll) {
     zweiFaktorSpeichern: (name, geheimnis, codes) => { protokoll.geheimnisse.push(geheimnis); return benutzerverwaltung.zweiFaktorSpeichern(name, geheimnis, codes); },
     codeVerbraucht: (name, hash) => benutzerverwaltung.codeVerbrauchen(name, hash),
   });
-  const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, log });
+  const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, tresor, log });
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
   let server;
   const updates = new Updateverwaltung({
     installOrdner: process.env.MONITOR_INSTALL_ORDNER || path.dirname(configDatei), programmOrdner: APP_ORDNER, configDatei,
     updates: konfig.updates, installiert: await versionLesen(APP_ORDNER), log,
-    datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse,
+    datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, tresor,
     viaStarter: typeof process.send === 'function' && process.env.MONITOR_STARTER === '1',
     neustart: () => neustarten(),
   });
@@ -164,6 +166,9 @@ async function starten(konfig, configDatei, protokoll) {
   updates.taeglichPruefen();
   modulupdates.taeglichPruefen();
   process.send?.({ typ: 'bereit', version: updates.installiert });
+  // Erst nach erfolgreichem Start verschlüsseln: Scheitert die neue Version vorher, kann die alte die Dateien noch lesen.
+  geheimnisseUmstellen({ tresor, configDatei, konfig, benutzerverwaltung, updates, benachrichtigung, module, log })
+    .catch((fehler) => melde(log, 'fehler', 'Sicherheit', `Umstellung auf verschlüsselte Geheimnisse: ${fehler.message}`));
   if (intern) {
     log(`Monitoring-Basis ${updates.installiert} läuft: http://<IP-Adresse dieses Rechners>:${konfig.port}/`);
     melde(log, 'warnung', 'Basis', 'Unverschlüsselt (HTTP, tls.modus "aus") – nur im internen Netz verwenden. Zugriffe von außerhalb privater Netze werden abgewiesen.');
@@ -234,11 +239,16 @@ export async function main(args = process.argv.slice(2)) {
     }
     if (values.zertifikat) {
       if (konfig.tls.modus !== 'letsencrypt') throw new BasisFehler('--zertifikat ist nur bei tls.modus "letsencrypt" nötig.');
-      try { await new Zertifikatsverwaltung({ konfig, log }).erneuern(); }
+      try { await new Zertifikatsverwaltung({ konfig: await konfigWerteOeffnen(konfig, new Tresor({ datenOrdner: konfig.datenOrdner })), log }).erneuern(); }
       catch (fehler) { protokoll.fehler('Zertifikat', fehler.message, fehler instanceof BasisFehler ? undefined : fehler); throw fehler; }
       return 0;
     }
-    try { await starten(konfig, configDatei, protokoll); }
+    const tresor = new Tresor({ datenOrdner: konfig.datenOrdner });
+    let offen;
+    try { offen = await konfigWerteOeffnen(konfig, tresor); }
+    catch (fehler) { protokoll.fehler('Basis', fehler.message); throw fehler; }
+    for (const g of [offen.tls.cloudflareToken, offen.tls.hetznerToken, offen.updates?.githubToken, ...Object.values(offen.benutzer).map((b) => b.zwei_faktor?.geheimnis)]) if (g && !protokoll.geheimnisse.includes(g)) protokoll.geheimnisse.push(g);
+    try { await starten(offen, configDatei, protokoll, tresor); }
     catch (fehler) { protokoll.fehler('Basis', `Start fehlgeschlagen: ${fehler.message}`, fehler instanceof BasisFehler ? undefined : fehler); throw fehler; }
     return null;
   } catch (fehler) {

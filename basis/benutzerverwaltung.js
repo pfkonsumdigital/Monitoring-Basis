@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, readFile, rename, writeFile } from 'node:fs/promises';
 import { hashPasswort } from './anmeldung.js';
+import { konfigSchuetzen } from './geheimnis.js';
 
 // Benutzer in der Oberfläche verwalten: anlegen, Passwort setzen, Admin-Recht ändern, löschen, eigenes Passwort ändern.
 // Gespeichert wird wie bei „--benutzer-anlegen“ in config.json (nur scrypt-Hashes), vorher eine Sicherungskopie
@@ -38,10 +39,21 @@ async function hashFuer(name, passwort) {
 
 const admins = (benutzer) => Object.keys(benutzer).filter((n) => benutzer[n].admin === true);
 
+// Schlüssel der Authenticator-Apps stehen in config.json verschlüsselt (tresor), im Speicher als Klartext.
+async function zweiFaktorUmwandeln(benutzer, umwandeln) {
+  const namen = Object.keys(benutzer).filter((n) => typeof benutzer[n]?.zwei_faktor?.geheimnis === 'string');
+  if (!namen.length) return benutzer;
+  const werte = await umwandeln(namen.map((n) => benutzer[n].zwei_faktor.geheimnis));
+  const kopie = { ...benutzer };
+  namen.forEach((n, i) => { kopie[n] = { ...kopie[n], zwei_faktor: { ...kopie[n].zwei_faktor, geheimnis: werte[i] } }; });
+  return kopie;
+}
+
 export class Benutzerverwaltung {
-  constructor({ configDatei, anmeldung, log = () => {} }) {
+  constructor({ configDatei, anmeldung, tresor = null, log = () => {} }) {
     this.configDatei = configDatei;
     this.anmeldung = anmeldung;
+    this.tresor = tresor;
     this.log = log;
     this.kette = Promise.resolve();
   }
@@ -58,16 +70,33 @@ export class Benutzerverwaltung {
   // Grundlage ist immer die Datei (dort kann auch „--benutzer-anlegen“ etwas geändert haben).
   aendern(arbeit) {
     const lauf = this.kette.then(async () => {
-      const roh = JSON.parse((await readFile(this.configDatei, 'utf8')).replace(/^﻿/, ''));
-      const benutzer = { ...(roh.benutzer ?? {}) };
+      const roh = JSON.parse((await readFile(this.configDatei, 'utf8')).replace(/^\uFEFF/, ''));
+      const offen = (w) => (this.tresor ? this.tresor.oeffnen(w) : w);
+      const benutzer = { ...(await zweiFaktorUmwandeln(roh.benutzer ?? {}, offen)) };
       const ergebnis = arbeit(benutzer);
-      roh.benutzer = benutzer;
+      roh.benutzer = this.tresor?.verfuegbar ? await zweiFaktorUmwandeln(benutzer, (w) => this.tresor.schuetzen(w, 'basis')) : benutzer;
       await copyFile(this.configDatei, `${this.configDatei}.vor-benutzeraenderung.json`);
       const temp = `${this.configDatei}.${randomUUID()}.tmp`;
       await writeFile(temp, JSON.stringify(roh, null, 2) + '\n', { mode: 0o600 });
       await rename(temp, this.configDatei);
       this.anmeldung.benutzer = benutzer;
       return ergebnis;
+    });
+    this.kette = lauf.catch(() => {});
+    return lauf;
+  }
+
+  // Umstellung: Klartext-Geheimnisse in config.json verschlüsseln (Tokens, Zwei-Faktor-Schlüssel). Ohne Sicherungskopie,
+  // denn die Kopie enthielte den Klartext. Liefert die Anzahl.
+  konfigVerschluesseln() {
+    const lauf = this.kette.then(async () => {
+      const roh = JSON.parse((await readFile(this.configDatei, 'utf8')).replace(/^\uFEFF/, ''));
+      const { roh: neu, anzahl } = await konfigSchuetzen(roh, this.tresor);
+      if (!anzahl) return 0;
+      const temp = `${this.configDatei}.${randomUUID()}.tmp`;
+      await writeFile(temp, JSON.stringify(neu, null, 2) + '\n', { mode: 0o600 });
+      await rename(temp, this.configDatei);
+      return anzahl;
     });
     this.kette = lauf.catch(() => {});
     return lauf;
