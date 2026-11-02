@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Anmeldung, hashPasswort, passwortStimmt } from '../basis/anmeldung.js';
 import { erstelleAnwendung, starteServer } from '../basis/webserver.js';
-import { brauchtErneuerung, CloudflareDns, Zertifikatsverwaltung } from '../basis/zertifikat.js';
+import { brauchtErneuerung, CloudflareDns, HetznerDns, Zertifikatsverwaltung } from '../basis/zertifikat.js';
 import { berechneAnsicht } from '../basis/modulansicht.js';
 
 // Schlanke Modulverwaltung für Webserver-Tests (gleiche Schnittstelle wie basis/modulverwaltung.js).
@@ -161,6 +161,48 @@ test('Cloudflare: Zone über übergeordnete Domain finden, TXT anlegen und lösc
   await assert.rejects(abgelehnt.zoneFinden('m.firma.de'), /Invalid access token.*Token-Rechte/);
   const offline = new CloudflareDns('T', async () => { throw new Error('ENOTFOUND'); });
   await assert.rejects(offline.zoneFinden('m.firma.de'), /nicht erreichbar/);
+});
+
+test('Hetzner: Zone finden, TXT mit Anführungszeichen anlegen, auf Aktion warten, löschen, Fehler verständlich', async () => {
+  const aufrufe = [];
+  let abfragen = 0;
+  const fetchImpl = async (url, opt) => {
+    const weg = url.replace('https://api.hetzner.cloud/v1', '');
+    aufrufe.push(`${opt.method} ${weg}${opt.body ? ` ${opt.body}` : ''}`);
+    assert.equal(opt.headers.Authorization, 'Bearer HTOKEN');
+    if (weg === '/zones?name=konsum-weimar.de') return Response.json({ zones: [{ id: 7, name: 'konsum-weimar.de' }] });
+    if (weg.startsWith('/zones?name=')) return Response.json({ zones: [] });
+    if (weg.endsWith('/add_records')) return Response.json({ action: { id: 11, status: 'running' } }, { status: 201 });
+    if (weg === '/actions/11') return Response.json({ action: { id: 11, status: ++abfragen < 2 ? 'running' : 'success' } });
+    if (weg.endsWith('/remove_records')) return Response.json({ action: { id: 12, status: 'success' } }, { status: 201 });
+    return Response.json({ error: { code: 'not_found', message: 'nicht da' } }, { status: 404 });
+  };
+  const dns = new HetznerDns('HTOKEN', { fetchImpl, pauseMs: 1 });
+  const eintrag = await dns.txtAnlegen('_acme-challenge.monitoring.konsum-weimar.de', 'abc-123_XYZ');
+  assert.deepEqual(eintrag, { zone: 'konsum-weimar.de', eintrag: '_acme-challenge.monitoring', wert: '"abc-123_XYZ"' });
+  await dns.txtLoeschen(eintrag);
+  assert.deepEqual(aufrufe, [
+    'GET /zones?name=monitoring.konsum-weimar.de',
+    'GET /zones?name=konsum-weimar.de',
+    'POST /zones/konsum-weimar.de/rrsets/_acme-challenge.monitoring/TXT/actions/add_records {"ttl":60,"records":[{"value":"\\"abc-123_XYZ\\""}]}',
+    'GET /actions/11', 'GET /actions/11',
+    'POST /zones/konsum-weimar.de/rrsets/_acme-challenge.monitoring/TXT/actions/remove_records {"records":[{"value":"\\"abc-123_XYZ\\""}]}',
+  ]);
+  // Eine Zone mit anderem Namen (API ohne Namensfilter) zählt nicht.
+  const fremd = new HetznerDns('T', { fetchImpl: async () => Response.json({ zones: [{ name: 'andere.de' }] }) });
+  await assert.rejects(fremd.zoneFinden('_acme-challenge.m.firma.de'), /Keine Hetzner-Zone für _acme-challenge\.m\.firma\.de/);
+  const ungueltig = new HetznerDns('T', { fetchImpl: async () => Response.json({ error: { code: 'unauthorized', message: 'unable to authenticate' } }, { status: 401 }) });
+  await assert.rejects(ungueltig.zoneFinden('_acme-challenge.m.firma.de'), /unauthorized: unable to authenticate\)\. .*Hetzner Console.*nicht in der alten DNS Console/);
+  const nurLesen = new HetznerDns('T', { fetchImpl: async () => Response.json({ error: { code: 'forbidden', message: 'insufficient permissions' } }, { status: 403 }) });
+  await assert.rejects(nurLesen.zoneFinden('_acme-challenge.m.firma.de'), /Lesen & Schreiben/);
+  const offline = new HetznerDns('T', { fetchImpl: async () => { throw new Error('ENOTFOUND'); } });
+  await assert.rejects(offline.zoneFinden('_acme-challenge.m.firma.de'), /nicht erreichbar/);
+  const fehler = new HetznerDns('T', { pauseMs: 1, fetchImpl: async (url) => (url.endsWith('/add_records') ? Response.json({ action: { id: 1, status: 'error', error: { message: 'invalid value' } } }) : Response.json({ zones: [{ name: 'firma.de' }] })) });
+  await assert.rejects(fehler.txtAnlegen('_acme-challenge.m.firma.de', 'x'), /nicht ändern: invalid value/);
+  // Die Zertifikatsverwaltung nimmt den eingestellten Anbieter.
+  const tls = (anbieter) => ({ datenOrdner: '/x', hostname: 'm.firma.de', tls: { modus: 'letsencrypt', dnsAnbieter: anbieter, hetznerToken: 'H', cloudflareToken: 'C' } });
+  assert.ok(new Zertifikatsverwaltung({ konfig: tls('hetzner') }).dns instanceof HetznerDns);
+  assert.ok(new Zertifikatsverwaltung({ konfig: tls('cloudflare') }).dns instanceof CloudflareDns);
 });
 
 test('Zertifikatsverwaltung: Ablauf mit Let\'s Encrypt (simuliert) und Wiederverwendung', async () => {

@@ -149,6 +149,12 @@ test('Konfiguration: Pflichtangaben und Pfade', () => {
   assert.equal(k.tls.zertifikat, path.resolve('/app/c.pem'));
   assert.throws(() => pruefeKonfiguration({ tls }, '/app'), /hostname/);
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de' } }, '/app'), /cloudflare_token/);
+  // Hetzner als DNS-Anbieter: eigenes Token, Cloudflare-Token nicht nötig.
+  const h = pruefeKonfiguration({ hostname: 'monitoring.konsum-weimar.de', tls: { modus: 'letsencrypt', email: 'a@b.de', dns_anbieter: 'hetzner', hetzner_token: 'H' } }, '/app').tls;
+  assert.deepEqual(h, { modus: 'letsencrypt', dnsAnbieter: 'hetzner', email: 'a@b.de', staging: false, hetznerToken: 'H' });
+  assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de', dns_anbieter: 'hetzner' } }, '/app'), /tls\.hetzner_token fehlt/);
+  assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de', dns_anbieter: 'ionos', hetzner_token: 'H' } }, '/app'), /dns_anbieter muss/);
+  assert.equal(pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de', cloudflare_token: 'C' } }, '/app').tls.dnsAnbieter, 'cloudflare', 'Standard bleibt Cloudflare');
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, benutzer: { 'a b': { hash: 'x' } } }, '/app'), /Benutzereintrag/);
 });
 

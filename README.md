@@ -116,7 +116,7 @@ committen.
 ```
 
 - Die Basis läuft per **HTTP** und ist über `http://<IP-Adresse>:<port>/`
-  erreichbar. Kein Hostname, kein Zertifikat, kein Cloudflare-Token nötig.
+  erreichbar. Kein Hostname, kein Zertifikat, kein DNS-Token nötig.
 - **Nur internes Netz:** Anfragen von Adressen außerhalb privater Netze
   (10.x, 172.16–31.x, 192.168.x, 127.x und lokale IPv6-Adressen) werden mit
   „Zugriff nur aus dem internen Netz“ abgewiesen und einmal je Adresse im
@@ -130,43 +130,73 @@ committen.
 
 ## HTTPS-Zertifikat
 
-### Empfohlen: Let's Encrypt über Cloudflare-DNS
+### Empfohlen: Let's Encrypt über Hetzner- oder Cloudflare-DNS
 
 Die Basis holt und erneuert das Zertifikat selbst. Sie nutzt dafür die
 **DNS-Prüfung (DNS-01)**: Let's Encrypt prüft nur einen TXT-Eintrag im
-öffentlichen DNS. Der Worker muss deshalb **nicht aus dem Internet erreichbar
-sein** und kein Port nach außen geöffnet werden. Er braucht nur ausgehend HTTPS
-zu `acme-v02.api.letsencrypt.org`, `api.cloudflare.com` und
-`cloudflare-dns.com`.
+öffentlichen DNS. Für das Zertifikat muss der Worker deshalb **nicht aus dem
+Internet erreichbar sein**. Er braucht nur ausgehend HTTPS zu
+`acme-v02.api.letsencrypt.org`, `cloudflare-dns.com` und je nach Anbieter
+`api.hetzner.cloud` bzw. `api.cloudflare.com`.
 
-Voraussetzungen:
+#### Mit Hetzner (DNS in der Hetzner Console)
 
-1. Die Domain (z. B. `konsum-weimar.de`) wird in **Cloudflare** verwaltet.
+1. In der **Hetzner Console** das Projekt öffnen, in dem die Zone
+   (z. B. `konsum-weimar.de`) liegt → **Sicherheit → API-Tokens → API-Token
+   erstellen**, Rechte **„Lesen & Schreiben“**. Tokens aus der alten DNS Console
+   (dns.hetzner.com) funktionieren nicht. Tipp: Liegt die Zone allein in einem
+   eigenen Projekt, kann das Token nur diese Zone ändern.
+2. In `config.json`:
+
+   ```json
+   "hostname": "monitoring.konsum-weimar.de",
+   "port": 8443,
+   "tls": {
+     "modus": "letsencrypt",
+     "dns_anbieter": "hetzner",
+     "hetzner_token": "…",
+     "email": "it@konsum-weimar.de",
+     "staging": true
+   }
+   ```
+
+3. Einen A-Eintrag für den `hostname` anlegen (siehe „Name im DNS“ unten).
+
+#### Mit Cloudflare
+
+1. Die Domain wird in **Cloudflare** verwaltet.
 2. In Cloudflare unter **Mein Profil → API-Token → Token erstellen** die
-   Vorlage **„Zone-DNS bearbeiten“** wählen. Das Token auf genau diese Zone
-   beschränken und in `tls.cloudflare_token` eintragen.
-3. Der `hostname` muss im Firmennetz auf die IP des Workers zeigen. Dafür
-   gibt es zwei Wege:
-   - im internen DNS (Router/Domaincontroller) einen A-Eintrag anlegen, oder
-   - in Cloudflare einen A-Eintrag mit der internen IP anlegen, Proxy-Status
-     **„Nur DNS“** (graue Wolke).
+   Vorlage **„Zone-DNS bearbeiten“** wählen und das Token auf genau diese Zone
+   beschränken.
+3. In `config.json` wie oben, aber `"dns_anbieter": "cloudflare"` (oder
+   weglassen, das ist der Standard) und `"cloudflare_token": "…"`.
 
-```json
-"tls": {
-  "modus": "letsencrypt",
-  "email": "it@konsum-weimar.de",
-  "cloudflare_token": "…",
-  "staging": true
-}
-```
+#### Testen und umstellen
 
-Zuerst mit `"staging": true` testen (`node basis/main.js --zertifikat`). Das
-Testzertifikat ist im Browser nicht vertrauenswürdig, zeigt aber, dass alles
-funktioniert. Danach `"staging": false` setzen, den Ordner
-`data\zertifikat` löschen und erneut `--zertifikat` ausführen.
+Zuerst mit `"staging": true` testen:
+`.\runtime\node.exe basis\main.js --zertifikat`. Das Testzertifikat ist im
+Browser nicht vertrauenswürdig, zeigt aber, dass alles funktioniert. Danach
+`"staging": false` setzen, den Ordner `data\zertifikat` löschen und erneut
+`--zertifikat` ausführen. Dann die Basis neu starten.
 
 Die laufende Basis prüft alle 12 Stunden und erneuert das Zertifikat 30 Tage vor
 Ablauf **ohne Neustart**. Meldungen dazu stehen in `logs\basis.log`.
+
+#### Name im DNS
+
+- **Nur intern:** Der `hostname` zeigt auf die **interne** IP des Workers,
+  entweder im internen DNS (Router oder Domaincontroller) oder als A-Eintrag
+  beim DNS-Anbieter (bei Cloudflare mit Proxy-Status „Nur DNS“).
+- **Auch von außen:** Der `hostname` zeigt im öffentlichen DNS auf die
+  **öffentliche** IP der Firma. In der Firewall bzw. im Router wird TCP 443
+  (extern) an den Worker auf den eingestellten `port` (z. B. 8443) weitergeleitet.
+  Im Firmennetz zeigt der Name am besten per internem DNS direkt auf den Worker,
+  falls der Router keine Weiterleitung „von innen nach außen und zurück“ kann.
+  In der Windows-Firewall den Port dann auch für das Profil „Öffentlich“ bzw.
+  aus dem Internet freigeben.
+- **Erst öffnen, wenn die Anmeldung abgesichert ist:** Bis die
+  Zwei-Faktor-Anmeldung bzw. „Mit Microsoft anmelden“ eingerichtet ist,
+  die Portweiterleitung noch nicht einrichten.
 
 ### Alternative: eigene Zertifikatsdateien
 

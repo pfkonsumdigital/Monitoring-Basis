@@ -1,5 +1,21 @@
 # Änderungen
 
+## 0.10.0
+
+### Neu
+
+- **Let's Encrypt über Hetzner-DNS:** Neben Cloudflare kann die Basis das HTTPS-Zertifikat jetzt auch über das DNS in der **Hetzner Console** (Cloud-API) holen und erneuern. In `config.json` unter `tls`: `"dns_anbieter": "hetzner"` und `"hetzner_token"` (API-Token aus dem Projekt mit der Zone, „Lesen & Schreiben“). Ohne `dns_anbieter` bleibt es bei Cloudflare.
+
+### Geändert
+
+- README: Einrichtung mit Hetzner, Test mit `staging`, Name im DNS für internen Zugriff und für Zugriff von außen (Portweiterleitung 443 → Port der Basis).
+- Meldung bei nicht gelöschtem TXT-Eintrag nennt den eingestellten DNS-Anbieter. Das Hetzner-Token wird wie das Cloudflare-Token in Protokollen unkenntlich gemacht.
+
+### Prüfung
+
+- `npm test`: 101 Tests, neu u. a. Hetzner-Client mit simulierter API (Zone finden, TXT in Anführungszeichen anlegen, auf die Hetzner-Aktion warten, löschen; Fehler 401/403, falsche Zone, nicht erreichbar, Aktion mit Fehler), Auswahl des Anbieters und Prüfung der Konfiguration.
+- **Nicht getestet:** gegen die echte Hetzner-API (aus der Testumgebung nicht erreichbar). Erste Prüfung auf dem Worker mit `"staging": true` und `--zertifikat`.
+
 ## 0.9.0
 
 ### Neu

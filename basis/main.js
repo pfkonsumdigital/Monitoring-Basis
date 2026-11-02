@@ -177,7 +177,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     const protokoll = new Protokoll({
       ordner: path.join(path.dirname(configDatei), 'logs'),
-      geheimnisse: [konfig.tls.cloudflareToken, konfig.updates?.githubToken, ...Object.values(konfig.benutzer).map((b) => b.hash)],
+      geheimnisse: [konfig.tls.cloudflareToken, konfig.tls.hetznerToken, konfig.updates?.githubToken, ...Object.values(konfig.benutzer).map((b) => b.hash)],
     });
     const log = protokoll.alsFunktion();
     // Unerwartete Fehler festhalten. Bei einer nicht abgefangenen Ausnahme beendet sich die Basis;

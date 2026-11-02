@@ -27,9 +27,14 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     tlsGeprueft = { modus: 'dateien', zertifikat: ordner(tls.zertifikat), schluessel: ordner(tls.schluessel) };
   } else {
     if (!istText(tls.email) || !/^[^\s@]+@[^\s@]+$/.test(tls.email)) throw new BasisFehler('tls.email muss eine E-Mail-Adresse für Let\'s Encrypt sein.');
-    if (!istText(tls.cloudflare_token)) throw new BasisFehler('tls.cloudflare_token fehlt (Cloudflare-API-Token mit Recht „Zone: DNS: Bearbeiten“).');
+    // DNS-Anbieter für die DNS-Prüfung: Cloudflare (Standard) oder Hetzner (DNS in der Hetzner Console).
+    const anbieter = tls.dns_anbieter ?? 'cloudflare';
+    if (!['cloudflare', 'hetzner'].includes(anbieter)) throw new BasisFehler('tls.dns_anbieter muss "cloudflare" oder "hetzner" sein.');
+    if (anbieter === 'cloudflare' && !istText(tls.cloudflare_token)) throw new BasisFehler('tls.cloudflare_token fehlt (Cloudflare-API-Token mit Recht „Zone: DNS: Bearbeiten“).');
+    if (anbieter === 'hetzner' && !istText(tls.hetzner_token)) throw new BasisFehler('tls.hetzner_token fehlt (API-Token aus der Hetzner Console, Projekt mit der Zone, Rechte „Lesen & Schreiben“).');
     if (tls.staging !== undefined && typeof tls.staging !== 'boolean') throw new BasisFehler('tls.staging muss true oder false sein.');
-    tlsGeprueft = { modus: 'letsencrypt', email: tls.email, cloudflareToken: tls.cloudflare_token, staging: tls.staging === true };
+    tlsGeprueft = { modus: 'letsencrypt', dnsAnbieter: anbieter, email: tls.email, staging: tls.staging === true,
+      ...(anbieter === 'hetzner' ? { hetznerToken: tls.hetzner_token } : { cloudflareToken: tls.cloudflare_token }) };
   }
 
   const benutzer = roh.benutzer ?? {};

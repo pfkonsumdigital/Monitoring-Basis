@@ -83,6 +83,78 @@ export class CloudflareDns {
   }
 }
 
+// Minimaler Hetzner-Client (DNS in der Hetzner Console, Cloud-API) für TXT-Einträge der DNS-01-Prüfung.
+// Token: Hetzner Console → Projekt mit der Zone → Sicherheit → API-Tokens, Rechte „Lesen & Schreiben“.
+// Tokens aus der alten DNS Console (dns.hetzner.com) funktionieren mit der Cloud-API nicht.
+export class HetznerDns {
+  constructor(token, { fetchImpl = fetch, pauseMs = 2000, versuche = 60 } = {}) {
+    this.token = token;
+    this.fetch = fetchImpl;
+    this.pauseMs = pauseMs;
+    this.versuche = versuche;
+  }
+
+  async anfrage(methode, weg, koerper) {
+    let antwort, daten;
+    try {
+      antwort = await this.fetch(`https://api.hetzner.cloud/v1${weg}`, {
+        method: methode,
+        headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json', ...(koerper ? { 'Content-Type': 'application/json' } : {}) },
+        body: koerper ? JSON.stringify(koerper) : undefined,
+        signal: AbortSignal.timeout(30_000),
+      });
+      daten = await antwort.json().catch(() => null);
+    } catch {
+      throw new BasisFehler('Hetzner-API nicht erreichbar. Internetzugang und Firewall des Workers prüfen (api.hetzner.cloud).');
+    }
+    if (!antwort.ok) {
+      const f = daten?.error;
+      const meldung = f ? `${f.code}: ${f.message}` : `HTTP ${antwort.status}`;
+      const hinweis = antwort.status === 401 ? 'Das Token ist ungültig – es muss in der Hetzner Console (Projekt mit der Zone) erstellt sein, nicht in der alten DNS Console.'
+        : antwort.status === 403 ? 'Das Token braucht die Rechte „Lesen & Schreiben“.' : 'Token und Zone in der Hetzner Console prüfen.';
+      throw new BasisFehler(`Hetzner-API hat abgelehnt (${meldung}). ${hinweis}`);
+    }
+    return daten;
+  }
+
+  // Zone zum Namen finden: _acme-challenge.monitoring.firma.de → firma.de (Zone) und _acme-challenge.monitoring (Eintrag).
+  async zoneFinden(name) {
+    const teile = name.split('.');
+    for (let i = 1; i < teile.length - 1; i++) {
+      const kandidat = teile.slice(i).join('.');
+      const { zones = [] } = await this.anfrage('GET', `/zones?name=${encodeURIComponent(kandidat)}`);
+      if (zones.some((z) => z.name === kandidat)) return { zone: kandidat, eintrag: teile.slice(0, i).join('.') };
+    }
+    throw new BasisFehler(`Keine Hetzner-Zone für ${name} gefunden. Die Domain muss im Projekt des Tokens in der Hetzner Console verwaltet werden.`);
+  }
+
+  // Hetzner bearbeitet Änderungen als „Action“; warten, bis sie fertig ist.
+  async warteAufAktion(aktion) {
+    for (let i = 0; i < this.versuche && aktion?.status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, this.pauseMs));
+      ({ action: aktion } = await this.anfrage('GET', `/actions/${aktion.id}`));
+    }
+    if (aktion?.status === 'error') throw new BasisFehler(`Hetzner konnte den DNS-Eintrag nicht ändern: ${aktion.error?.message ?? 'unbekannter Fehler'}.`);
+    if (aktion?.status === 'running') throw new BasisFehler('Hetzner hat den DNS-Eintrag nicht rechtzeitig geändert.');
+  }
+
+  rrsetWeg({ zone, eintrag }) { return `/zones/${encodeURIComponent(zone)}/rrsets/${encodeURIComponent(eintrag)}/TXT/actions`; }
+
+  async txtAnlegen(name, inhalt) {
+    const ziel = await this.zoneFinden(name);
+    // TXT-Werte stehen bei Hetzner in Anführungszeichen.
+    const wert = JSON.stringify(inhalt);
+    const { action } = await this.anfrage('POST', `${this.rrsetWeg(ziel)}/add_records`, { ttl: 60, records: [{ value: wert }] });
+    await this.warteAufAktion(action);
+    return { ...ziel, wert };
+  }
+
+  async txtLoeschen({ zone, eintrag, wert }) {
+    const { action } = await this.anfrage('POST', `${this.rrsetWeg({ zone, eintrag })}/remove_records`, { records: [{ value: wert }] });
+    await this.warteAufAktion(action);
+  }
+}
+
 // Wartet, bis der TXT-Eintrag über öffentliches DNS sichtbar ist. Das interne Firmen-DNS
 // kennt öffentliche Einträge oft nicht, darum wird Cloudflares öffentlicher Resolver gefragt.
 export async function warteAufTxt(name, wert, { fetchImpl = fetch, versuche = 30, pauseMs = 4000 } = {}) {
@@ -103,7 +175,8 @@ export class Zertifikatsverwaltung {
     this.log = log;
     this.acme = acmeImpl;
     this.ordner = path.join(konfig.datenOrdner, 'zertifikat');
-    this.dns = dns ?? (konfig.tls.modus === 'letsencrypt' ? new CloudflareDns(konfig.tls.cloudflareToken) : null);
+    this.dns = dns ?? (konfig.tls.modus !== 'letsencrypt' ? null
+      : konfig.tls.dnsAnbieter === 'hetzner' ? new HetznerDns(konfig.tls.hetznerToken) : new CloudflareDns(konfig.tls.cloudflareToken));
     this.warten = warten;
   }
 
@@ -133,7 +206,7 @@ export class Zertifikatsverwaltung {
     }
   }
 
-  // Holt ein neues Let's-Encrypt-Zertifikat per DNS-01 über Cloudflare.
+  // Holt ein neues Let's-Encrypt-Zertifikat per DNS-01 über Cloudflare oder Hetzner.
   async erneuern() {
     const { hostname, tls } = this.konfig;
     await mkdir(this.ordner, { recursive: true });
@@ -163,7 +236,7 @@ export class Zertifikatsverwaltung {
         },
         challengeRemoveFn: async (authz, challenge, schluesselAutorisierung) => {
           const eintrag = eintraege.get(schluesselAutorisierung);
-          if (eintrag) await this.dns.txtLoeschen(eintrag).catch(() => melde(this.log, 'warnung', 'Zertifikat', 'TXT-Eintrag konnte nicht gelöscht werden; bitte in Cloudflare entfernen.'));
+          if (eintrag) await this.dns.txtLoeschen(eintrag).catch(() => melde(this.log, 'warnung', 'Zertifikat', `TXT-Eintrag ${authz.identifier.value} konnte nicht gelöscht werden; bitte beim DNS-Anbieter (${tls.dnsAnbieter === 'hetzner' ? 'Hetzner Console' : 'Cloudflare'}) entfernen.`));
         },
       });
     } catch (fehler) {
