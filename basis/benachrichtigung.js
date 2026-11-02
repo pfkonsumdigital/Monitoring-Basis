@@ -12,7 +12,8 @@ const WIEDERHOLEN_MS = 5 * 60_000;
 const MAX_VERLAUF = 20;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAIL = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
-const STANDARD = { aktiv: false, tenant_id: '', client_id: '', client_secret: '', absender: '', empfaenger: [], erinnerung_stunden: 4, melden_nach_laeufen: 1, link: '' };
+// modul_empfaenger: { <Modul-id>: [Adressen] } – bekommen die Mails dieses Moduls zusätzlich zu den allgemeinen Empfängern.
+const STANDARD = { aktiv: false, tenant_id: '', client_id: '', client_secret: '', absender: '', empfaenger: [], erinnerung_stunden: 4, melden_nach_laeufen: 1, link: '', modul_empfaenger: {} };
 
 export class MailFehler extends Error {}
 
@@ -66,6 +67,17 @@ export class GraphMail {
   }
 }
 
+// Adressliste aus Text („a@b.de, c@d.de; e@f.de“) oder Array.
+const adressenLesen = (wert) => (Array.isArray(wert) ? wert.map((x) => String(x).trim()).filter(Boolean)
+  : typeof wert === 'string' ? wert.split(/[\s,;]+/).filter(Boolean) : null);
+// Doppelte Adressen (ohne Groß-/Kleinschreibung) entfernen, die erste Schreibweise bleibt.
+const ohneDoppelte = (liste) => liste.filter((m, i) => liste.findIndex((x) => x.toLowerCase() === m.toLowerCase()) === i);
+function adressenFehler(liste) {
+  if (liste.length > 20) return 'höchstens 20 Empfänger';
+  const falsch = liste.filter((m) => !MAIL.test(m));
+  return falsch.length ? `ungültig: ${falsch.join(', ')}` : null;
+}
+
 // Prüft die Eingabe aus dem Formular. Liefert { werte } oder { feldfehler }.
 export function pruefeEinstellungen(eingabe, bisher) {
   const feldfehler = {};
@@ -78,18 +90,18 @@ export function pruefeEinstellungen(eingabe, bisher) {
     // Leeres Feld = bisherigen Schlüssel behalten (er wird nie angezeigt).
     client_secret: typeof e.client_secret === 'string' && e.client_secret !== '' ? e.client_secret : bisher.client_secret,
     absender: text('absender'),
-    empfaenger: Array.isArray(e.empfaenger) ? e.empfaenger.map((x) => String(x).trim()).filter(Boolean)
-      : typeof e.empfaenger === 'string' ? e.empfaenger.split(/[\s,;]+/).filter(Boolean) : bisher.empfaenger,
+    empfaenger: adressenLesen(e.empfaenger) ?? bisher.empfaenger,
     erinnerung_stunden: e.erinnerung_stunden === undefined ? bisher.erinnerung_stunden : Number(String(e.erinnerung_stunden).replace(',', '.')),
     melden_nach_laeufen: e.melden_nach_laeufen === undefined ? bisher.melden_nach_laeufen : Number(e.melden_nach_laeufen),
     link: text('link'),
+    // Wird separat je Modul gepflegt (modulEmpfaengerSpeichern) und hier nur übernommen.
+    modul_empfaenger: bisher.modul_empfaenger ?? {},
   };
   if (werte.tenant_id && !GUID.test(werte.tenant_id) && !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(werte.tenant_id)) feldfehler.tenant_id = 'GUID oder Domain (z. B. firma.onmicrosoft.com)';
   if (werte.client_id && !GUID.test(werte.client_id)) feldfehler.client_id = 'muss eine GUID sein';
   if (werte.absender && !MAIL.test(werte.absender)) feldfehler.absender = 'keine gültige Mailadresse';
-  if (werte.empfaenger.length > 20) feldfehler.empfaenger = 'höchstens 20 Empfänger';
-  const falsch = werte.empfaenger.filter((m) => !MAIL.test(m));
-  if (falsch.length) feldfehler.empfaenger = `ungültig: ${falsch.join(', ')}`;
+  const empfaengerFehler = adressenFehler(werte.empfaenger);
+  if (empfaengerFehler) feldfehler.empfaenger = empfaengerFehler;
   if (!Number.isFinite(werte.erinnerung_stunden) || werte.erinnerung_stunden < 0 || werte.erinnerung_stunden > 168) feldfehler.erinnerung_stunden = '0 (aus) bis 168';
   if (!Number.isInteger(werte.melden_nach_laeufen) || werte.melden_nach_laeufen < 1 || werte.melden_nach_laeufen > 20) feldfehler.melden_nach_laeufen = 'ganze Zahl von 1 bis 20';
   if (werte.link && !/^https?:\/\/[^\s]+$/.test(werte.link)) feldfehler.link = 'muss mit http:// oder https:// beginnen';
@@ -168,12 +180,31 @@ export class Benachrichtigung {
     return { geaendert };
   }
 
+  // Zusätzliche Empfänger eines Moduls (leer = nur die allgemeinen Empfänger).
+  modulEmpfaenger(id) { return [...(this.werte.modul_empfaenger?.[id] ?? [])]; }
+
+  async modulEmpfaengerSpeichern(id, eingabe, benutzer) {
+    const liste = ohneDoppelte(adressenLesen(eingabe) ?? []);
+    const fehler = adressenFehler(liste);
+    if (fehler) return { fehler: `Empfänger: ${fehler}` };
+    const vorher = this.modulEmpfaenger(id);
+    const alle = { ...(this.werte.modul_empfaenger ?? {}) };
+    if (liste.length) alle[id] = liste; else delete alle[id];
+    this.werte = { ...this.werte, modul_empfaenger: alle };
+    await schreibeAtomar(this.datei, this.werte);
+    if (JSON.stringify(vorher) !== JSON.stringify(liste)) this.log(`Empfänger für Modul ${id} geändert durch ${benutzer}: ${liste.length ? liste.join(', ') : 'keine zusätzlichen'}.`);
+    return { empfaenger: liste };
+  }
+
   text(zeilen) { return zeilen.filter((z) => z !== null && z !== undefined).join('\n'); }
 
   async versenden(art, betreff, text, modulId = null) {
     const eintrag = { zeit: new Date(this.jetzt()).toISOString(), art, modul: modulId, betreff, ok: true };
     try {
-      await this.postfach().senden({ an: this.werte.empfaenger, betreff, text });
+      // Allgemeine Empfänger plus die des Moduls, doppelte Adressen (ohne Groß-/Kleinschreibung) nur einmal.
+      const an = ohneDoppelte([...this.werte.empfaenger, ...(modulId ? this.modulEmpfaenger(modulId) : [])]);
+      await this.postfach().senden({ an, betreff, text });
+      eintrag.an = an.length;
       this.log(`Benachrichtigung gesendet: ${betreff}`);
     } catch (fehler) {
       eintrag.ok = false;
@@ -181,6 +212,14 @@ export class Benachrichtigung {
       melde(this.log, 'fehler', 'Benachrichtigung', `Mail „${betreff}“ nicht gesendet: ${fehler.message}`, fehler instanceof MailFehler ? undefined : fehler);
     }
     this.zustand.verlauf = [eintrag, ...this.zustand.verlauf].slice(0, MAX_VERLAUF);
+    return eintrag;
+  }
+
+  // Sicherheitsmeldung (gesperrte Anmeldung, Admin von neuer Adresse) an die allgemeinen Empfänger.
+  async sicherheit(betreff, text) {
+    if (!this.werte.aktiv || !this.eingerichtet()) return null;
+    const eintrag = await this.versenden('sicherheit', betreff, this.text([text, this.werte.link ? `\nOberfläche: ${this.werte.link}` : null]));
+    await this.zustandSpeichern();
     return eintrag;
   }
 

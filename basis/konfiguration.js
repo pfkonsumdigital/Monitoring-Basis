@@ -1,8 +1,36 @@
 import { readFile } from 'node:fs/promises';
+import { BlockList, isIP } from 'node:net';
 import path from 'node:path';
 import { BasisFehler } from './fehler.js';
 
 const istText = (wert) => typeof wert === 'string' && wert.trim() !== '' && !/[\r\n\0]/.test(wert);
+
+// Netze, aus denen Admin-Funktionen erlaubt sind (Firmennetz und VPN). Standard: alle privaten und lokalen Adressen.
+// ["*"] erlaubt Admin-Funktionen von überall.
+export const STANDARD_ADMIN_NETZE = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'];
+export function adminNetzePruefen(wert = STANDARD_ADMIN_NETZE) {
+  if (!Array.isArray(wert) || !wert.length || wert.some((n) => typeof n !== 'string')) throw new BasisFehler('admin_netze muss eine Liste wie ["192.168.0.0/16", "10.8.0.0/24"] sein.');
+  if (wert.length === 1 && wert[0] === '*') return ['*'];
+  for (const netz of wert) {
+    const [adresse, laenge, rest] = netz.trim().split('/');
+    const art = isIP(adresse ?? '');
+    const bits = Number(laenge);
+    if (!art || rest !== undefined || !/^\d+$/.test(laenge ?? '') || bits > (art === 4 ? 32 : 128)) throw new BasisFehler(`admin_netze: „${netz}“ ist kein gültiges Netz (Form „192.168.10.0/24“).`);
+  }
+  return wert.map((n) => n.trim());
+}
+
+// Prüffunktion: Ist die Adresse in einem der Admin-Netze? (IPv4 auch als ::ffff:a.b.c.d)
+export function adminNetzPruefer(netze) {
+  if (netze.length === 1 && netze[0] === '*') return () => true;
+  const liste = new BlockList();
+  for (const n of netze) { const [a, l] = n.split('/'); liste.addSubnet(a, Number(l), isIP(a) === 4 ? 'ipv4' : 'ipv6'); }
+  return (adresse) => {
+    const a = String(adresse ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, '');
+    const art = isIP(a);
+    return Boolean(art) && liste.check(a, art === 4 ? 'ipv4' : 'ipv6');
+  };
+}
 
 export function pruefeKonfiguration(roh, basisOrdner) {
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) throw new BasisFehler('config.json muss ein JSON-Objekt sein.');
@@ -10,8 +38,11 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new BasisFehler('Ungültiger Port in config.json.');
   const verlauf = roh.verlauf_anzahl ?? 1000;
   if (!Number.isInteger(verlauf) || verlauf < 1 || verlauf > 10000) throw new BasisFehler('verlauf_anzahl muss zwischen 1 und 10000 liegen.');
-  const stunden = roh.sitzung_stunden ?? 12;
+  const stunden = roh.sitzung_stunden ?? 8;
   if (typeof stunden !== 'number' || !(stunden > 0) || stunden > 720) throw new BasisFehler('sitzung_stunden muss zwischen 0 und 720 liegen.');
+  const leerlauf = roh.sitzung_leerlauf_minuten ?? 30;
+  if (typeof leerlauf !== 'number' || !(leerlauf >= 5) || leerlauf > 1440) throw new BasisFehler('sitzung_leerlauf_minuten muss zwischen 5 und 1440 liegen.');
+  const adminNetze = adminNetzePruefen(roh.admin_netze);
 
   const tls = roh.tls;
   if (!tls || !['letsencrypt', 'dateien', 'aus'].includes(tls.modus)) throw new BasisFehler('tls.modus muss "letsencrypt", "dateien" oder "aus" sein.');
@@ -42,6 +73,10 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   for (const [name, eintrag] of Object.entries(benutzer)) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || !istText(eintrag?.hash)) throw new BasisFehler(`Ungültiger Benutzereintrag: ${name}.`);
     if (eintrag.admin !== undefined && typeof eintrag.admin !== 'boolean') throw new BasisFehler(`benutzer.${name}.admin muss true oder false sein.`);
+    const zf = eintrag.zwei_faktor;
+    if (zf !== undefined && (!zf || typeof zf !== 'object' || !/^[A-Z2-7]{16,128}$/.test(zf.geheimnis ?? '') || !Array.isArray(zf.codes) || zf.codes.some((c) => !/^[0-9a-f]{64}$/.test(c)))) {
+      throw new BasisFehler(`benutzer.${name}.zwei_faktor ist beschädigt. Zurücksetzen mit: node basis/main.js --zwei-faktor-zuruecksetzen ${name}`);
+    }
   }
 
   // Optional: Updates aus einem privaten GitHub-Repo. Ohne Angabe ist die Update-Funktion aus.
@@ -63,6 +98,8 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     datenOrdner: ordner(roh.daten_ordner ?? 'data'),
     verlaufAnzahl: verlauf,
     sitzungMs: stunden * 3_600_000,
+    leerlaufMs: leerlauf * 60_000,
+    adminNetze,
     tls: tlsGeprueft,
     benutzer,
     updates,

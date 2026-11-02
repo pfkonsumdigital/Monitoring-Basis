@@ -18,6 +18,7 @@
     <button type="button" id="beenden-oeffnen" class="zweitrangig" hidden>Beenden</button>
     <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <button type="button" id="benutzerverwaltung-oeffnen" class="zweitrangig" hidden>Benutzer</button>
+    <span id="admin-hinweis" class="leise" hidden title="Admin-Funktionen sind nur aus dem Firmennetz oder über VPN verfügbar.">Admin nur intern/VPN</span>
     <span id="benutzer" class="leise"></span>
     <button type="button" id="passwort-oeffnen" class="zweitrangig" title="Eigenes Passwort ändern">Passwort ändern</button>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
@@ -57,6 +58,18 @@
     <button type="button" id="details-beenden" class="zweitrangig gefahr" hidden>Beenden</button>
     <button type="button" id="details-starten" class="zweitrangig" hidden>Dienst starten</button>
   </div>
+  <section id="empf" class="mupd" hidden>
+    <h3>Benachrichtigung für dieses Modul</h3>
+    <form id="empf-formular" class="felder" novalidate>
+      <div class="feld">
+        <label for="empf-wert">Zusätzliche Empfänger</label>
+        <input id="empf-wert" autocomplete="off" placeholder="lager@firma.de, chef@firma.de">
+        <small class="leise">Bekommen die Mails dieses Moduls zusätzlich zu den allgemeinen Empfängern. Mehrere mit Komma trennen, leer = keine zusätzlichen. <span id="empf-allgemein"></span></small>
+      </div>
+      <p id="empf-meldung" class="upd-meldung" role="status"></p>
+      <div class="aktionen"><button type="submit" id="empf-speichern" class="zweitrangig">Empfänger speichern</button></div>
+    </form>
+  </section>
   <section id="mupd" class="mupd" hidden>
     <h3>Updates</h3>
     <dl id="mupd-fakten" class="messwerte"></dl>
@@ -163,18 +176,18 @@
     <h2>Benutzer</h2>
     <button type="button" id="bv-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
   </div>
-  <p class="leise">Änderungen gelten sofort und werden in config.json gespeichert (Passwörter nur als Hash). Nach einem neuen Passwort werden alle Sitzungen dieses Benutzers beendet.</p>
+  <p class="leise">Änderungen gelten sofort und werden in config.json gespeichert (Passwörter nur als Hash). Nach einem neuen Passwort werden alle Sitzungen dieses Benutzers beendet. Die Zwei-Faktor-Anmeldung (Authenticator-App) ist für alle Pflicht; neue Benutzer richten sie bei der ersten Anmeldung im Firmennetz oder über VPN ein.</p>
   <p id="bv-meldung" class="upd-meldung" role="status"></p>
   <div class="liste-rahmen">
     <table class="liste-tabelle bv-tabelle">
-      <thead><tr><th>Name</th><th>Rolle</th><th>Angemeldet</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th></th></tr></thead>
       <tbody id="bv-liste"></tbody>
     </table>
   </div>
   <h3>Neuen Benutzer anlegen</h3>
   <form id="bv-anlegen" class="felder" novalidate>
     <div class="feld"><label for="bv-name">Benutzername</label><input id="bv-name" autocomplete="off" maxlength="64"><small class="leise">Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich.</small></div>
-    <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen.</small></div>
+    <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter.</small></div>
     <div class="feld"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
     <div class="feld schalter"><input type="checkbox" id="bv-admin"><label for="bv-admin">Admin (darf Einstellungen, Updates, Benutzer usw. ändern)</label></div>
     <div class="aktionen"><button type="submit" id="bv-anlegen-knopf">Benutzer anlegen</button></div>
@@ -182,7 +195,7 @@
   <h3>Passwort neu setzen</h3>
   <form id="bv-setzen" class="felder" novalidate>
     <div class="feld"><label for="bv-setzen-name">Benutzer</label><select id="bv-setzen-name"></select></div>
-    <div class="feld"><label for="bv-setzen-passwort">Neues Passwort</label><input id="bv-setzen-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen. Alle Sitzungen dieses Benutzers werden beendet.</small></div>
+    <div class="feld"><label for="bv-setzen-passwort">Neues Passwort</label><input id="bv-setzen-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter. Alle Sitzungen dieses Benutzers werden beendet.</small></div>
     <div class="feld"><label for="bv-setzen-passwort2">Passwort wiederholen</label><input id="bv-setzen-passwort2" type="password" autocomplete="new-password"></div>
     <div class="aktionen"><button type="submit" id="bv-setzen-knopf">Passwort setzen</button></div>
   </form>
@@ -194,7 +207,7 @@
       <tbody id="bv-sitzungen"></tbody>
     </table>
   </div>
-  <p class="leise">„Zuletzt aktiv“ zählt jede Anfrage – eine offene Seite fragt alle 10 Sekunden nach. Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
+  <p class="leise">„Zuletzt aktiv“ ist die letzte Aktion (Klick, Speichern …); das automatische Nachladen zählt nicht. Ohne Aktion endet eine Sitzung nach der Leerlaufzeit (Standard 30 Minuten), spätestens nach der Höchstdauer (Standard 8 Stunden). Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
 </dialog>
 <dialog id="passwort">
   <div class="dialog-kopf">
@@ -203,7 +216,7 @@
   </div>
   <form id="pw-formular" class="felder" novalidate>
     <div class="feld"><label for="pw-alt">Bisheriges Passwort</label><input id="pw-alt" type="password" autocomplete="current-password"></div>
-    <div class="feld"><label for="pw-neu">Neues Passwort</label><input id="pw-neu" type="password" autocomplete="new-password"><small class="leise">Mindestens 10 Zeichen. Andere Sitzungen mit diesem Konto werden beendet, diese bleibt angemeldet.</small></div>
+    <div class="feld"><label for="pw-neu">Neues Passwort</label><input id="pw-neu" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter. Andere Sitzungen mit diesem Konto werden beendet, diese bleibt angemeldet.</small></div>
     <div class="feld"><label for="pw-neu2">Neues Passwort wiederholen</label><input id="pw-neu2" type="password" autocomplete="new-password"></div>
     <p id="pw-meldung" class="upd-meldung" role="status"></p>
     <div class="aktionen"><button type="submit" id="pw-speichern">Passwort ändern</button></div>

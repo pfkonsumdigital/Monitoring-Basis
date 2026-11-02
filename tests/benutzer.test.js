@@ -27,19 +27,19 @@ async function aufbau() {
 test('Benutzerverwaltung: anlegen, Passwort setzen, Admin-Recht, löschen – gespeichert in config.json', async () => {
   const { ordner, configDatei, anmeldung, bv, log, datei } = await aufbau();
   try {
-    await bv.anlegen({ name: 'bob', passwort: 'bob-passwort-1', admin: false }, 'anna');
+    await bv.anlegen({ name: 'bob', passwort: 'Blaue-Kanne-41x', admin: false }, 'anna');
     let roh = await datei();
     assert.deepEqual(Object.keys(roh.benutzer), ['anna', 'bob']);
-    assert.equal(await passwortStimmt('bob-passwort-1', roh.benutzer.bob.hash), true);
+    assert.equal(await passwortStimmt('Blaue-Kanne-41x', roh.benutzer.bob.hash), true);
     assert.equal(roh.benutzer.bob.admin, undefined);
     assert.equal(roh.updates.github_token, 'geheim-token', 'übrige Einstellungen bleiben');
     assert.ok(pruefeKonfiguration(roh, ordner), 'config.json bleibt gültig');
     assert.ok((await readdir(ordner)).includes('config.json.vor-benutzeraenderung.json'), 'Sicherungskopie');
-    assert.equal(typeof await anmeldung.anmelden('bob', 'bob-passwort-1', 'ip'), 'string', 'sofort anmeldbar, ohne Neustart');
+    assert.equal(typeof await anmeldung.anmelden('bob', 'Blaue-Kanne-41x', 'ip'), 'string', 'sofort anmeldbar, ohne Neustart');
 
     for (const [eingabe, fehler] of [
       [{ name: 'bob', passwort: 'irgendwas-langes' }, /gibt es schon/],
-      [{ name: 'carl', passwort: 'kurz' }, /mindestens 10 Zeichen/],
+      [{ name: 'carl', passwort: 'kurz' }, /mindestens 12 Zeichen/],
       [{ name: 'carl', passwort: 'x'.repeat(201) }, /höchstens 200/],
       [{ name: 'carl mit leer', passwort: 'irgendwas-langes' }, /Benutzername/],
       [{ name: '__proto__', passwort: 'irgendwas-langes' }, /Benutzername/],
@@ -47,15 +47,15 @@ test('Benutzerverwaltung: anlegen, Passwort setzen, Admin-Recht, löschen – ge
     ]) await assert.rejects(bv.anlegen(eingabe, 'anna'), fehler, JSON.stringify(eingabe).slice(0, 40));
 
     // Passwort setzen beendet alle Sitzungen des Benutzers.
-    const t1 = await anmeldung.anmelden('bob', 'bob-passwort-1', 'ip');
-    await bv.passwortSetzen('bob', 'bob-passwort-2', 'anna');
+    const t1 = await anmeldung.anmelden('bob', 'Blaue-Kanne-41x', 'ip');
+    await bv.passwortSetzen('bob', 'Rote-Leiter-52y', 'anna');
     assert.equal(anmeldung.sitzung(t1), null);
-    assert.equal(await anmeldung.anmelden('bob', 'bob-passwort-1', 'ip9'), null);
-    assert.equal(typeof await anmeldung.anmelden('bob', 'bob-passwort-2', 'ip'), 'string');
+    assert.equal(await anmeldung.anmelden('bob', 'Blaue-Kanne-41x', 'ip9'), null);
+    assert.equal(typeof await anmeldung.anmelden('bob', 'Rote-Leiter-52y', 'ip'), 'string');
     await assert.rejects(bv.passwortSetzen('niemand', 'irgendwas-langes', 'anna'), /gibt es nicht/);
 
     // Admin-Recht: wirkt sofort in laufenden Sitzungen; eigenes Recht und letzter Admin geschützt.
-    const tBob = await anmeldung.anmelden('bob', 'bob-passwort-2', 'ip');
+    const tBob = await anmeldung.anmelden('bob', 'Rote-Leiter-52y', 'ip');
     await bv.adminSetzen('bob', true, 'anna');
     assert.equal(anmeldung.sitzung(tBob).admin, true);
     assert.equal((await datei()).benutzer.bob.admin, true);
@@ -69,7 +69,7 @@ test('Benutzerverwaltung: anlegen, Passwort setzen, Admin-Recht, löschen – ge
 
     // Löschen: Sitzungen enden; eigenes Konto und letzter Admin geschützt.
     await assert.rejects(bv.loeschen('anna', 'anna'), /eigene Konto/);
-    await bv.anlegen({ name: 'chef', passwort: 'chef-passwort-1', admin: true }, 'anna');
+    await bv.anlegen({ name: 'chef', passwort: 'Stille-Wiese-74q', admin: true }, 'anna');
     await bv.loeschen('bob', 'anna');
     assert.equal(anmeldung.sitzung(tBob), null);
     assert.deepEqual(Object.keys((await datei()).benutzer), ['anna', 'chef']);
@@ -81,7 +81,7 @@ test('Benutzerverwaltung: anlegen, Passwort setzen, Admin-Recht, löschen – ge
     assert.ok(log.some((z) => /^Passwort von bob geändert durch anna \(2 Sitzung\(en\) beendet\)\.$/.test(z)));
     assert.ok(log.includes('Admin-Recht von bob vergeben durch anna.'));
     assert.ok(log.some((z) => z.startsWith('Benutzer bob gelöscht durch anna')));
-    assert.doesNotMatch(JSON.stringify(log), /passwort-\d|scrypt/, 'keine Passwörter oder Hashes im Protokoll');
+    assert.doesNotMatch(JSON.stringify(log), /Blaue-Kanne|Rote-Leiter|scrypt/, 'keine Passwörter oder Hashes im Protokoll');
     assert.equal((await readdir(ordner)).filter((n) => n.endsWith('.tmp')).length, 0);
     void configDatei;
   } finally { await rm(ordner, { recursive: true, force: true }); }
@@ -92,24 +92,24 @@ test('Eigenes Passwort: bisheriges nötig, Sperre nach Fehlversuchen, eigene Sit
   try {
     const eigen = await anmeldung.anmelden('anna', PW, 'ip1');
     const anderes = await anmeldung.anmelden('anna', PW, 'ip2');
-    await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'neues-passwort-1', eigen, 'ip1'), /bisherige Passwort stimmt nicht/);
+    await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'Warme-Quelle-96s', eigen, 'ip1'), /bisherige Passwort stimmt nicht/);
     await assert.rejects(bv.eigenesPasswort('anna', PW, PW, eigen, 'ip1'), /unterscheiden/);
-    await assert.rejects(bv.eigenesPasswort('anna', PW, 'kurz', eigen, 'ip1'), /10 Zeichen/);
-    await bv.eigenesPasswort('anna', PW, 'neues-passwort-1', eigen, 'ip1');
+    await assert.rejects(bv.eigenesPasswort('anna', PW, 'kurz', eigen, 'ip1'), /12 Zeichen/);
+    await bv.eigenesPasswort('anna', PW, 'Warme-Quelle-96s', eigen, 'ip1');
     assert.equal(anmeldung.sitzung(eigen).benutzer, 'anna', 'eigene Sitzung bleibt');
     assert.equal(anmeldung.sitzung(anderes), null, 'andere Sitzung endet');
-    for (let i = 0; i < 4; i++) await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'x-passwort-123', eigen, 'ip3'), /stimmt nicht/);
-    await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'x-passwort-123', eigen, 'ip3'), /Zu viele Fehlversuche/);
-    await assert.rejects(bv.eigenesPasswort('anna', 'neues-passwort-1', 'x-passwort-123', eigen, 'ip3'), /Zu viele Fehlversuche/);
+    for (let i = 0; i < 4; i++) await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'Kalte-Kueste-17t', eigen, 'ip3'), /stimmt nicht/);
+    await assert.rejects(bv.eigenesPasswort('anna', 'falsch', 'Kalte-Kueste-17t', eigen, 'ip3'), /Zu viele Fehlversuche/);
+    await assert.rejects(bv.eigenesPasswort('anna', 'Warme-Quelle-96s', 'Kalte-Kueste-17t', eigen, 'ip3'), /Zu viele Fehlversuche/);
   } finally { await rm(ordner, { recursive: true, force: true }); }
 });
 
 test('Angemeldet: Adresse, seit, zuletzt aktiv, Ablauf; ohne Token', async () => {
   let zeit = Date.parse('2026-10-30T10:00:00Z');
-  const a = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort(PW), admin: true }, bob: { hash: await hashPasswort('bob-passwort-1') } }, sitzungMs: 3_600_000, jetzt: () => zeit });
+  const a = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort(PW), admin: true }, bob: { hash: await hashPasswort('Blaue-Kanne-41x') } }, sitzungMs: 3_600_000, jetzt: () => zeit });
   const tA = await a.anmelden('anna', PW, '::ffff:10.0.0.7');
   zeit += 60_000;
-  const tB = await a.anmelden('bob', 'bob-passwort-1', '10.0.0.8');
+  const tB = await a.anmelden('bob', 'Blaue-Kanne-41x', '10.0.0.8');
   zeit += 60_000;
   a.sitzung(tA);
   const liste = a.liste(tB);
@@ -161,32 +161,32 @@ test('Webserver: Benutzer-API nur für Admins, eigenes Passwort für alle, Schut
     assert.ok(anna);
     let r = await anfrage(port, ca, 'GET', '/api/benutzer', { kopf: { cookie: anna } });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json().benutzer, [{ name: 'anna', admin: true, sitzungen: 1 }]);
+    assert.deepEqual(r.json().benutzer, [{ name: 'anna', admin: true, zweiFaktor: false, sitzungen: 1 }]);
     assert.equal(r.json().sitzungen[0].eigene, true);
     assert.equal(r.json().sitzungen[0].adresse.replace(/^::ffff:/, ''), '127.0.0.1');
 
-    r = await post(anna, '/api/benutzer', { name: 'bob', passwort: 'bob-passwort-1', admin: false });
+    r = await post(anna, '/api/benutzer', { name: 'bob', passwort: 'Blaue-Kanne-41x', admin: false });
     assert.equal(r.status, 200);
     assert.deepEqual(r.json().benutzer.map((b) => b.name), ['anna', 'bob']);
     assert.doesNotMatch(r.text, /scrypt|hash/i, 'keine Hashes in der Antwort');
-    r = await post(anna, '/api/benutzer', { name: 'bob', passwort: 'bob-passwort-1' });
+    r = await post(anna, '/api/benutzer', { name: 'bob', passwort: 'Blaue-Kanne-41x' });
     assert.deepEqual([r.status, r.json().fehler], [400, 'Den Benutzer „bob“ gibt es schon.']);
-    assert.equal((await post(anna, '/api/benutzer', { name: 'carl', passwort: 'carl-passwort-1' }, { 'x-monitor-anfrage': '' })).status, 403, 'ohne eigenen Kopf abgelehnt');
-    assert.equal((await post(anna, '/api/benutzer', { name: 'carl', passwort: 'carl-passwort-1' }, { origin: 'https://boese.example' })).status, 403, 'fremde Herkunft abgelehnt');
+    assert.equal((await post(anna, '/api/benutzer', { name: 'carl', passwort: 'Graue-Muehle-85r' }, { 'x-monitor-anfrage': '' })).status, 403, 'ohne eigenen Kopf abgelehnt');
+    assert.equal((await post(anna, '/api/benutzer', { name: 'carl', passwort: 'Graue-Muehle-85r' }, { origin: 'https://boese.example' })).status, 403, 'fremde Herkunft abgelehnt');
 
     // bob ist kein Admin: keine Benutzerverwaltung, aber eigenes Passwort ändern.
-    const bob = await login('bob', 'bob-passwort-1');
+    const bob = await login('bob', 'Blaue-Kanne-41x');
     assert.equal((await anfrage(port, ca, 'GET', '/api/benutzer', { kopf: { cookie: bob } })).status, 403);
-    assert.equal((await post(bob, '/api/benutzer', { name: 'x', passwort: 'x-passwort-123' })).status, 403);
-    r = await post(bob, '/api/passwort', { alt: 'falsch-falsch', neu: 'bob-passwort-2' });
+    assert.equal((await post(bob, '/api/benutzer', { name: 'x', passwort: 'Kalte-Kueste-17t' })).status, 403);
+    r = await post(bob, '/api/passwort', { alt: 'falsch-falsch', neu: 'Rote-Leiter-52y' });
     assert.deepEqual([r.status, r.json().fehler], [400, 'Das bisherige Passwort stimmt nicht.']);
-    assert.equal((await post(bob, '/api/passwort', { alt: 'bob-passwort-1', neu: 'bob-passwort-2' })).status, 200);
+    assert.equal((await post(bob, '/api/passwort', { alt: 'Blaue-Kanne-41x', neu: 'Rote-Leiter-52y' })).status, 200);
     assert.equal((await anfrage(port, ca, 'GET', '/api/status', { kopf: { cookie: bob } })).status, 200, 'eigene Sitzung bleibt');
 
     // Admin setzt bobs Passwort neu: bobs Sitzung endet.
-    assert.equal((await post(anna, '/api/benutzer/bob/passwort', { passwort: 'bob-passwort-3' })).status, 200);
+    assert.equal((await post(anna, '/api/benutzer/bob/passwort', { passwort: 'Gelbe-Bruecke-63z' })).status, 200);
     assert.equal((await anfrage(port, ca, 'GET', '/api/status', { kopf: { cookie: bob } })).status, 401);
-    const bob2 = await login('bob', 'bob-passwort-3');
+    const bob2 = await login('bob', 'Gelbe-Bruecke-63z');
     assert.ok(bob2);
 
     // Admin-Recht vergeben wirkt sofort; Fehler liefern die aktuelle Liste mit.

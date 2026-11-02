@@ -20,9 +20,11 @@ const el = (tag, eigenschaften = {}, ...kinder) => { const e = document.createEl
 
 async function api(weg, optionen = {}) {
   const antwort = await fetch(weg, { credentials: 'same-origin', ...optionen });
-  if (antwort.status === 401) { location.href = '/login'; throw new Error('abgemeldet'); }
+  if (antwort.status === 401) { location.href = '/login?fehler=abgelaufen'; throw new Error('abgemeldet'); }
   return antwort;
 }
+// Automatische Abfragen (Nachladen alle 10 s) zählen nicht als Aktivität – sonst würde man bei offener Seite nie abgemeldet.
+const HINTERGRUND = { headers: { 'X-Monitor-Hintergrund': '1' } };
 const senden = (weg, koerper) => api(weg, { method: 'POST', headers: { 'X-Monitor-Anfrage': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(koerper) });
 
 const KEINE_VERBINDUNG = 'Keine Verbindung zur Monitoring-Basis.';
@@ -84,7 +86,7 @@ function kachelBauen(m) {
 
 async function aktualisieren() {
   try {
-    const daten = await (await api('/api/status')).json();
+    const daten = await (await api('/api/status', HINTERGRUND)).json();
     $('verbindung').hidden = true;
     istAdmin = daten.admin;
     $('benutzer').textContent = daten.benutzer;
@@ -93,6 +95,7 @@ async function aktualisieren() {
     $('protokoll-oeffnen').hidden = !daten.admin;
     $('benachrichtigung-oeffnen').hidden = !daten.admin;
     $('benutzerverwaltung-oeffnen').hidden = !daten.admin;
+    $('admin-hinweis').hidden = !daten.adminNurIntern;
     $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
     $('beenden-oeffnen').hidden = !daten.beendenMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
@@ -110,7 +113,7 @@ async function aktualisieren() {
     document.title = probleme ? `(${probleme}) Monitoring` : 'Monitoring';
     if (offenesModul) {
       const neu = daten.module.find((m) => m.id === offenesModul);
-      if (neu) detailsFuellen(neu);
+      if (neu) detailsFuellen(neu, true);
     }
   } catch (fehler) {
     if (fehler.message === 'abgemeldet') return;
@@ -140,7 +143,7 @@ async function pruefen(id, knopf) {
 function fakt(name, wert) { return wert ? [el('dt', { textContent: name }), el('dd', { textContent: wert })] : []; }
 const prozent = (v) => (v ? `${v.prozent.toLocaleString('de-DE')} % (${v.laeufe} ${v.laeufe === 1 ? 'Lauf' : 'Läufe'}${v.unvollstaendig ? ', Verlauf kürzer' : ''})` : '–');
 
-async function detailsFuellen(m) {
+async function detailsFuellen(m, hintergrund = false) {
   $('details-titel').textContent = m.version ? `${m.name} (v${m.version})` : m.name;
   $('details-beschreibung').textContent = m.beschreibung;
   $('details-beschreibung').hidden = !m.beschreibung;
@@ -193,7 +196,7 @@ async function detailsFuellen(m) {
   $('details-ausgabe').hidden = !l?.fehlerausgabe;
   $('details-ausgabe').textContent = l?.fehlerausgabe ?? '';
   if (m.fehler) { $('details-verlauf').replaceChildren(); return; }
-  const { verlauf } = await (await api(`/api/module/${encodeURIComponent(m.id)}/verlauf?anzahl=30`)).json();
+  const { verlauf } = await (await api(`/api/module/${encodeURIComponent(m.id)}/verlauf?anzahl=30`, hintergrund ? HINTERGRUND : {})).json();
   $('details-verlauf').replaceChildren(...verlauf.map((e) => {
     const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.ende ?? e.beginn)} – ${e.zusammenfassung}` }));
     li.dataset.status = e.status;
@@ -237,7 +240,7 @@ function modulUpdateZeigen(st) {
 
 async function modulUpdateLaden(id, nachVorgang = false) {
   if (offenesModul !== id) return;
-  const antwort = await api(`/api/module/${encodeURIComponent(id)}/update`).catch(() => null);
+  const antwort = await api(`/api/module/${encodeURIComponent(id)}/update`, nachVorgang ? HINTERGRUND : {}).catch(() => null);
   if (!antwort?.ok || offenesModul !== id) return;
   const st = await antwort.json();
   modulUpdateZeigen(st);
@@ -288,8 +291,38 @@ function detailsOeffnen(id) {
   offenesModul = id;
   aktionMeldung('');
   detailsFuellen(m);
+  empfaengerLaden(m);
   if (!$('details').open) $('details').showModal();
 }
+
+// Zusätzliche Mail-Empfänger je Modul (nur Admins).
+const empfMeldung = (text, art = '') => { $('empf-meldung').textContent = text; $('empf-meldung').dataset.art = art; };
+async function empfaengerLaden(m) {
+  $('empf').hidden = !istAdmin || Boolean(m.fehler);
+  if ($('empf').hidden) return;
+  empfMeldung('');
+  $('empf-wert').value = '';
+  const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/empfaenger`).catch(() => null);
+  if (!antwort?.ok || offenesModul !== m.id) return;
+  const d = await antwort.json();
+  $('empf-wert').value = d.empfaenger.join(', ');
+  $('empf-allgemein').textContent = d.allgemein.length ? `Immer: ${d.allgemein.join(', ')}` : 'Noch keine allgemeinen Empfänger eingerichtet.';
+  if (!d.aktiv) empfMeldung('Die Benachrichtigung ist noch nicht eingerichtet oder ausgeschaltet (oben unter „Benachrichtigung“).', 'warnung');
+}
+$('empf-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const id = offenesModul;
+  if (!id) return;
+  empfMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt([$('empf-speichern')], empfMeldung, async () => {
+    const antwort = await senden(`/api/module/${encodeURIComponent(id)}/empfaenger`, { empfaenger: $('empf-wert').value });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  if (!ergebnis.antwort.ok) { empfMeldung(ergebnis.daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
+  $('empf-wert').value = ergebnis.daten.empfaenger.join(', ');
+  empfMeldung(ergebnis.daten.empfaenger.length ? 'Gespeichert.' : 'Gespeichert – keine zusätzlichen Empfänger.', 'ok');
+});
 
 // ---- Moduleinstellungen (nur Admins) ----
 let einstModul = null;
@@ -398,7 +431,7 @@ $('einst-abbrechen').addEventListener('click', () => $('einstellungen').close())
 // ---- Benachrichtigung (nur Admins) ----
 const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link'];
 const benMeldung = (text, art = '') => { $('ben-meldung').textContent = text; $('ben-meldung').dataset.art = art; };
-const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail' };
+const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail', sicherheit: 'Sicherheit' };
 
 function benZeigen(daten) {
   const w = daten.werte;
@@ -476,11 +509,27 @@ function bvZeigen(daten) {
         }
         bvAktion(`/api/benutzer/${b.name}/loeschen`, {}, [loeschen], `Benutzer ${b.name} gelöscht.`);
       });
-      zelle.append(admin, loeschen);
+      zelle.append(admin);
+      if (b.zweiFaktor) {
+        // Zweimal klicken wie beim Löschen; der Benutzer richtet die App beim nächsten Anmelden neu ein.
+        const zf = el('button', { type: 'button', className: 'zweitrangig', textContent: '2FA zurücksetzen' });
+        zf.addEventListener('click', () => {
+          if (zf.dataset.sicher !== '1') {
+            zf.dataset.sicher = '1';
+            zf.textContent = `2FA von ${b.name} wirklich zurücksetzen?`;
+            setTimeout(() => { zf.dataset.sicher = ''; zf.textContent = '2FA zurücksetzen'; }, 5000);
+            return;
+          }
+          bvAktion(`/api/benutzer/${b.name}/zweifaktor-zuruecksetzen`, {}, [zf], `Zwei-Faktor-Anmeldung von ${b.name} zurückgesetzt. Beim nächsten Anmelden (im Firmennetz oder über VPN) wird sie neu eingerichtet.`);
+        });
+        zelle.append(zf);
+      }
+      zelle.append(loeschen);
     } else {
       zelle.append(el('span', { className: 'leise', textContent: 'eigenes Konto' }));
     }
     return el('tr', {}, el('td', { textContent: b.name }), el('td', { textContent: b.admin ? 'Admin' : 'Benutzer' }),
+      el('td', { textContent: b.zweiFaktor ? 'eingerichtet' : 'beim nächsten Anmelden' }),
       el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), zelle);
   }));
   const auswahl = $('bv-setzen-name');
@@ -791,7 +840,7 @@ $('beenden-ja').addEventListener('click', async () => {
   clearInterval(aktualisierer);
   $('beenden').close();
   $('details').close();
-  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen', 'benutzerverwaltung-oeffnen', 'passwort-oeffnen']) $(id).hidden = true;
+  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen', 'benutzerverwaltung-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
   for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
   $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
   $('beendet-seite').hidden = false;

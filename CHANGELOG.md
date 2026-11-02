@@ -1,5 +1,37 @@
 # Änderungen
 
+## 0.11.0
+
+Absicherung der Anmeldung – unabhängig davon, ob die Basis intern, über VPN oder von außen erreicht wird.
+
+### Neu
+
+- **Zwei-Faktor-Anmeldung, Pflicht für alle:** Nach dem Passwort ein Code aus einer Authenticator-App (TOTP, RFC 6238; Microsoft/Google Authenticator u. a.). Einrichtung beim ersten Anmelden mit QR-Code – nur aus dem Firmennetz oder über VPN (`admin_netze`) – danach 10 einmalige Wiederherstellungscodes (gespeichert nur als Hash). Jeder Code gilt nur einmal. 5 falsche Codes in 15 Minuten sperren die Zwei-Faktor-Anmeldung des Benutzers; ein richtiges Passwort hebt das nicht auf, und es kommt eine Sicherheitsmail (Passwort vermutlich bekannt). Ebenso eine Mail bei Anmeldung mit Wiederherstellungscode.
+- **2FA zurücksetzen:** Admins können unter „Benutzer“ die Zwei-Faktor-Anmeldung eines anderen Benutzers zurücksetzen (Spalte „Zwei-Faktor“ zeigt den Stand). Notfall auf dem Server: `--zwei-faktor-zuruecksetzen <Name>`.
+- **Empfänger je Modul:** In den Details eines Moduls (Admins) zusätzliche Mail-Empfänger eintragen. Sie bekommen die Mails dieses Moduls zusätzlich zu den allgemeinen Empfängern.
+- **Admin-Funktionen nur aus dem Firmennetz/VPN** (`admin_netze` in `config.json`, Standard: private Adressen). Von außen gilt ein Admin als normaler Benutzer; die Oberfläche zeigt „Admin nur intern/VPN“.
+- **Sperre je Benutzername** (10 Fehlversuche, 15 Minuten) zusätzlich zur Sperre je Adresse – gegen Raten von vielen Adressen aus.
+- **Sicherheitsmails:** bei gesperrter Anmeldung und bei Admin-Anmeldung von einer neuen Adresse (gedrosselt auf eine Mail je Art und 15 Minuten).
+- **Leerlauf-Abmeldung:** Sitzungen enden nach 30 Minuten ohne Aktion (`sitzung_leerlauf_minuten`); das automatische Nachladen zählt nicht als Aktion. Hinweis „Sitzung abgelaufen“ auf der Anmeldeseite.
+
+### Geändert
+
+- **Passwort-Hashes nach OWASP** (scrypt N=2^17 statt 2^14). Vorhandene Hashes gelten weiter und werden bei der nächsten Anmeldung automatisch erneuert.
+- **Passwortregeln** für neue Passwörter: mindestens 12 Zeichen, ohne Benutzernamen, nicht überwiegend aus Allerweltswörtern. Bestehende Passwörter bleiben gültig. Gilt auch für `--benutzer-anlegen`.
+- Höchstens 2 Passwortprüfungen gleichzeitig, bei mehr als 20 wartenden Anmeldungen sofortige Ablehnung („zu viele Anmeldeversuche“). Listen der Fehlversuche begrenzt.
+- Höchstdauer einer Sitzung jetzt standardmäßig 8 statt 12 Stunden (`sitzung_stunden`; ein vorhandener Wert in `config.json` gilt weiter).
+- Liste „Angemeldet“: „Zuletzt aktiv“ ist die letzte Aktion, „Sitzung endet“ berücksichtigt den Leerlauf.
+- `--benutzer-anlegen` für einen vorhandenen Benutzer (Passwortwechsel) behält dessen Zwei-Faktor-Anmeldung.
+
+### Hinweis zum Update
+
+Nach dem Update muss **jeder Benutzer bei der nächsten Anmeldung die Authenticator-App einrichten** – dafür einmal im Firmennetz oder über VPN anmelden. Bestehende Sitzungen enden mit dem Neustart der Basis ohnehin.
+
+### Prüfung
+
+- `npm test`: 118 Tests, neu u. a. TOTP-Testvektoren aus RFC 6238, Zeitfenster und Wiederverwendung, Wiederherstellungscodes (einmalig, auch bei gleichzeitigen Anfragen), Sperre nach falschen Codes, Einrichtung nur intern, Zurücksetzen (Oberfläche und Kommandozeile), vollständiger Ablauf über HTTPS; Passwortregeln, Hash-Erneuerung bei Anmeldung, Sperre je Benutzer über viele Adressen, begrenzte Listen, Überlast, Leerlauf mit und ohne Hintergrund-Abfragen, Admin-Netze (IPv4/IPv6, ::ffff:), Sicherheitsmails mit Drosselung, Empfänger je Modul; Gegenprobe mit absichtlich entfernten Schutzregeln.
+- Browsertest mit echter Basis: Zwei-Faktor einrichten (QR-Code mit einem Decoder gegengeprüft), Wiederherstellungscodes, Anmeldung mit Code am Handy (dunkel), Spalte „Zwei-Faktor“ unter Benutzer; Empfänger je Modul speichern (auch ungültige Eingabe), schwaches Passwort abgewiesen, Hash nach Anmeldung erneuert, Admin von außerhalb der Admin-Netze ohne Admin-Knöpfe mit Hinweis.
+
 ## 0.10.0
 
 ### Neu

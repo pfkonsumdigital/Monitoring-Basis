@@ -100,9 +100,11 @@ Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 | `host` | Netzwerkadresse, auf der gelauscht wird. `0.0.0.0` bedeutet alle Netzwerkkarten. | `0.0.0.0` |
 | `module_ordner`, `daten_ordner` | Ordner, relativ zur config.json | `modules`, `data` |
 | `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `1000` |
-| `sitzung_stunden` | Dauer, bis eine erneute Anmeldung nötig ist | `12` |
+| `sitzung_stunden` | Höchstdauer einer Sitzung, danach ist eine neue Anmeldung nötig | `8` |
+| `sitzung_leerlauf_minuten` | Abmeldung nach so vielen Minuten ohne Aktion (das automatische Nachladen zählt nicht) | `30` |
+| `admin_netze` | Netze, aus denen Admin-Funktionen und das Einrichten der Zwei-Faktor-Anmeldung erlaubt sind (Firmennetz und VPN), z. B. `["192.168.100.0/24", "192.168.10.0/24", "127.0.0.0/8", "::1/128"]`; `["*"]` = überall | alle privaten Adressen |
 | `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, sonst Zertifikat, siehe unten | – |
-| `benutzer` | wird in der Oberfläche unter **Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin | – |
+| `benutzer` | wird in der Oberfläche unter **Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
 | `updates` | optional, siehe „Updates“ | aus |
 
 `config.json` enthält Passwort-Hashes und gegebenenfalls Tokens. Die Datei
@@ -479,6 +481,10 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
 | Modul ist wieder OK | `[Monitoring] WIEDER OK: <Modul>` |
 | Problem besteht weiter (Abstand einstellbar, Standard 4 h) | `[Monitoring] ERINNERUNG: <Modul> – Fehler seit 6 h` |
 | Ein Admin beendet die Basis über die Oberfläche | `[Monitoring] Basis beendet durch <Benutzer>` |
+| Anmeldung nach Fehlversuchen gesperrt (je Adresse oder je Benutzer) | `[Monitoring] Sicherheit: Anmeldung gesperrt` |
+| Ein Admin meldet sich von einer für ihn neuen Adresse an | `[Monitoring] Sicherheit: Admin-Anmeldung von neuer Adresse (<Benutzer>)` |
+| Mehrere falsche Zwei-Faktor-Codes nach richtigem Passwort (Passwort vermutlich bekannt) | `[Monitoring] Sicherheit: falsche Zwei-Faktor-Codes (<Benutzer>)` |
+| Anmeldung mit einem Wiederherstellungscode | `[Monitoring] Sicherheit: Anmeldung mit Wiederherstellungscode (<Benutzer>)` |
 
 - Gemeldet wird nur der **Wechsel**, nicht jeder weitere fehlerhafte Lauf.
 - **Melden nach … Läufen** (Standard 1 = sofort): erst melden, wenn Fehler
@@ -488,6 +494,13 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
   Modul wird gespeichert – ein Neustart der Basis verschickt nichts doppelt.
 - Schlägt der Versand fehl, steht das im Fehlerprotokoll; die Basis versucht
   es alle 5 Minuten erneut.
+- **Empfänger je Modul:** In den Details eines Moduls unter „Benachrichtigung
+  für dieses Modul“ zusätzliche Empfänger eintragen. Sie bekommen die Mails
+  dieses Moduls **zusätzlich** zu den allgemeinen Empfängern (doppelte Adressen
+  nur einmal).
+- Sicherheitsmails gehen an die allgemeinen Empfänger, höchstens eine je Art
+  und 15 Minuten; weitere Ereignisse stehen gezählt in der nächsten Mail und
+  einzeln im Protokoll.
 
 ### Einrichten
 
@@ -662,21 +675,81 @@ geht alles in der Oberfläche:
   dem bisherigen Passwort als Bestätigung. Falsche Eingaben zählen wie
   Fehlversuche bei der Anmeldung. Andere Sitzungen mit diesem Konto enden.
 
-Passwörter: mindestens 10, höchstens 200 Zeichen. Gespeichert wird in
+Passwörter für neue Konten und Passwortwechsel: mindestens 12, höchstens 200
+Zeichen, ohne den Benutzernamen und nicht überwiegend aus Allerweltswörtern
+(„Passwort“, „Sommer“, „123456“, „Monitoring“ …). Am besten ein Satz oder
+mehrere zufällige Wörter. Bestehende Passwörter gelten weiter. Gespeichert wird in
 `config.json` (nur scrypt-Hashes), ohne Neustart. Vorher legt die Basis eine
 Sicherung `config.json.vor-benutzeraenderung.json` an. Jede Änderung steht im
 Protokoll („Benutzer bob angelegt durch anna.“), Passwörter nie.
 
+### Zwei-Faktor-Anmeldung (Pflicht für alle)
+
+Nach dem Passwort fragt die Basis einen 6-stelligen Code aus einer
+Authenticator-App ab (Microsoft Authenticator, Google Authenticator, 1Password …;
+Verfahren TOTP nach RFC 6238, 30 Sekunden).
+
+- **Einrichten:** Bei der ersten Anmeldung nach dem Update – und bei jedem neuen
+  Benutzer – zeigt die Basis einen QR-Code. Mit der App scannen (oder den
+  Schlüssel abtippen), den Code eingeben, fertig. Danach zeigt sie **10
+  Wiederherstellungscodes** einmalig an: notieren oder ausdrucken und sicher
+  aufbewahren, nicht auf dem Handy. Jeder Code gilt nur einmal.
+- Einrichten geht **nur aus dem Firmennetz oder über VPN** (`admin_netze`). Wer
+  das Passwort eines noch nicht eingerichteten Kontos von außen kennt, kann so
+  keine eigene App hinterlegen. Ist die App eingerichtet, geht die Anmeldung
+  auch von außen.
+- Für Code und Einrichtung bleiben 5 bzw. 10 Minuten. Jeder Code aus der App
+  gilt nur einmal (auch nicht zweimal innerhalb seiner 30 Sekunden); die Uhr des
+  Handys darf etwa 30 Sekunden abweichen.
+- **5 falsche Codes in 15 Minuten** sperren die Zwei-Faktor-Anmeldung dieses
+  Benutzers für 15 Minuten – auch ein erneut richtig eingegebenes Passwort hebt
+  das nicht auf. Da das Passwort dabei richtig war, kommt eine Sicherheitsmail:
+  Passwort sofort ändern, wenn man es nicht selbst war.
+- **Handy verloren:** mit einem Wiederherstellungscode anmelden (es kommt eine
+  Sicherheitsmail) und einen anderen Admin bitten, unter **Benutzer** auf
+  **2FA zurücksetzen** zu klicken (zweimal). Die Sitzungen des Benutzers enden;
+  bei der nächsten Anmeldung im Firmennetz/VPN richtet er die App neu ein. Die
+  eigene Zwei-Faktor-Anmeldung kann man nicht selbst zurücksetzen.
+- **Notfall** (z. B. Handy des einzigen Admins weg, keine Codes mehr): auf dem
+  Worker in PowerShell (als Administrator) im Programmordner
+
+  ```powershell
+  .\runtime\node.exe basis\main.js --zwei-faktor-zuruecksetzen <Name>
+  .\Start.exe --neustart
+  ```
+
+  Bei der nächsten Anmeldung richtet der Benutzer die App neu ein.
+- Ein Passwortwechsel lässt die Zwei-Faktor-Anmeldung bestehen.
+- Gespeichert wird in `config.json` beim Benutzer unter `zwei_faktor`: der
+  Schlüssel der App und die Wiederherstellungscodes nur als SHA-256-Hash. Der
+  Schlüssel muss lesbar sein, um Codes zu prüfen – ein Grund mehr, `config.json`
+  per Dateirechten zu schützen.
+
 ## Sicherheit
 
+- **Zwei-Faktor-Anmeldung für alle** (siehe oben).
 - Nur HTTPS (TLS 1.2 oder neuer), HSTS, strenge Content-Security-Policy.
-- Passwörter als scrypt-Hash. Sitzungscookie `HttpOnly`, `Secure`,
-  `SameSite=Strict`.
-- 5 Fehlversuche je Adresse führen zu 15 Minuten Sperre.
+- Passwörter als scrypt-Hash nach OWASP-Empfehlung (N=2^17, r=8, p=1). Ältere,
+  schwächere Hashes werden bei der nächsten Anmeldung automatisch erneuert.
+  Sitzungscookie `HttpOnly`, `Secure`, `SameSite=Strict`.
+- Sperren nach Fehlversuchen, je 15 Minuten: **5 je Adresse** und **10 je
+  Benutzername** (gegen Raten von vielen Adressen aus). Die Listen sind begrenzt.
+  Höchstens 2 Passwortprüfungen laufen gleichzeitig; bei mehr als 20 wartenden
+  Anmeldungen wird sofort abgewiesen – viele Anmeldeversuche bremsen die Basis
+  so nicht aus. Sperren melden sich per Mail (siehe „Benachrichtigung“).
+- Admin-Anmeldung von einer für den Admin neuen Adresse: Mail an die
+  Empfänger. Bekannte Adressen stehen in `data\anmeldeorte.json`.
+- **Admin-Funktionen nur aus dem Firmennetz/VPN** (`admin_netze`, Standard:
+  private Adressen). Von außen sieht ein Admin nur, was ein normaler Benutzer
+  sieht, oben steht „Admin nur intern/VPN“. Achtung: Steht ein Reverse Proxy
+  vor der Basis, sieht sie dessen (interne) Adresse – dann `admin_netze` auf das
+  echte Firmen- und VPN-Netz beschränken, ohne die Adresse des Proxys. Eine
+  Portweiterleitung (DNAT) der Securepoint behält die echte Adresse.
+- Sitzungen enden nach 30 Minuten ohne Aktion und spätestens nach 8 Stunden
+  (einstellbar). Sie liegen im Speicher; nach einem Neustart der Basis ist eine
+  erneute Anmeldung nötig.
 - Aktionen nur mit passender Herkunft und eigenem Anfragekopf (Schutz vor
   CSRF).
-- Sitzungen liegen im Speicher. Nach einem Neustart der Basis ist eine
-  erneute Anmeldung nötig.
 
 ## Entwicklung
 

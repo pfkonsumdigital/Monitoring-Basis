@@ -7,7 +7,7 @@ import { Writable } from 'node:stream';
 import { parseArgs } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { BasisFehler } from './fehler.js';
-import { ladeKonfiguration } from './konfiguration.js';
+import { adminNetzPruefer, ladeKonfiguration } from './konfiguration.js';
 import { ladeModule } from './module.js';
 import { fuehreAus } from './ausfuehrung.js';
 import { Ergebnisspeicher } from './speicher.js';
@@ -16,7 +16,8 @@ import { Modulverwaltung } from './modulverwaltung.js';
 import { Benachrichtigung } from './benachrichtigung.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
-import { Benutzerverwaltung } from './benutzerverwaltung.js';
+import { Benutzerverwaltung, passwortRegelFehler } from './benutzerverwaltung.js';
+import { Sicherheitsmeldungen } from './sicherheit.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
@@ -30,6 +31,9 @@ node basis/main.js [--config <Datei>]            Basis starten
 node start.js                                    Basis über den Starter (empfohlen, nötig für Updates)
 node basis/main.js --benutzer-anlegen <Name> [--admin]
                                                  Benutzer anlegen oder Passwort ändern
+node basis/main.js --zwei-faktor-zuruecksetzen <Name>
+                                                 Zwei-Faktor-Anmeldung zurücksetzen (Notfall, z. B. Handy
+                                                 des letzten Admins verloren); danach Basis neu starten
 node basis/main.js --zertifikat                  Let's-Encrypt-Zertifikat jetzt holen/erneuern
 node basis/main.js --module-pruefen              Module auflisten und prüfen
 node basis/main.js --selbsttest                  Konfiguration, Module und Programmdateien prüfen
@@ -54,21 +58,42 @@ function verdeckteFragen(fragen) {
   });
 }
 
-async function benutzerAnlegen(configDatei, name, admin) {
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) throw new BasisFehler('Benutzername: nur Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich (max. 64).');
-  await ladeKonfiguration(configDatei);
-  const roh = JSON.parse((await readFile(configDatei, 'utf8')).replace(/^﻿/, ''));
-  const [passwort, wiederholung] = await verdeckteFragen([`Neues Passwort für ${name} (mind. 10 Zeichen): `, 'Passwort wiederholen: ']);
-  if (passwort !== wiederholung) throw new BasisFehler('Die Passwörter stimmen nicht überein.');
-  let hash;
-  try { hash = await hashPasswort(passwort); } catch (f) { throw new BasisFehler(f.message); }
-  // Ohne --admin bleibt ein bestehendes Admin-Recht erhalten (z. B. beim Passwortwechsel).
-  const istAdmin = admin || roh.benutzer?.[name]?.admin === true;
-  roh.benutzer = { ...(roh.benutzer ?? {}), [name]: { hash, ...(istAdmin ? { admin: true } : {}) } };
+async function configSchreiben(configDatei, roh) {
   await copyFile(configDatei, `${configDatei}.backup-${randomUUID()}.json`);
   const temp = `${configDatei}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(roh, null, 2) + '\n', { mode: 0o600 });
   await rename(temp, configDatei);
+}
+
+// Notfall auf dem Server: Zwei-Faktor-Anmeldung eines Benutzers entfernen. Bei der nächsten Anmeldung (Firmennetz/VPN)
+// richtet er sie neu ein. Bewusst ohne Prüfung der Konfiguration – auch eine beschädigte Angabe lässt sich so entfernen.
+async function zweiFaktorZuruecksetzen(configDatei, name) {
+  let roh;
+  try { roh = JSON.parse((await readFile(configDatei, 'utf8')).replace(/^﻿/, '')); }
+  catch (f) { throw new BasisFehler(f.code === 'ENOENT' ? `Konfiguration nicht gefunden: ${configDatei}.` : 'config.json ist kein gültiges JSON.'); }
+  if (!roh?.benutzer || !Object.hasOwn(roh.benutzer, name)) throw new BasisFehler(`Den Benutzer „${name}“ gibt es nicht.`);
+  if (!roh.benutzer[name].zwei_faktor) { console.log(`${name} hat keine Zwei-Faktor-Anmeldung eingerichtet.`); return; }
+  delete roh.benutzer[name].zwei_faktor;
+  await configSchreiben(configDatei, roh);
+  console.log(`Zwei-Faktor-Anmeldung von ${name} zurückgesetzt. Bitte die Basis neu starten; bei der nächsten Anmeldung (im Firmennetz oder über VPN) wird sie neu eingerichtet.`);
+}
+
+async function benutzerAnlegen(configDatei, name, admin) {
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) throw new BasisFehler('Benutzername: nur Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich (max. 64).');
+  await ladeKonfiguration(configDatei);
+  const roh = JSON.parse((await readFile(configDatei, 'utf8')).replace(/^﻿/, ''));
+  const [passwort, wiederholung] = await verdeckteFragen([`Neues Passwort für ${name} (mind. 12 Zeichen): `, 'Passwort wiederholen: ']);
+  if (passwort !== wiederholung) throw new BasisFehler('Die Passwörter stimmen nicht überein.');
+  const regel = passwortRegelFehler(name, passwort);
+  if (regel) throw new BasisFehler(regel);
+  let hash;
+  try { hash = await hashPasswort(passwort); } catch (f) { throw new BasisFehler(f.message); }
+  // Ohne --admin bleibt ein bestehendes Admin-Recht erhalten (z. B. beim Passwortwechsel).
+  const istAdmin = admin || roh.benutzer?.[name]?.admin === true;
+  // Eine eingerichtete Zwei-Faktor-Anmeldung bleibt beim Passwortwechsel erhalten.
+  const zf = roh.benutzer?.[name]?.zwei_faktor;
+  roh.benutzer = { ...(roh.benutzer ?? {}), [name]: { hash, ...(istAdmin ? { admin: true } : {}), ...(zf ? { zwei_faktor: zf } : {}) } };
+  await configSchreiben(configDatei, roh);
   console.log(`Benutzer ${name}${istAdmin ? ' (Admin)' : ''} gespeichert. Eine laufende Basis übernimmt die Änderung nach einem Neustart oder bei der nächsten Änderung in der Oberfläche (Benutzer).`);
 }
 
@@ -93,7 +118,19 @@ async function starten(konfig, configDatei, protokoll) {
     geheimnisse: protokoll.geheimnisse, log,
   });
   await module.start();
-  const anmeldung = new Anmeldung({ benutzer: konfig.benutzer, sitzungMs: konfig.sitzungMs });
+  const adminNetz = adminNetzPruefer(konfig.adminNetze);
+  const sicherheit = new Sicherheitsmeldungen({ datenOrdner: konfig.datenOrdner, benachrichtigung, log });
+  await sicherheit.laden();
+  const anmeldung = new Anmeldung({
+    benutzer: konfig.benutzer, sitzungMs: konfig.sitzungMs, leerlaufMs: konfig.leerlaufMs,
+    melden: (e) => sicherheit.ereignis(e),
+    hashErneuern: (name, passwort) => benutzerverwaltung.hashErneuern(name, passwort),
+    // Zwei-Faktor-Anmeldung ist für alle Pflicht; eingerichtet wird sie nur aus dem Firmennetz/VPN (admin_netze).
+    zweiFaktor: true,
+    einrichtenErlaubt: (adresse) => adminNetz(adresse),
+    zweiFaktorSpeichern: (name, geheimnis, codes) => { protokoll.geheimnisse.push(geheimnis); return benutzerverwaltung.zweiFaktorSpeichern(name, geheimnis, codes); },
+    codeVerbraucht: (name, hash) => benutzerverwaltung.codeVerbrauchen(name, hash),
+  });
   const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, log });
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
@@ -117,7 +154,7 @@ async function starten(konfig, configDatei, protokoll) {
   await updates.starten();
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -159,12 +196,13 @@ async function starten(konfig, configDatei, protokoll) {
 export async function main(args = process.argv.slice(2)) {
   try {
     const { values } = parseArgs({ args, options: {
-      config: { type: 'string' }, 'benutzer-anlegen': { type: 'string' },
+      config: { type: 'string' }, 'benutzer-anlegen': { type: 'string' }, 'zwei-faktor-zuruecksetzen': { type: 'string' },
       zertifikat: { type: 'boolean' }, 'module-pruefen': { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
       admin: { type: 'boolean' }, selbsttest: { type: 'boolean' },
     } });
     if (values.help) { console.log(HILFE); return 0; }
     const configDatei = path.resolve(values.config ?? path.join(APP_ORDNER, 'config.json'));
+    if (values['zwei-faktor-zuruecksetzen'] !== undefined) { await zweiFaktorZuruecksetzen(configDatei, values['zwei-faktor-zuruecksetzen']); return 0; }
     if (values['benutzer-anlegen'] !== undefined) { await benutzerAnlegen(configDatei, values['benutzer-anlegen'], values.admin === true); return 0; }
 
     const konfig = await ladeKonfiguration(configDatei);
@@ -177,7 +215,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     const protokoll = new Protokoll({
       ordner: path.join(path.dirname(configDatei), 'logs'),
-      geheimnisse: [konfig.tls.cloudflareToken, konfig.tls.hetznerToken, konfig.updates?.githubToken, ...Object.values(konfig.benutzer).map((b) => b.hash)],
+      geheimnisse: [konfig.tls.cloudflareToken, konfig.tls.hetznerToken, konfig.updates?.githubToken, ...Object.values(konfig.benutzer).flatMap((b) => [b.hash, b.zwei_faktor?.geheimnis])],
     });
     const log = protokoll.alsFunktion();
     // Unerwartete Fehler festhalten. Bei einer nicht abgefangenen Ausnahme beendet sich die Basis;

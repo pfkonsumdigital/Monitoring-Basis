@@ -126,6 +126,7 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .upd-meldung:empty { display: none; }
 .upd-meldung[data-art="fehler"] { color: var(--fehler); }
 .upd-meldung[data-art="ok"] { color: var(--ok); }
+.upd-meldung[data-art="warnung"] { color: var(--warnung); }
 .bestaetigen { border: 1px solid var(--warnung); background: var(--warnung-flaeche); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
 .bestaetigen p { margin: 0 0 8px; }
 #updates .aktionen { flex-wrap: wrap; margin-top: 12px; }
@@ -189,3 +190,14 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 #updates .felder { margin-top: 4px; }
 .bv-tabelle td { padding-right: 14px; }
 .bv-tabelle td.aktionen-zelle { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Zwei-Faktor-Anmeldung */
+.zf-karte { width: min(440px, 100%); }
+.zf-karte ol { padding-left: 20px; margin: 0 0 16px; display: grid; gap: 8px; }
+.zf-qr { display: block; margin: 8px auto; width: 220px; max-width: 100%; height: auto; image-rendering: pixelated; background: #fff; border-radius: 6px; }
+.zf-geheimnis { display: block; font-family: ui-monospace, Consolas, monospace; font-size: 0.95em; letter-spacing: 0.04em; overflow-wrap: anywhere; background: var(--hintergrund); border: 1px solid var(--rand); border-radius: 6px; padding: 6px 8px; user-select: all; }
+.zf-codes { columns: 2; list-style: none; padding: 0; font-family: ui-monospace, Consolas, monospace; font-size: 1.05em; margin: 12px 0; }
+.zf-codes li { padding: 3px 0; }
+.zf-hinweis { color: var(--leise); font-size: 0.9em; }
+.zf-warnung { color: var(--warnung); }
+.zf-karte .knopf-link { display: inline-block; margin-top: 8px; }
+.zf-abbrechen { display: inline-block; margin-top: 12px; font-size: 0.9em; color: var(--leise); }

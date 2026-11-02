@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { melde } from './protokoll.js';
 import { Benutzerfehler, BenutzerUnbekannt } from './benutzerverwaltung.js';
+import { otpauthUri, qrBild } from './zweifaktor.js';
 
 const OEFFENTLICH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'oberflaeche');
 const DATEIEN = {
@@ -21,6 +22,17 @@ const SICHERHEIT = {
   'Cache-Control': 'no-store',
 };
 const COOKIE = 'mb_sitzung';
+const COOKIE_2FA = 'mb_2fa';
+const html = (t) => String(t).replace(/[&<>"']/g, (z) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[z]);
+const LOGIN_MELDUNGEN = {
+  '1': 'Benutzername oder Passwort falsch.',
+  gesperrt: 'Zu viele Fehlversuche. Bitte 15 Minuten warten.',
+  ueberlastet: 'Gerade laufen zu viele Anmeldeversuche. Bitte gleich noch einmal versuchen.',
+  update: 'Die Basis wurde neu gestartet. Bitte erneut anmelden.',
+  abgelaufen: 'Die Sitzung ist abgelaufen. Bitte erneut anmelden.',
+  'zf-abgelaufen': 'Die Zeit für den Bestätigungscode ist abgelaufen. Bitte erneut anmelden.',
+  'einrichten-extern': 'Die Zwei-Faktor-Anmeldung muss einmalig im Firmennetz oder über VPN eingerichtet werden. Danach geht die Anmeldung auch von außen.',
+};
 
 function senden(res, status, inhalt, typ = 'text/plain; charset=utf-8', kopf = {}) {
   res.writeHead(status, { ...SICHERHEIT, 'Content-Type': typ, ...kopf });
@@ -29,10 +41,10 @@ function senden(res, status, inhalt, typ = 'text/plain; charset=utf-8', kopf = {
 const json = (res, status, wert) => senden(res, status, JSON.stringify(wert), 'application/json; charset=utf-8');
 const weiter = (res, ziel, kopf = {}) => { res.writeHead(303, { ...SICHERHEIT, Location: ziel, ...kopf }); res.end(); };
 
-function cookieLesen(req) {
+function cookieLesen(req, gesucht = COOKIE) {
   for (const teil of (req.headers.cookie || '').split(';')) {
     const [name, ...wert] = teil.trim().split('=');
-    if (name === COOKIE) return wert.join('=');
+    if (name === gesucht) return wert.join('=');
   }
   return null;
 }
@@ -63,7 +75,8 @@ export function istInterneAdresse(adresse) {
 
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
-export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, log = () => {} }) {
+// adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
+export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -95,26 +108,94 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
       }
 
       if (weg === '/login' && req.method === 'GET') {
-        const meldung = { '1': 'Benutzername oder Passwort falsch.', gesperrt: 'Zu viele Fehlversuche. Bitte 15 Minuten warten.', update: 'Die Basis wurde neu gestartet. Bitte erneut anmelden.' }[url.searchParams.get('fehler')] ?? '';
-        const html = (await seite('login.html')).replace('{{meldung}}', meldung);
-        return senden(res, 200, html, 'text/html; charset=utf-8');
+        const meldung = LOGIN_MELDUNGEN[url.searchParams.get('fehler')] ?? '';
+        const seiteHtml = (await seite('login.html')).replace('{{meldung}}', meldung);
+        return senden(res, 200, seiteHtml, 'text/html; charset=utf-8');
       }
+      const sitzungCookie = (wert) => `${COOKIE}=${wert}; Path=/; HttpOnly;${sicher} SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}`;
+      const schrittCookie = (wert, sekunden) => `${COOKIE_2FA}=${wert}; Path=/login; HttpOnly;${sicher} SameSite=Strict; Max-Age=${sekunden}`;
       if (weg === '/login' && req.method === 'POST') {
         if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
         const felder = new URLSearchParams(await koerperLesen(req));
+        const name = String(felder.get('benutzer') ?? '').slice(0, 64);
         const ergebnis = await anmeldung.anmelden(felder.get('benutzer') ?? '', felder.get('passwort') ?? '', req.socket.remoteAddress);
-        if (ergebnis === 'gesperrt') { melde(log, 'warnung', 'Anmeldung', `Anmeldung nach zu vielen Fehlversuchen gesperrt (Adresse ${req.socket.remoteAddress}, Benutzer ${JSON.stringify(String(felder.get('benutzer') ?? '').slice(0, 64))}).`); return weiter(res, '/login?fehler=gesperrt'); }
+        if (ergebnis === 'ueberlastet') { melde(log, 'warnung', 'Anmeldung', `Anmeldung abgewiesen: zu viele gleichzeitige Anmeldeversuche (Adresse ${req.socket.remoteAddress}).`); return weiter(res, '/login?fehler=ueberlastet'); }
+        if (ergebnis === 'gesperrt') { melde(log, 'warnung', 'Anmeldung', `Anmeldung nach zu vielen Fehlversuchen gesperrt (Adresse ${req.socket.remoteAddress}, Benutzer ${JSON.stringify(name)}).`); return weiter(res, '/login?fehler=gesperrt'); }
+        if (ergebnis === 'einrichten-extern') { melde(log, 'warnung', 'Anmeldung', `${name}: Zwei-Faktor-Einrichtung von außerhalb (${req.socket.remoteAddress}) abgewiesen.`); return weiter(res, '/login?fehler=einrichten-extern'); }
         if (!ergebnis) { log(`Fehlgeschlagene Anmeldung von ${req.socket.remoteAddress}.`); return weiter(res, '/login?fehler=1'); }
-        log(`Anmeldung: ${felder.get('benutzer')} von ${req.socket.remoteAddress}.`);
-        return weiter(res, '/', { 'Set-Cookie': `${COOKIE}=${ergebnis}; Path=/; HttpOnly;${sicher} SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}` });
+        if (typeof ergebnis === 'object') {
+          return weiter(res, '/login/2fa', { 'Set-Cookie': schrittCookie(ergebnis.zweiterSchritt, ergebnis.art === 'einrichten' ? 600 : 300) });
+        }
+        log(`Anmeldung: ${name} von ${req.socket.remoteAddress}.`);
+        return weiter(res, '/', { 'Set-Cookie': sitzungCookie(ergebnis) });
+      }
+
+      // Zweiter Schritt der Anmeldung: Code aus der App eingeben bzw. die App einrichten.
+      if (weg === '/login/2fa' && (req.method === 'GET' || req.method === 'POST')) {
+        const vToken = cookieLesen(req, COOKIE_2FA);
+        const schritt = anmeldung.schritt?.(vToken);
+        const loeschen = { 'Set-Cookie': schrittCookie('', 0) };
+        if (!schritt) return weiter(res, '/login?fehler=zf-abgelaufen', loeschen);
+        const zeigen = async (titel, inhalt, kopf = {}) => senden(res, 200, (await seite('zweifaktor.html')).replace(/\{\{titel\}\}/g, () => html(titel)).replace('{{inhalt}}', () => inhalt), 'text/html; charset=utf-8', kopf);
+        const weiterKnopf = '<a class="knopf-link" href="/">Weiter zur Übersicht</a>';
+        if (req.method === 'POST') {
+          if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
+          const felder = new URLSearchParams(await koerperLesen(req));
+          const r = await anmeldung.zweiterFaktor(vToken, felder.get('code') ?? '', req.socket.remoteAddress);
+          if (r.fehler === 'falsch') return weiter(res, '/login/2fa?fehler=1');
+          if (r.fehler === 'gesperrt') { melde(log, 'warnung', 'Anmeldung', `Zwei-Faktor-Anmeldung von ${schritt.benutzer} gesperrt (Adresse ${req.socket.remoteAddress}).`); return weiter(res, '/login?fehler=gesperrt', loeschen); }
+          if (r.fehler) return weiter(res, '/login?fehler=zf-abgelaufen', loeschen);
+          log(`Anmeldung: ${schritt.benutzer} von ${req.socket.remoteAddress} (zwei Faktoren${r.codes ? ', gerade eingerichtet' : r.wiederherstellung ? ', mit Wiederherstellungscode' : ''}).`);
+          const kopf = { 'Set-Cookie': [sitzungCookie(r.token), schrittCookie('', 0)] };
+          if (r.codes) {
+            return zeigen('Wiederherstellungscodes', `<p>Die Zwei-Faktor-Anmeldung ist eingerichtet.</p>
+  <p>Falls das Handy einmal fehlt, kann man sich mit einem dieser Codes anmelden. <strong>Jeder Code gilt nur einmal.</strong> Bitte jetzt notieren oder ausdrucken und sicher aufbewahren – nicht auf demselben Handy. Die Codes werden nur dieses eine Mal angezeigt.</p>
+  <ul class="zf-codes">${r.codes.map((c) => `<li>${html(c)}</li>`).join('')}</ul>
+  ${weiterKnopf}`, kopf);
+          }
+          if (r.wiederherstellung) {
+            return zeigen('Angemeldet', `<p class="zf-warnung">Angemeldet mit einem Wiederherstellungscode. Es sind noch ${r.uebrig} übrig.</p>
+  <p>Ist das Handy verloren oder die App gelöscht, bitte einen Admin bitten, die Zwei-Faktor-Anmeldung unter „Benutzer“ zurückzusetzen. Beim nächsten Anmelden wird sie dann neu eingerichtet.</p>
+  ${weiterKnopf}`, kopf);
+          }
+          return weiter(res, '/', kopf);
+        }
+        const fehler = url.searchParams.get('fehler') === '1' ? 'Der Code stimmt nicht. Bitte den aktuellen Code aus der App eingeben.' : '';
+        const formular = (hinweis) => `<p class="meldung" role="alert">${fehler}</p>
+  <form method="post" action="/login/2fa">
+    <label>${hinweis}<input name="code" autocomplete="one-time-code" required autofocus maxlength="20" spellcheck="false" autocapitalize="off"></label>
+    <button type="submit">Bestätigen</button>
+  </form>
+  <a class="zf-abbrechen" href="/login">Abbrechen</a>`;
+        if (schritt.art === 'einrichten') {
+          const uri = otpauthUri(schritt.benutzer, schritt.geheimnis, hostname ? `Monitoring (${hostname})` : 'Monitoring');
+          const gruppen = schritt.geheimnis.match(/.{1,4}/g).join(' ');
+          return zeigen('Zwei-Faktor-Anmeldung einrichten', `<p class="unterzeile">Für ${html(schritt.benutzer)} – einmalig, dauert eine Minute.</p>
+  <ol>
+    <li>Auf dem Handy eine Authenticator-App öffnen (z. B. Microsoft Authenticator, Google Authenticator) und ein Konto hinzufügen.</li>
+    <li>Diesen QR-Code scannen:<img class="zf-qr" src="${qrBild(uri)}" alt="QR-Code für die Authenticator-App">
+      <span class="zf-hinweis">Geht das Scannen nicht, den Schlüssel von Hand eingeben (zeitbasiert):</span>
+      <code class="zf-geheimnis">${html(gruppen)}</code></li>
+    <li>Den 6-stelligen Code aus der App hier eingeben.</li>
+  </ol>
+  ${formular('Code aus der App')}`);
+        }
+        return zeigen('Bestätigungscode', `<p class="unterzeile">Benutzer: ${html(schritt.benutzer)}</p>
+  ${formular('6-stelliger Code aus der Authenticator-App (oder ein Wiederherstellungscode)')}`);
       }
 
       const token = cookieLesen(req);
-      const sitzung = anmeldung.sitzung(token);
+      // Automatische Anfragen der Oberfläche (Kopf X-Monitor-Hintergrund) zählen nicht als Aktivität – sonst liefe
+      // die Leerlauf-Abmeldung bei offener Seite nie ab.
+      const sitzung = anmeldung.sitzung(token, { aktiv: req.headers['x-monitor-hintergrund'] !== '1' });
       if (!sitzung) {
         if (weg.startsWith('/api/')) return json(res, 401, { fehler: 'Nicht angemeldet.' });
         return weiter(res, '/login');
       }
+
+      // Admin-Rechte gelten nur aus dem Firmennetz/VPN (admin_netze); von außen ist ein Admin wie ein normaler Benutzer.
+      const istAdmin = sitzung.admin === true && adminNetz(req.socket.remoteAddress);
+      const adminNurIntern = sitzung.admin === true && !istAdmin;
 
       if (weg === '/logout' && req.method === 'POST') {
         if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
@@ -124,8 +205,8 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: sitzung.admin === true, neustartMoeglich: Boolean(sitzung.admin && neustart), beendenMoeglich: Boolean(sitzung.admin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(sitzung.admin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
-          module: module.ansichten().map((m) => (sitzung.admin && modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m)) });
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, adminNurIntern, neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
+          module: module.ansichten().map((m) => (istAdmin && modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m)) });
       }
       // Eigenes Passwort ändern (jeder angemeldete Benutzer, bisheriges Passwort nötig).
       if (weg === '/api/passwort') {
@@ -138,9 +219,9 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         return json(res, 200, { geaendert: true });
       }
       // Benutzerverwaltung (nur Admins): Liste und Sitzungen, anlegen, Passwort setzen, Admin-Recht, löschen.
-      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen))?$/.exec(weg);
+      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen|zweifaktor-zuruecksetzen))?$/.exec(weg);
       if (ben) {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!benutzerverwaltung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
         if (!ben[1] && req.method === 'GET') return json(res, 200, benutzerverwaltung.ansicht(token));
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
@@ -152,6 +233,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
           if (!ben[2]) await benutzerverwaltung.anlegen({ name: eingabe?.name, passwort: eingabe?.passwort, admin: eingabe?.admin === true }, sitzung.benutzer);
           else if (ben[2] === 'passwort') await benutzerverwaltung.passwortSetzen(name, eingabe?.passwort, sitzung.benutzer, token);
           else if (ben[2] === 'admin') await benutzerverwaltung.adminSetzen(name, eingabe?.admin, sitzung.benutzer);
+          else if (ben[2] === 'zweifaktor-zuruecksetzen') await benutzerverwaltung.zweiFaktorZuruecksetzen(name, sitzung.benutzer);
           else await benutzerverwaltung.loeschen(name, sitzung.benutzer);
         } catch (fehler) {
           if (fehler instanceof Benutzerfehler) return json(res, fehler instanceof BenutzerUnbekannt ? 404 : 400, { fehler: fehler.message, ...benutzerverwaltung.ansicht(token) });
@@ -160,7 +242,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         return json(res, 200, benutzerverwaltung.ansicht(token));
       }
       if (weg === '/api/beenden') {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         if (!beenden) return json(res, 409, { fehler: 'Beenden ist hier nicht möglich.' });
@@ -172,7 +254,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         return json(res, 202, { beendet: true });
       }
       if (weg === '/api/protokoll' || weg === '/api/protokoll/download' || weg === '/api/neustart') {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (weg === '/api/neustart') {
           if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
           if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
@@ -196,7 +278,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
       }
 
       if (weg === '/api/benachrichtigung' || weg === '/api/benachrichtigung/test') {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!benachrichtigung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
         if (weg === '/api/benachrichtigung' && req.method === 'GET') return json(res, 200, benachrichtigung.ansicht());
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
@@ -213,7 +295,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
       }
 
       if (weg.startsWith('/api/updates')) {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!updates) return json(res, 404, { fehler: 'Updates nicht verfügbar.' });
         if (weg === '/api/updates' && req.method === 'GET') return json(res, 200, updates.status());
         if (weg === '/api/updates/token' || weg === '/api/updates/token/pruefen') {
@@ -245,7 +327,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
 
       const upd = /^\/api\/module\/([a-z0-9-]+)\/update(?:\/(suchen|installieren|zurueck))?$/.exec(weg);
       if (upd) {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!modulupdates || !module.finde(upd[1])) return json(res, 404, { fehler: 'Modul unbekannt.' });
         if (!upd[2] && req.method === 'GET') return json(res, 200, await modulupdates.status(upd[1]));
         if (!upd[2] || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
@@ -264,7 +346,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         }
       }
 
-      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten)$/.exec(weg);
+      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten|empfaenger)$/.exec(weg);
       const modul = treffer && module.finde(treffer[1]);
       if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });
       if (treffer?.[2] === 'verlauf' && req.method === 'GET') {
@@ -280,7 +362,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         return json(res, 202, { gestartet: true });
       }
       if (treffer?.[2] === 'beenden' || treffer?.[2] === 'starten') {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
@@ -288,8 +370,20 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         if (!ergebnis) return json(res, 404, { fehler: 'Modul unbekannt.' });
         return json(res, ergebnis.fehler ? 409 : 200, ergebnis);
       }
+      // Zusätzliche Mail-Empfänger dieses Moduls (zu den allgemeinen Empfängern der Benachrichtigung).
+      if (treffer?.[2] === 'empfaenger') {
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
+        if (!benachrichtigung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        if (req.method === 'GET') return json(res, 200, { empfaenger: benachrichtigung.modulEmpfaenger(modul.id), allgemein: benachrichtigung.werte.empfaenger, aktiv: benachrichtigung.werte.aktiv === true && benachrichtigung.eingerichtet() });
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const ergebnis = await benachrichtigung.modulEmpfaengerSpeichern(modul.id, eingabe?.empfaenger ?? '', sitzung.benutzer);
+        return json(res, ergebnis.fehler ? 400 : 200, ergebnis);
+      }
       if (treffer?.[2] === 'einstellungen' || treffer?.[2] === 'aktiv') {
-        if (!sitzung.admin) return json(res, 403, { fehler: 'Nur für Admins.' });
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
         if (treffer[2] === 'einstellungen' && req.method === 'GET') return json(res, 200, await module.einstellungen(modul.id));
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
