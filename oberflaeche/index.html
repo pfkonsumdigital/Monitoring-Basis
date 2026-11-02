@@ -12,12 +12,7 @@
 <header class="kopf">
   <h1>Monitoring <span id="version" class="leise"></span></h1>
   <div class="kopf-rechts">
-    <button type="button" id="benachrichtigung-oeffnen" class="zweitrangig" hidden>Benachrichtigung</button>
-    <button type="button" id="protokoll-oeffnen" class="zweitrangig" hidden>Protokoll</button>
-    <button type="button" id="neustart-oeffnen" class="zweitrangig" hidden>Neu starten</button>
-    <button type="button" id="beenden-oeffnen" class="zweitrangig" hidden>Beenden</button>
-    <button type="button" id="updates-oeffnen" class="zweitrangig" hidden>Updates<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
-    <button type="button" id="benutzerverwaltung-oeffnen" class="zweitrangig" hidden>Benutzer</button>
+    <button type="button" id="einstellungen-oeffnen" class="zweitrangig" hidden>Einstellungen<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <span id="admin-hinweis" class="leise" hidden title="Admin-Funktionen sind nur aus dem Firmennetz oder über VPN verfügbar.">Admin nur intern/VPN</span>
     <span id="benutzer" class="leise"></span>
     <button type="button" id="passwort-oeffnen" class="zweitrangig" title="Eigenes Passwort ändern">Passwort ändern</button>
@@ -53,161 +48,250 @@
   <dl id="details-fakten" class="messwerte"></dl>
   <div id="details-leiste" class="leiste gross" aria-hidden="true"></div>
   <div id="details-admin" class="aktionen" hidden>
-    <button type="button" id="details-einstellungen" class="zweitrangig">Einstellungen</button>
     <button type="button" id="details-pause" class="zweitrangig">Pausieren</button>
     <button type="button" id="details-beenden" class="zweitrangig gefahr" hidden>Beenden</button>
     <button type="button" id="details-starten" class="zweitrangig" hidden>Dienst starten</button>
   </div>
-  <section id="empf" class="mupd" hidden>
-    <h3>Benachrichtigung für dieses Modul</h3>
-    <form id="empf-formular" class="felder" novalidate>
-      <div class="feld">
-        <label for="empf-wert">Zusätzliche Empfänger</label>
-        <input id="empf-wert" autocomplete="off" placeholder="lager@firma.de, chef@firma.de">
-        <small class="leise">Bekommen die Mails dieses Moduls zusätzlich zu den allgemeinen Empfängern. Mehrere mit Komma trennen, leer = keine zusätzlichen. <span id="empf-allgemein"></span></small>
+  <div class="bereiche">
+    <details id="md-einst" class="bereich" hidden>
+      <summary><span class="bereich-titel">Einstellungen</span><span id="md-einst-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Das Modul übernimmt geänderte Einstellungen bei seinem nächsten Lauf.</p>
+        <form id="einst-formular" novalidate>
+          <div id="einst-felder" class="felder"></div>
+          <p id="einst-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="submit" id="einst-speichern">Speichern</button></div>
+        </form>
       </div>
-      <p id="empf-meldung" class="upd-meldung" role="status"></p>
-      <div class="aktionen"><button type="submit" id="empf-speichern" class="zweitrangig">Empfänger speichern</button></div>
-    </form>
-  </section>
-  <section id="mupd" class="mupd" hidden>
-    <h3>Updates</h3>
-    <dl id="mupd-fakten" class="messwerte"></dl>
-    <p id="mupd-meldung" class="upd-meldung" role="status"></p>
-    <details id="mupd-notizen-rahmen" hidden><summary>Änderungen der neuen Version</summary><pre id="mupd-notizen"></pre></details>
-    <div class="aktionen">
-      <button type="button" id="mupd-suchen" class="zweitrangig">Nach Updates suchen</button>
-      <button type="button" id="mupd-installieren" hidden>Installieren</button>
-      <button type="button" id="mupd-zurueck" class="zweitrangig" hidden>Zurück zur vorherigen Version</button>
-    </div>
-  </section>
-  <h3 id="details-messwerte-titel">Kennzahlen</h3>
-  <dl id="details-messwerte" class="messwerte"></dl>
-  <ul id="details-liste" class="details-liste"></ul>
-  <pre id="details-ausgabe" hidden></pre>
-  <h3>Verlauf</h3>
-  <ol id="details-verlauf" class="verlauf"></ol>
+    </details>
+    <details id="md-empf" class="bereich" hidden>
+      <summary><span class="bereich-titel">Benachrichtigung</span><span id="md-empf-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <form id="empf-formular" class="felder" novalidate>
+          <div class="feld">
+            <label for="empf-wert">Zusätzliche Empfänger</label>
+            <input id="empf-wert" autocomplete="off" placeholder="lager@firma.de, chef@firma.de">
+            <small class="leise">Bekommen die Mails dieses Moduls zusätzlich zu den allgemeinen Empfängern. Mehrere mit Komma trennen, leer = keine zusätzlichen. <span id="empf-allgemein"></span></small>
+          </div>
+          <p id="empf-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="submit" id="empf-speichern" class="zweitrangig">Empfänger speichern</button></div>
+        </form>
+      </div>
+    </details>
+    <details id="md-upd" class="bereich" hidden>
+      <summary><span class="bereich-titel">Updates</span><span id="md-upd-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <dl id="mupd-fakten" class="messwerte"></dl>
+        <p id="mupd-meldung" class="upd-meldung" role="status"></p>
+        <details id="mupd-notizen-rahmen" hidden><summary>Änderungen der neuen Version</summary><pre id="mupd-notizen"></pre></details>
+        <div class="aktionen">
+          <button type="button" id="mupd-suchen" class="zweitrangig">Nach Updates suchen</button>
+          <button type="button" id="mupd-installieren" hidden>Installieren</button>
+          <button type="button" id="mupd-zurueck" class="zweitrangig" hidden>Zurück zur vorherigen Version</button>
+        </div>
+      </div>
+    </details>
+    <details id="md-werte" class="bereich" open>
+      <summary><span class="bereich-titel">Kennzahlen</span><span id="md-werte-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <dl id="details-messwerte" class="messwerte"></dl>
+        <ul id="details-liste" class="details-liste"></ul>
+        <pre id="details-ausgabe" hidden></pre>
+      </div>
+    </details>
+    <details id="md-verlauf" class="bereich">
+      <summary><span class="bereich-titel">Verlauf</span><span id="md-verlauf-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <ol id="details-verlauf" class="verlauf"></ol>
+      </div>
+    </details>
+  </div>
 </dialog>
 <dialog id="einstellungen" class="breit">
   <div class="dialog-kopf">
-    <h2 id="einst-titel">Einstellungen</h2>
-    <button type="button" id="einst-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+    <h2>Einstellungen</h2>
+    <button type="button" id="einstellungen-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
   </div>
-  <p class="leise">Das Modul übernimmt geänderte Einstellungen bei seinem nächsten Lauf.</p>
-  <form id="einst-formular" novalidate>
-    <div id="einst-felder" class="felder"></div>
-    <p id="einst-meldung" class="upd-meldung" role="status"></p>
-    <div class="aktionen">
-      <button type="submit" id="einst-speichern">Speichern</button>
-      <button type="button" id="einst-abbrechen" class="zweitrangig">Schließen</button>
-    </div>
-  </form>
-</dialog>
-<dialog id="benachrichtigung" class="breit">
-  <div class="dialog-kopf">
-    <h2>Benachrichtigung per Mail</h2>
-    <button type="button" id="ben-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  <p class="leise">Nur für Admins aus dem Firmennetz oder über VPN. Ein Klick auf einen Bereich klappt ihn auf.</p>
+  <div class="bereiche">
+    <details id="ber-tls" class="bereich" name="einst">
+      <summary><span class="bereich-titel">HTTPS &amp; Domain</span><span id="ber-tls-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Mit einer eigenen (Sub-)Domain und einem Zertifikat von Let’s Encrypt ist die Oberfläche verschlüsselt über HTTPS erreichbar (Port 8443). Das Zertifikat wird über einen TXT-Eintrag beim DNS-Anbieter bestätigt – dafür muss kein Port aus dem Internet offen sein. Anleitung in der README, Abschnitt „HTTPS &amp; Domain“.</p>
+        <dl id="tls-fakten" class="messwerte"></dl>
+        <form id="tls-formular" class="felder" novalidate>
+          <div class="feld"><label for="tls-hostname">Domain</label><input id="tls-hostname" autocomplete="off" placeholder="monitoring.firma.de"><small class="feldfehler" id="tls-hostname-fehler"></small></div>
+          <div class="feld"><label for="tls-email">E-Mail für Let’s Encrypt</label><input id="tls-email" type="email" autocomplete="off" placeholder="it@firma.de"><small class="leise">Let’s Encrypt meldet sich dort, falls ein Zertifikat abläuft.</small><small class="feldfehler" id="tls-email-fehler"></small></div>
+          <div class="feld"><label for="tls-dns_anbieter">DNS-Anbieter</label><select id="tls-dns_anbieter"><option value="hetzner">Hetzner (Cloud-API)</option><option value="cloudflare">Cloudflare</option></select><small class="feldfehler" id="tls-dns_anbieter-fehler"></small></div>
+          <div class="feld"><label for="tls-token">API-Token des DNS-Anbieters</label><input id="tls-token" type="password" autocomplete="new-password"><small class="leise">Wird verschlüsselt gespeichert und nie angezeigt. Leer lassen, um den gespeicherten zu behalten.</small><small class="feldfehler" id="tls-token-fehler"></small></div>
+          <p id="tls-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="submit" id="tls-speichern">Speichern</button></div>
+        </form>
+        <h3>1. Verbindung prüfen</h3>
+        <p class="leise">Prüft, ob der Token die Zone der Domain findet und wohin die Domain zeigt.</p>
+        <ul id="tls-pruefung" class="pruefliste" hidden></ul>
+        <div class="aktionen"><button type="button" id="tls-pruefen" class="zweitrangig">Verbindung prüfen</button></div>
+        <h3>2. Zertifikat anfragen</h3>
+        <p class="leise">Zuerst ein Testzertifikat anfragen (Testumgebung von Let’s Encrypt, zum Ausprobieren). Klappt das, das echte Zertifikat anfragen – davon gibt es nur wenige pro Woche für dieselbe Domain. Dauert meist 1–3 Minuten.</p>
+        <p id="tls-vorgang" class="upd-meldung" role="status"></p>
+        <div class="aktionen">
+          <button type="button" id="tls-test" class="zweitrangig">Testzertifikat anfragen</button>
+          <button type="button" id="tls-echt" class="zweitrangig">Zertifikat anfragen</button>
+        </div>
+        <h3>3. Umschalten</h3>
+        <p id="tls-umschalten-text" class="leise"></p>
+        <p id="tls-umschalten-meldung" class="upd-meldung" role="status"></p>
+        <div class="aktionen">
+          <button type="button" id="tls-umschalten">Auf HTTPS umschalten</button>
+          <button type="button" id="tls-http" class="zweitrangig" hidden>Zurück auf HTTP (intern)</button>
+        </div>
+        <p class="leise">Vorher in der Windows-Firewall des Workers Port 8443 freigeben (Eingabeaufforderung als Administrator):<br><code>netsh advfirewall firewall add rule name="Monitoring HTTPS" dir=in action=allow protocol=TCP localport=8443 profile=domain,private</code></p>
+      </div>
+    </details>
+    <details id="ber-ben" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Benachrichtigung</span><span id="ber-ben-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Versand über Microsoft 365 (App-Registrierung). Mails kommen beim Wechsel auf Fehler, Warnung oder „Keine Meldung“, wenn ein Modul wieder OK ist, und als Erinnerung, solange ein Problem besteht. Einrichtung siehe README, Abschnitt „Benachrichtigung“.</p>
+        <form id="ben-formular" novalidate>
+          <div class="felder">
+            <div class="feld schalter"><input type="checkbox" id="ben-aktiv"><label for="ben-aktiv">Benachrichtigung aktiv</label><small class="feldfehler" id="ben-aktiv-fehler"></small></div>
+            <div class="feld"><label for="ben-tenant_id">Mandanten-ID (Tenant)</label><input id="ben-tenant_id" autocomplete="off"><small class="feldfehler" id="ben-tenant_id-fehler"></small></div>
+            <div class="feld"><label for="ben-client_id">Anwendungs-ID (Client)</label><input id="ben-client_id" autocomplete="off"><small class="feldfehler" id="ben-client_id-fehler"></small></div>
+            <div class="feld"><label for="ben-client_secret">Geheimer Clientschlüssel</label><input id="ben-client_secret" type="password" autocomplete="new-password"><small class="leise">Wird nie angezeigt. Leer lassen, um den gespeicherten zu behalten.</small><small class="feldfehler" id="ben-client_secret-fehler"></small></div>
+            <div class="feld"><label for="ben-absender">Absenderpostfach</label><input id="ben-absender" type="email" autocomplete="off" placeholder="monitoring@firma.de"><small class="feldfehler" id="ben-absender-fehler"></small></div>
+            <div class="feld"><label for="ben-empfaenger">Empfänger</label><input id="ben-empfaenger" autocomplete="off" placeholder="it@firma.de, chef@firma.de"><small class="leise">Mehrere mit Komma oder Semikolon trennen.</small><small class="feldfehler" id="ben-empfaenger-fehler"></small></div>
+            <div class="feld"><label for="ben-melden_nach_laeufen">Melden nach … fehlerhaften Läufen hintereinander</label><input id="ben-melden_nach_laeufen" type="number" min="1" max="20" step="1"><small class="leise">1 = sofort beim ersten fehlerhaften Lauf. Gilt für Fehler und Warnung; „Keine Meldung“ und fehlerhafte Module werden sofort gemeldet.</small><small class="feldfehler" id="ben-melden_nach_laeufen-fehler"></small></div>
+            <div class="feld"><label for="ben-erinnerung_stunden">Erinnerung alle … Stunden</label><input id="ben-erinnerung_stunden" type="number" min="0" max="168" step="any"><small class="leise">0 = keine Erinnerung.</small><small class="feldfehler" id="ben-erinnerung_stunden-fehler"></small></div>
+            <div class="feld"><label for="ben-link">Adresse der Oberfläche (für den Link in der Mail)</label><input id="ben-link" autocomplete="off" placeholder="http://10.0.0.5:8080/"><small class="feldfehler" id="ben-link-fehler"></small></div>
+          </div>
+          <p id="ben-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen">
+            <button type="submit" id="ben-speichern">Speichern</button>
+            <button type="button" id="ben-test" class="zweitrangig">Testmail senden</button>
+          </div>
+        </form>
+        <h3>Zuletzt gesendet</h3>
+        <p id="ben-leer" class="leise">Noch keine Benachrichtigungen.</p>
+        <ol id="ben-verlauf" class="verlauf"></ol>
+      </div>
+    </details>
+    <details id="ber-bv" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Benutzer</span><span id="ber-bv-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Änderungen gelten sofort und werden in config.json gespeichert (Passwörter nur als Hash). Nach einem neuen Passwort werden alle Sitzungen dieses Benutzers beendet. Die Zwei-Faktor-Anmeldung (Authenticator-App) ist für alle Pflicht; neue Benutzer richten sie bei der ersten Anmeldung im Firmennetz oder über VPN ein.</p>
+        <p id="bv-meldung" class="upd-meldung" role="status"></p>
+        <div class="liste-rahmen">
+          <table class="liste-tabelle bv-tabelle">
+            <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th></th></tr></thead>
+            <tbody id="bv-liste"></tbody>
+          </table>
+        </div>
+        <h3>Neuen Benutzer anlegen</h3>
+        <form id="bv-anlegen" class="felder" novalidate>
+          <div class="feld"><label for="bv-name">Benutzername</label><input id="bv-name" autocomplete="off" maxlength="64"><small class="leise">Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich.</small></div>
+          <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter.</small></div>
+          <div class="feld"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
+          <div class="feld schalter"><input type="checkbox" id="bv-admin"><label for="bv-admin">Admin (darf Einstellungen, Updates, Benutzer usw. ändern)</label></div>
+          <div class="aktionen"><button type="submit" id="bv-anlegen-knopf">Benutzer anlegen</button></div>
+        </form>
+        <h3>Passwort neu setzen</h3>
+        <form id="bv-setzen" class="felder" novalidate>
+          <div class="feld"><label for="bv-setzen-name">Benutzer</label><select id="bv-setzen-name"></select></div>
+          <div class="feld"><label for="bv-setzen-passwort">Neues Passwort</label><input id="bv-setzen-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter. Alle Sitzungen dieses Benutzers werden beendet.</small></div>
+          <div class="feld"><label for="bv-setzen-passwort2">Passwort wiederholen</label><input id="bv-setzen-passwort2" type="password" autocomplete="new-password"></div>
+          <div class="aktionen"><button type="submit" id="bv-setzen-knopf">Passwort setzen</button></div>
+        </form>
+        <h3>Angemeldet</h3>
+        <p id="bv-sitzungen-leer" class="leise" hidden>Niemand angemeldet.</p>
+        <div class="liste-rahmen">
+          <table class="liste-tabelle bv-tabelle">
+            <thead><tr><th>Benutzer</th><th>Adresse</th><th>Angemeldet seit</th><th>Zuletzt aktiv</th><th>Sitzung endet</th></tr></thead>
+            <tbody id="bv-sitzungen"></tbody>
+          </table>
+        </div>
+        <p class="leise">„Zuletzt aktiv“ ist die letzte Aktion (Klick, Speichern …); das automatische Nachladen zählt nicht. Ohne Aktion endet eine Sitzung nach der Leerlaufzeit (Standard 30 Minuten), spätestens nach der Höchstdauer (Standard 8 Stunden). Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
+      </div>
+    </details>
+    <details id="ber-upd" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Updates</span><span id="ber-upd-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <dl class="messwerte">
+          <dt>Installiert</dt><dd id="upd-installiert">–</dd>
+          <dt>Verfügbar</dt><dd id="upd-verfuegbar">–</dd>
+          <dt>Zuletzt geprüft</dt><dd id="upd-geprueft">–</dd>
+        </dl>
+        <p id="upd-meldung" class="upd-meldung" role="status"></p>
+        <pre id="upd-notizen" hidden></pre>
+        <div id="upd-bestaetigen" class="bestaetigen" hidden>
+          <p>Jetzt auf Version <strong id="upd-bestaetigen-version"></strong> aktualisieren? Die Basis startet dabei neu; laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt.</p>
+          <div class="aktionen">
+            <button type="button" id="upd-ja">Ja, jetzt updaten</button>
+            <button type="button" id="upd-nein" class="zweitrangig">Abbrechen</button>
+          </div>
+        </div>
+        <div class="aktionen">
+          <button type="button" id="upd-suchen" class="zweitrangig">Nach Updates suchen</button>
+          <button type="button" id="upd-installieren" hidden>Updaten</button>
+          <button type="button" id="upd-zurueck" class="zweitrangig" hidden>Vorherige Version wiederherstellen</button>
+        </div>
+        <h3>GitHub-Zugang</h3>
+        <p id="tok-status" class="leise"></p>
+        <form id="tok-formular" class="felder" novalidate>
+          <div class="feld">
+            <label for="tok-wert">GitHub-Token (Fine-grained, nur „Contents: Read-only“)</label>
+            <input id="tok-wert" type="password" autocomplete="new-password" placeholder="github_pat_…">
+            <small class="leise">Wird vor dem Speichern bei GitHub geprüft, danach nie wieder angezeigt. Anleitung in der README, Abschnitt „Updates“.</small>
+          </div>
+          <p id="tok-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen">
+            <button type="submit" id="tok-speichern">Token speichern</button>
+            <button type="button" id="tok-pruefen" class="zweitrangig">Token prüfen</button>
+            <button type="button" id="tok-entfernen" class="zweitrangig" hidden>Token entfernen</button>
+          </div>
+        </form>
+      </div>
+    </details>
+    <details id="ber-prot" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Fehlerprotokoll</span><span id="ber-prot-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <div class="filter">
+          <label>Stufe
+            <select id="prot-stufe">
+              <option value="">Fehler und Warnungen</option>
+              <option value="fehler">Nur Fehler</option>
+              <option value="warnung">Nur Warnungen</option>
+            </select>
+          </label>
+          <label>Quelle
+            <select id="prot-quelle"><option value="">Alle</option></select>
+          </label>
+          <button type="button" id="prot-aktualisieren" class="zweitrangig">Aktualisieren</button>
+          <a id="prot-download" class="knopf-link" href="/api/protokoll/download" download>Herunterladen</a>
+        </div>
+        <p id="prot-leer" class="leise" hidden>Keine Einträge – alles in Ordnung.</p>
+        <ol id="prot-liste" class="protokoll-liste"></ol>
+      </div>
+    </details>
+    <details id="ber-sys" class="bereich" name="einst" hidden>
+      <summary><span class="bereich-titel">System</span><span id="ber-sys-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <section id="sys-neustart" hidden>
+          <h3>Neu starten</h3>
+          <p>Die Basis und alle Module werden neu gestartet. Gerade laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt. Danach ist eine neue Anmeldung nötig.</p>
+          <p id="neustart-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="button" id="neustart-ja">Neu starten</button></div>
+        </section>
+        <section id="sys-beenden" hidden>
+          <h3>Basis beenden</h3>
+          <p>Die Monitoring-Basis wird beendet. Gerade laufende Prüfungen werden abgebrochen. Danach ist diese Seite nicht mehr erreichbar, bis die Basis auf dem Worker wieder gestartet wird.</p>
+          <label class="haken"><input type="checkbox" id="beenden-module"> Auch alle eigenständigen Module und ihre Windows-Dienste beenden</label>
+          <p class="leise">Ohne Haken laufen eigenständige Module weiter. Ist die Benachrichtigung eingerichtet, geht eine Mail „Basis beendet“ an die Empfänger.</p>
+          <p id="beenden-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="button" id="beenden-ja" class="gefahr">Basis beenden</button></div>
+        </section>
+      </div>
+    </details>
   </div>
-  <p class="leise">Versand über Microsoft 365 (App-Registrierung). Mails kommen beim Wechsel auf Fehler, Warnung oder „Keine Meldung“, wenn ein Modul wieder OK ist, und als Erinnerung, solange ein Problem besteht. Einrichtung siehe README, Abschnitt „Benachrichtigung“.</p>
-  <form id="ben-formular" novalidate>
-    <div class="felder">
-      <div class="feld schalter"><input type="checkbox" id="ben-aktiv"><label for="ben-aktiv">Benachrichtigung aktiv</label><small class="feldfehler" id="ben-aktiv-fehler"></small></div>
-      <div class="feld"><label for="ben-tenant_id">Mandanten-ID (Tenant)</label><input id="ben-tenant_id" autocomplete="off"><small class="feldfehler" id="ben-tenant_id-fehler"></small></div>
-      <div class="feld"><label for="ben-client_id">Anwendungs-ID (Client)</label><input id="ben-client_id" autocomplete="off"><small class="feldfehler" id="ben-client_id-fehler"></small></div>
-      <div class="feld"><label for="ben-client_secret">Geheimer Clientschlüssel</label><input id="ben-client_secret" type="password" autocomplete="new-password"><small class="leise">Wird nie angezeigt. Leer lassen, um den gespeicherten zu behalten.</small><small class="feldfehler" id="ben-client_secret-fehler"></small></div>
-      <div class="feld"><label for="ben-absender">Absenderpostfach</label><input id="ben-absender" type="email" autocomplete="off" placeholder="monitoring@firma.de"><small class="feldfehler" id="ben-absender-fehler"></small></div>
-      <div class="feld"><label for="ben-empfaenger">Empfänger</label><input id="ben-empfaenger" autocomplete="off" placeholder="it@firma.de, chef@firma.de"><small class="leise">Mehrere mit Komma oder Semikolon trennen.</small><small class="feldfehler" id="ben-empfaenger-fehler"></small></div>
-      <div class="feld"><label for="ben-melden_nach_laeufen">Melden nach … fehlerhaften Läufen hintereinander</label><input id="ben-melden_nach_laeufen" type="number" min="1" max="20" step="1"><small class="leise">1 = sofort beim ersten fehlerhaften Lauf. Gilt für Fehler und Warnung; „Keine Meldung“ und fehlerhafte Module werden sofort gemeldet.</small><small class="feldfehler" id="ben-melden_nach_laeufen-fehler"></small></div>
-      <div class="feld"><label for="ben-erinnerung_stunden">Erinnerung alle … Stunden</label><input id="ben-erinnerung_stunden" type="number" min="0" max="168" step="any"><small class="leise">0 = keine Erinnerung.</small><small class="feldfehler" id="ben-erinnerung_stunden-fehler"></small></div>
-      <div class="feld"><label for="ben-link">Adresse der Oberfläche (für den Link in der Mail)</label><input id="ben-link" autocomplete="off" placeholder="http://10.0.0.5:8080/"><small class="feldfehler" id="ben-link-fehler"></small></div>
-    </div>
-    <p id="ben-meldung" class="upd-meldung" role="status"></p>
-    <div class="aktionen">
-      <button type="submit" id="ben-speichern">Speichern</button>
-      <button type="button" id="ben-test" class="zweitrangig">Testmail senden</button>
-    </div>
-  </form>
-  <h3>Zuletzt gesendet</h3>
-  <p id="ben-leer" class="leise">Noch keine Benachrichtigungen.</p>
-  <ol id="ben-verlauf" class="verlauf"></ol>
-</dialog>
-<dialog id="updates">
-  <div class="dialog-kopf">
-    <h2>Updates</h2>
-    <button type="button" id="updates-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <dl class="messwerte">
-    <dt>Installiert</dt><dd id="upd-installiert">–</dd>
-    <dt>Verfügbar</dt><dd id="upd-verfuegbar">–</dd>
-    <dt>Zuletzt geprüft</dt><dd id="upd-geprueft">–</dd>
-  </dl>
-  <p id="upd-meldung" class="upd-meldung" role="status"></p>
-  <pre id="upd-notizen" hidden></pre>
-  <div id="upd-bestaetigen" class="bestaetigen" hidden>
-    <p>Jetzt auf Version <strong id="upd-bestaetigen-version"></strong> aktualisieren? Die Basis startet dabei neu; laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt.</p>
-    <div class="aktionen">
-      <button type="button" id="upd-ja">Ja, jetzt updaten</button>
-      <button type="button" id="upd-nein" class="zweitrangig">Abbrechen</button>
-    </div>
-  </div>
-  <div class="aktionen">
-    <button type="button" id="upd-suchen" class="zweitrangig">Nach Updates suchen</button>
-    <button type="button" id="upd-installieren" hidden>Updaten</button>
-    <button type="button" id="upd-zurueck" class="zweitrangig" hidden>Vorherige Version wiederherstellen</button>
-  </div>
-  <h3>GitHub-Zugang</h3>
-  <p id="tok-status" class="leise"></p>
-  <form id="tok-formular" class="felder" novalidate>
-    <div class="feld">
-      <label for="tok-wert">GitHub-Token (Fine-grained, nur „Contents: Read-only“)</label>
-      <input id="tok-wert" type="password" autocomplete="new-password" placeholder="github_pat_…">
-      <small class="leise">Wird vor dem Speichern bei GitHub geprüft, danach nie wieder angezeigt. Anleitung in der README, Abschnitt „Updates“.</small>
-    </div>
-    <p id="tok-meldung" class="upd-meldung" role="status"></p>
-    <div class="aktionen">
-      <button type="submit" id="tok-speichern">Token speichern</button>
-      <button type="button" id="tok-pruefen" class="zweitrangig">Token prüfen</button>
-      <button type="button" id="tok-entfernen" class="zweitrangig" hidden>Token entfernen</button>
-    </div>
-  </form>
-</dialog>
-<dialog id="benutzerverwaltung" class="breit">
-  <div class="dialog-kopf">
-    <h2>Benutzer</h2>
-    <button type="button" id="bv-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <p class="leise">Änderungen gelten sofort und werden in config.json gespeichert (Passwörter nur als Hash). Nach einem neuen Passwort werden alle Sitzungen dieses Benutzers beendet. Die Zwei-Faktor-Anmeldung (Authenticator-App) ist für alle Pflicht; neue Benutzer richten sie bei der ersten Anmeldung im Firmennetz oder über VPN ein.</p>
-  <p id="bv-meldung" class="upd-meldung" role="status"></p>
-  <div class="liste-rahmen">
-    <table class="liste-tabelle bv-tabelle">
-      <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th></th></tr></thead>
-      <tbody id="bv-liste"></tbody>
-    </table>
-  </div>
-  <h3>Neuen Benutzer anlegen</h3>
-  <form id="bv-anlegen" class="felder" novalidate>
-    <div class="feld"><label for="bv-name">Benutzername</label><input id="bv-name" autocomplete="off" maxlength="64"><small class="leise">Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich.</small></div>
-    <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter.</small></div>
-    <div class="feld"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
-    <div class="feld schalter"><input type="checkbox" id="bv-admin"><label for="bv-admin">Admin (darf Einstellungen, Updates, Benutzer usw. ändern)</label></div>
-    <div class="aktionen"><button type="submit" id="bv-anlegen-knopf">Benutzer anlegen</button></div>
-  </form>
-  <h3>Passwort neu setzen</h3>
-  <form id="bv-setzen" class="felder" novalidate>
-    <div class="feld"><label for="bv-setzen-name">Benutzer</label><select id="bv-setzen-name"></select></div>
-    <div class="feld"><label for="bv-setzen-passwort">Neues Passwort</label><input id="bv-setzen-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter. Alle Sitzungen dieses Benutzers werden beendet.</small></div>
-    <div class="feld"><label for="bv-setzen-passwort2">Passwort wiederholen</label><input id="bv-setzen-passwort2" type="password" autocomplete="new-password"></div>
-    <div class="aktionen"><button type="submit" id="bv-setzen-knopf">Passwort setzen</button></div>
-  </form>
-  <h3>Angemeldet</h3>
-  <p id="bv-sitzungen-leer" class="leise" hidden>Niemand angemeldet.</p>
-  <div class="liste-rahmen">
-    <table class="liste-tabelle bv-tabelle">
-      <thead><tr><th>Benutzer</th><th>Adresse</th><th>Angemeldet seit</th><th>Zuletzt aktiv</th><th>Sitzung endet</th></tr></thead>
-      <tbody id="bv-sitzungen"></tbody>
-    </table>
-  </div>
-  <p class="leise">„Zuletzt aktiv“ ist die letzte Aktion (Klick, Speichern …); das automatische Nachladen zählt nicht. Ohne Aktion endet eine Sitzung nach der Leerlaufzeit (Standard 30 Minuten), spätestens nach der Höchstdauer (Standard 8 Stunden). Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
 </dialog>
 <dialog id="passwort">
   <div class="dialog-kopf">
@@ -221,54 +305,6 @@
     <p id="pw-meldung" class="upd-meldung" role="status"></p>
     <div class="aktionen"><button type="submit" id="pw-speichern">Passwort ändern</button></div>
   </form>
-</dialog>
-<dialog id="protokoll" class="breit">
-  <div class="dialog-kopf">
-    <h2>Fehlerprotokoll</h2>
-    <button type="button" id="protokoll-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <div class="filter">
-    <label>Stufe
-      <select id="prot-stufe">
-        <option value="">Fehler und Warnungen</option>
-        <option value="fehler">Nur Fehler</option>
-        <option value="warnung">Nur Warnungen</option>
-      </select>
-    </label>
-    <label>Quelle
-      <select id="prot-quelle"><option value="">Alle</option></select>
-    </label>
-    <button type="button" id="prot-aktualisieren" class="zweitrangig">Aktualisieren</button>
-    <a id="prot-download" class="knopf-link" href="/api/protokoll/download" download>Herunterladen</a>
-  </div>
-  <p id="prot-leer" class="leise" hidden>Keine Einträge – alles in Ordnung.</p>
-  <ol id="prot-liste" class="protokoll-liste"></ol>
-</dialog>
-<dialog id="neustart">
-  <div class="dialog-kopf">
-    <h2>Neu starten</h2>
-    <button type="button" id="neustart-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <p>Die Basis und alle Module werden neu gestartet. Gerade laufende Prüfungen werden abgebrochen und beim nächsten Termin wiederholt. Danach ist eine neue Anmeldung nötig.</p>
-  <p id="neustart-meldung" class="upd-meldung" role="status"></p>
-  <div class="aktionen">
-    <button type="button" id="neustart-ja">Jetzt neu starten</button>
-    <button type="button" id="neustart-nein" class="zweitrangig">Abbrechen</button>
-  </div>
-</dialog>
-<dialog id="beenden">
-  <div class="dialog-kopf">
-    <h2>Basis beenden</h2>
-    <button type="button" id="beenden-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <p>Die Monitoring-Basis wird beendet. Gerade laufende Prüfungen werden abgebrochen. Danach ist diese Seite nicht mehr erreichbar, bis die Basis auf dem Worker wieder gestartet wird.</p>
-  <label class="haken"><input type="checkbox" id="beenden-module"> Auch alle eigenständigen Module und ihre Windows-Dienste beenden</label>
-  <p class="leise">Ohne Haken laufen eigenständige Module weiter. Ist die Benachrichtigung eingerichtet, geht eine Mail „Basis beendet“ an die Empfänger.</p>
-  <p id="beenden-meldung" class="upd-meldung" role="status"></p>
-  <div class="aktionen">
-    <button type="button" id="beenden-ja" class="gefahr">Jetzt beenden</button>
-    <button type="button" id="beenden-nein" class="zweitrangig">Abbrechen</button>
-  </div>
 </dialog>
 <template id="kachel-vorlage">
   <article class="kachel">

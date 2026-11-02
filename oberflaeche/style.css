@@ -119,7 +119,7 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .login-karte button { padding: 9px; }
 
 .kopf h1 span { font-size: 0.75rem; font-weight: 400; }
-#updates-oeffnen { position: relative; }
+#einstellungen-oeffnen { position: relative; }
 .hinweis-punkt { position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--warnung); border: 2px solid var(--flaeche); }
 .kachel .name .hinweis-punkt { position: static; display: inline-block; margin-left: 8px; vertical-align: middle; }
 .upd-meldung { margin: 8px 0; }
@@ -129,7 +129,7 @@ pre { background: var(--hintergrund); border: 1px solid var(--rand); border-radi
 .upd-meldung[data-art="warnung"] { color: var(--warnung); }
 .bestaetigen { border: 1px solid var(--warnung); background: var(--warnung-flaeche); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
 .bestaetigen p { margin: 0 0 8px; }
-#updates .aktionen { flex-wrap: wrap; margin-top: 12px; }
+#ber-upd .aktionen { flex-wrap: wrap; margin-top: 12px; }
 
 dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .filter { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
@@ -174,9 +174,8 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .feld.schalter input { grid-column: 1; grid-row: 1; width: 18px; height: 18px; }
 .feld.schalter small { grid-column: 1 / -1; }
 .feldfehler { color: var(--fehler); }
-.mupd { margin: 14px 0 6px; padding-top: 10px; border-top: 1px solid var(--rand); }
-.mupd pre { white-space: pre-wrap; font-size: 0.88em; max-height: 220px; overflow: auto; }
-.mupd details { margin: 6px 0; }
+#md-upd pre { white-space: pre-wrap; font-size: 0.88em; max-height: 220px; overflow: auto; }
+#md-upd .bereich-inhalt details { margin: 6px 0; }
 .liste-rahmen { display: grid; gap: 8px; justify-items: start; overflow-x: auto; max-width: 100%; }
 .liste-tabelle { border-collapse: collapse; }
 .liste-tabelle th { text-align: left; font-size: 0.85em; font-weight: 600; padding: 0 6px 4px 0; white-space: nowrap; }
@@ -187,7 +186,7 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 #details-admin { margin: 8px 0; }
 #details-admin[hidden] { display: none; }
 #tok-status[data-art="fehler"] { color: var(--fehler); }
-#updates .felder { margin-top: 4px; }
+#ber-upd .felder { margin-top: 4px; }
 .bv-tabelle td { padding-right: 14px; }
 .bv-tabelle td.aktionen-zelle { display: flex; gap: 6px; flex-wrap: wrap; }
 /* Zwei-Faktor-Anmeldung */
@@ -201,3 +200,34 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .zf-warnung { color: var(--warnung); }
 .zf-karte .knopf-link { display: inline-block; margin-top: 8px; }
 .zf-abbrechen { display: inline-block; margin-top: 12px; font-size: 0.9em; color: var(--leise); }
+
+/* Aufklappbare Bereiche (Einstellungen und Moduldetails): Titel links, Statuszeile rechts */
+.bereiche { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 12px; }
+.bereich-inhalt .messwerte { grid-template-columns: max-content minmax(0, 1fr); }
+.bereich-inhalt .messwerte dd { overflow-wrap: anywhere; }
+.bereich { border: 1px solid var(--rand); border-radius: 8px; background: var(--flaeche); }
+.bereich > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 10px 12px 10px 34px; cursor: pointer; list-style: none; position: relative; border-radius: 8px; }
+.bereich > summary::-webkit-details-marker { display: none; }
+.bereich > summary::before { content: ""; position: absolute; left: 14px; top: 17px; width: 7px; height: 7px; border-right: 2px solid var(--leise); border-bottom: 2px solid var(--leise); transform: rotate(-45deg); transition: transform 0.15s; }
+.bereich[open] > summary::before { transform: rotate(45deg); top: 14px; }
+.bereich > summary:hover { background: var(--hintergrund); }
+.bereich > summary:focus-visible { outline: 2px solid var(--akzent); outline-offset: 2px; }
+.bereich[open] > summary { border-bottom: 1px solid var(--rand); border-radius: 8px 8px 0 0; }
+.bereich-titel { font-weight: 600; }
+.bereich-status { color: var(--leise); font-size: 0.88em; margin-left: auto; text-align: right; overflow-wrap: anywhere; }
+.bereich-status[data-art="ok"] { color: var(--ok); }
+.bereich-status[data-art="warnung"] { color: var(--warnung); }
+.bereich-status[data-art="fehler"] { color: var(--fehler); }
+.bereich-inhalt { padding: 4px 14px 14px; }
+.bereich-inhalt > h3:first-child { margin-top: 10px; }
+.bereich-inhalt .aktionen { flex-wrap: wrap; }
+.bereich-inhalt code { overflow-wrap: anywhere; }
+.pruefliste { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 4px; }
+.pruefliste li[data-ok]::before { display: inline-block; width: 1.4em; font-weight: 700; }
+.pruefliste li[data-ok="ja"]::before { content: "✓"; color: var(--ok); }
+.pruefliste li[data-ok="nein"]::before { content: "✕"; color: var(--fehler); }
+@media (max-width: 600px) {
+  dialog { padding: 14px; }
+  .bereich-status { margin-left: 0; text-align: left; flex-basis: 100%; }
+  .bereich-inhalt { padding: 4px 10px 12px; }
+}

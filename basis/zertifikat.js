@@ -169,15 +169,24 @@ export async function warteAufTxt(name, wert, { fetchImpl = fetch, versuche = 30
   throw new BasisFehler(`TXT-Eintrag ${name} wurde im öffentlichen DNS nicht sichtbar.`);
 }
 
+export const dnsClient = (tls) => (tls.dnsAnbieter === 'hetzner' ? new HetznerDns(tls.hetznerToken) : new CloudflareDns(tls.cloudflareToken));
+
+// ordnerName: „zertifikat“ (Betrieb) oder „zertifikat-test“ (Testzertifikat aus der Oberfläche, ändert nichts am Betrieb).
 export class Zertifikatsverwaltung {
-  constructor({ konfig, log = () => {}, acmeImpl = acme, dns, warten = warteAufTxt }) {
+  constructor({ konfig, log = () => {}, acmeImpl = acme, dns, warten = warteAufTxt, ordnerName = 'zertifikat' }) {
     this.konfig = konfig;
     this.log = log;
     this.acme = acmeImpl;
-    this.ordner = path.join(konfig.datenOrdner, 'zertifikat');
-    this.dns = dns ?? (konfig.tls.modus !== 'letsencrypt' ? null
-      : konfig.tls.dnsAnbieter === 'hetzner' ? new HetznerDns(konfig.tls.hetznerToken) : new CloudflareDns(konfig.tls.cloudflareToken));
+    this.ordner = path.join(konfig.datenOrdner, ordnerName);
+    this.dns = dns ?? (konfig.tls.modus !== 'letsencrypt' ? null : dnsClient(konfig.tls));
     this.warten = warten;
+  }
+
+  // Neue Einstellungen aus der Oberfläche (Domain, DNS-Anbieter, Token) für die automatische Erneuerung übernehmen.
+  einstellungenUebernehmen({ hostname, tls }) {
+    if (this.konfig.tls.modus !== 'letsencrypt') return;
+    this.konfig = { ...this.konfig, hostname, tls: { ...this.konfig.tls, ...tls } };
+    this.dns = dnsClient(this.konfig.tls);
   }
 
   datei(name) { return path.join(this.ordner, name); }

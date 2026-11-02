@@ -1,5 +1,35 @@
 # Änderungen
 
+## 0.13.0
+
+HTTPS & Domain in der Oberfläche einrichten und übersichtlichere Einstellungen.
+
+### Neu
+
+- **Einstellungen → HTTPS & Domain** (nur Admins aus dem Firmennetz/VPN): Domain, E-Mail, DNS-Anbieter (Hetzner oder Cloudflare) und API-Token eintragen. Der Token wird verschlüsselt gespeichert und nie angezeigt oder protokolliert.
+  - **Verbindung prüfen:** findet der Token die Zone der Domain, und zeigt die Domain auf diesen Rechner?
+  - **Testzertifikat anfragen** (Testumgebung von Let's Encrypt, Ordner `data\zertifikat-test`, ändert nichts am Betrieb) und **Zertifikat anfragen** (echtes Zertifikat, `data\zertifikat`) – im Hintergrund, mit Fortschrittsanzeige.
+  - **Auf HTTPS umschalten:** nur mit gültigem, echtem Zertifikat für die eingetragene Domain; prüft, dass Port 8443 frei ist, stellt `config.json` auf `tls.modus "letsencrypt"` und Port 8443 und startet neu. Die Seite leitet danach zur neuen Adresse weiter.
+  - **Zurück auf HTTP (intern):** Port 8080, Domain, Token und Zertifikate bleiben gespeichert.
+  - Läuft HTTPS schon, gilt ein neu angefragtes Zertifikat sofort, ohne Neustart; geänderte Angaben nutzt auch die automatische Erneuerung sofort.
+  - Hinweis auf die Firewall-Freigabe für Port 8443; README mit Notfall-Weg zurück auf HTTP direkt in `config.json`.
+- **Ein Knopf „Einstellungen“** statt sechs Knöpfen in der Kopfzeile. Die Bereiche HTTPS & Domain, Benachrichtigung, Benutzer, Updates, Fehlerprotokoll und System (Neu starten, Beenden) lassen sich einzeln aufklappen, immer nur einer zugleich. Jeder zeigt zugeklappt eine Statuszeile, z. B. „Aktiv · 2 Empfänger“, „2 Benutzer · 1 Sitzung“, „Update auf v… verfügbar“ oder „24 h: 1 Fehler, 3 Warnungen“. Der Update-Punkt sitzt jetzt am Knopf „Einstellungen“.
+- **Moduldetails aufklappbar:** Status und Knöpfe bleiben oben; darunter Einstellungen (jetzt direkt in den Details statt in einem eigenen Fenster, mit Hinweis auf leere Pflichtfelder), Benachrichtigung, Updates, Kennzahlen (beim Öffnen aufgeklappt) und Verlauf – jeweils mit Statuszeile. Das automatische Nachladen lässt aufgeklappte Bereiche und Eingaben unverändert.
+
+### Geändert
+
+- „Neu starten“ und „Basis beenden“ stehen unter Einstellungen → System und fragen per zweitem Klick nach (statt eines eigenen Fensters).
+- Neben der Benutzerverwaltung schreibt jetzt auch HTTPS & Domain in `config.json` – über dieselbe Warteschlange und mit derselben Sicherung `config.json.vor-benutzeraenderung.json`.
+
+### Behoben
+
+- Bei geöffneten Details eines Moduls mit Updates zählte das automatische Nachladen der Update-Angaben als Aktivität, sodass die Leerlauf-Abmeldung nicht griff.
+
+### Prüfung
+
+- `npm test`: 135 Tests (dazu 2 nur unter Windows), neu u. a. Speichern und Prüfen der Domain-Angaben (Token verschlüsselt, nie in Antworten), Test- und echtes Zertifikat mit simuliertem Let's Encrypt, Umschalten und zurück, belegter Port, abgelaufenes, fremdes oder Test-Zertifikat, Zertifikatstausch ohne Neustart, Zugriff auf `/api/tls` nur für Admins aus dem Firmennetz, statische Prüfung der Oberfläche (alle IDs vorhanden, Bereiche mit Statuszeile).
+- Browsertest (hell, dunkel, Handy) einschließlich Umschalten auf HTTPS mit hinterlegtem Zertifikat, Anmeldung mit Zwei-Faktor über HTTPS und zurück auf HTTP.
+
 ## 0.12.0
 
 Geheimnisse verschlüsselt speichern.

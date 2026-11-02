@@ -37,6 +37,29 @@ async function gesperrt(knoepfe, melden, arbeit) {
   finally { for (const k of knoepfe) k.disabled = false; }
 }
 
+// Statuszeile eines aufklappbaren Bereichs (sichtbar auch im zugeklappten Zustand).
+function bereichStatus(id, text, art = '') {
+  const s = $(`${id}-status`);
+  s.textContent = text;
+  s.dataset.art = art;
+}
+
+// Zweimal klicken: der erste Klick fragt nach, ein zweiter innerhalb von 5 s führt aus.
+function nachfragen(knopf, frage, aktion) {
+  knopf.addEventListener('click', () => {
+    if (knopf.dataset.sicher !== '1') {
+      knopf.dataset.sicher = '1';
+      knopf.dataset.text = knopf.textContent;
+      knopf.textContent = frage;
+      setTimeout(() => { if (knopf.dataset.sicher === '1') { knopf.dataset.sicher = ''; knopf.textContent = knopf.dataset.text; } }, 5000);
+      return;
+    }
+    knopf.dataset.sicher = '';
+    knopf.textContent = knopf.dataset.text;
+    aktion();
+  });
+}
+
 function textZuModul(m) {
   if (m.fehler) return m.fehler;
   if (m.anzeige === 'keine-meldung') {
@@ -91,14 +114,13 @@ async function aktualisieren() {
     istAdmin = daten.admin;
     $('benutzer').textContent = daten.benutzer;
     $('version').textContent = daten.version ? `v${daten.version}` : '';
-    $('updates-oeffnen').hidden = !daten.admin;
-    $('protokoll-oeffnen').hidden = !daten.admin;
-    $('benachrichtigung-oeffnen').hidden = !daten.admin;
-    $('benutzerverwaltung-oeffnen').hidden = !daten.admin;
+    $('einstellungen-oeffnen').hidden = !daten.admin;
     $('admin-hinweis').hidden = !daten.adminNurIntern;
-    $('neustart-oeffnen').hidden = !daten.neustartMoeglich;
-    $('beenden-oeffnen').hidden = !daten.beendenMoeglich;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
+    $('sys-neustart').hidden = !daten.neustartMoeglich;
+    $('sys-beenden').hidden = !daten.beendenMoeglich;
+    $('ber-sys').hidden = !daten.neustartMoeglich && !daten.beendenMoeglich;
+    bereichStatus('ber-sys', [daten.neustartMoeglich && 'Neu starten', daten.beendenMoeglich && 'Beenden'].filter(Boolean).join(' oder '));
     letzteModule = daten.module;
     const zaehler = { ok: 0, warnung: 0, fehler: 0, 'keine-meldung': 0 };
     for (const m of daten.module) {
@@ -162,13 +184,11 @@ async function detailsFuellen(m, hintergrund = false) {
   );
   leisteFuellen($('details-leiste'), m.verlaufKurz ?? []);
   $('details-admin').hidden = !istAdmin || Boolean(m.fehler);
-  $('details-einstellungen').hidden = !m.hatEinstellungen;
   $('details-pause').textContent = m.aktiv ? 'Pausieren' : 'Fortsetzen';
   $('details-pause').onclick = () => gesperrt([$('details-pause')], aktionMeldung, async () => {
     await senden(`/api/module/${encodeURIComponent(m.id)}/aktiv`, { aktiv: !m.aktiv });
     aktualisieren();
   });
-  $('details-einstellungen').onclick = () => einstellungenOeffnen(m);
   // Beenden mit Rückfrage auf demselben Knopf (zweiter Klick innerhalb von 5 s).
   const beendenKnopf = $('details-beenden');
   if (beendenKnopf.dataset.modul !== m.id) { beendenKnopf.dataset.modul = m.id; beendenKnopf.dataset.bestaetigen = ''; }
@@ -185,18 +205,26 @@ async function detailsFuellen(m, hintergrund = false) {
     beendenKnopf.dataset.bestaetigen = '';
     modulAktion(m, 'beenden', beendenKnopf);
   };
-  $('mupd').hidden = !istAdmin || !m.repo || Boolean(m.fehler);
-  if (!$('mupd').hidden) modulUpdateLaden(m.id);
+  $('md-upd').hidden = !istAdmin || !m.repo || Boolean(m.fehler);
+  if (!$('md-upd').hidden) modulUpdateLaden(m.id, false, hintergrund);
   $('details-starten').hidden = !m.kannStarten;
   $('details-starten').onclick = () => modulAktion(m, 'starten', $('details-starten'));
   const messwerte = Object.entries(l?.messwerte ?? {});
-  $('details-messwerte-titel').hidden = !messwerte.length;
+  const hinweise = l?.details ?? [];
   $('details-messwerte').replaceChildren(...messwerte.flatMap(([name, wert]) => fakt(name, wert.toLocaleString('de-DE'))));
-  $('details-liste').replaceChildren(...(l?.details ?? []).map((d) => el('li', { textContent: d })));
+  $('details-liste').replaceChildren(...hinweise.map((d) => el('li', { textContent: d })));
   $('details-ausgabe').hidden = !l?.fehlerausgabe;
   $('details-ausgabe').textContent = l?.fehlerausgabe ?? '';
+  $('md-werte').hidden = !messwerte.length && !hinweise.length && !l?.fehlerausgabe;
+  bereichStatus('md-werte', [messwerte.length && `${messwerte.length} ${messwerte.length === 1 ? 'Kennzahl' : 'Kennzahlen'}`,
+    hinweise.length && `${hinweise.length} ${hinweise.length === 1 ? 'Hinweis' : 'Hinweise'}`, l?.fehlerausgabe && 'Fehlerausgabe'].filter(Boolean).join(' · '));
+  $('md-verlauf').hidden = Boolean(m.fehler);
   if (m.fehler) { $('details-verlauf').replaceChildren(); return; }
   const { verlauf } = await (await api(`/api/module/${encodeURIComponent(m.id)}/verlauf?anzahl=30`, hintergrund ? HINTERGRUND : {})).json();
+  if (offenesModul !== m.id) return;
+  const zaehlung = {};
+  for (const e of verlauf) zaehlung[e.status] = (zaehlung[e.status] ?? 0) + 1;
+  bereichStatus('md-verlauf', verlauf.length ? `${verlauf.length === 1 ? 'Letzter Lauf' : `Letzte ${verlauf.length} Läufe`}: ${Object.entries(zaehlung).map(([s, n]) => `${n} ${STATUS_TEXT[s] ?? s}`).join(', ')}` : 'Noch keine Läufe');
   $('details-verlauf').replaceChildren(...verlauf.map((e) => {
     const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.ende ?? e.beginn)} – ${e.zusammenfassung}` }));
     li.dataset.status = e.status;
@@ -221,7 +249,7 @@ function modulUpdateZeigen(st) {
   if (laeuft) mupdMeldung(MUPD_PHASEN[st.phase]);
   else if (st.fehler) mupdMeldung(st.fehler, 'fehler');
   else if (st.hinweis) mupdMeldung(st.hinweis, 'ok');
-  else if (!st.tokenGesetzt) mupdMeldung('Kein GitHub-Token: im Dialog „Updates“ eintragen (Contents: Read-only, auch für das Modul-Repo).', 'fehler');
+  else if (!st.tokenGesetzt) mupdMeldung('Kein GitHub-Token: unter Einstellungen → Updates eintragen (Contents: Read-only, auch für das Modul-Repo).', 'fehler');
   else mupdMeldung(st.updateMoeglich ? `Version ${v.version} ist verfügbar.` : v ? 'Das Modul ist aktuell.' : '');
   $('mupd-notizen-rahmen').hidden = !(st.updateMoeglich && v?.notizen);
   $('mupd-notizen').textContent = v?.notizen ?? '';
@@ -233,14 +261,17 @@ function modulUpdateZeigen(st) {
   $('mupd-zurueck').onclick = () => modulUpdateAktion(st.id, 'zurueck');
   $('mupd-suchen').onclick = () => modulUpdateAktion(st.id, 'suchen');
   for (const k of ['mupd-suchen', 'mupd-installieren', 'mupd-zurueck']) $(k).disabled = laeuft;
+  bereichStatus('md-upd', laeuft ? MUPD_PHASEN[st.phase] : st.fehler ? 'Fehler beim letzten Vorgang' : !st.tokenGesetzt ? 'Kein GitHub-Token'
+    : st.updateMoeglich ? `Update auf v${v.version} verfügbar` : `${st.installiert ? `v${st.installiert}` : ''}${v ? ' · aktuell' : ''}`,
+  st.fehler || !st.tokenGesetzt ? 'fehler' : st.updateMoeglich ? 'warnung' : '');
   clearTimeout(mupdTimer);
   // Während eines Vorgangs jede Sekunde nachsehen; danach Kacheln auffrischen.
   if (laeuft) mupdTimer = setTimeout(() => modulUpdateLaden(st.id, true), 1000);
 }
 
-async function modulUpdateLaden(id, nachVorgang = false) {
+async function modulUpdateLaden(id, nachVorgang = false, hintergrund = nachVorgang) {
   if (offenesModul !== id) return;
-  const antwort = await api(`/api/module/${encodeURIComponent(id)}/update`, nachVorgang ? HINTERGRUND : {}).catch(() => null);
+  const antwort = await api(`/api/module/${encodeURIComponent(id)}/update`, hintergrund ? HINTERGRUND : {}).catch(() => null);
   if (!antwort?.ok || offenesModul !== id) return;
   const st = await antwort.json();
   modulUpdateZeigen(st);
@@ -290,24 +321,34 @@ function detailsOeffnen(id) {
   if (!m) return;
   offenesModul = id;
   aktionMeldung('');
+  // Beim Öffnen sind nur die Kennzahlen aufgeklappt.
+  for (const d of $('details').querySelectorAll('.bereich')) d.open = d.id === 'md-werte';
   detailsFuellen(m);
   empfaengerLaden(m);
+  einstellungenLaden(m);
   if (!$('details').open) $('details').showModal();
 }
 
 // Zusätzliche Mail-Empfänger je Modul (nur Admins).
+let empfAktiv = true;
 const empfMeldung = (text, art = '') => { $('empf-meldung').textContent = text; $('empf-meldung').dataset.art = art; };
 async function empfaengerLaden(m) {
-  $('empf').hidden = !istAdmin || Boolean(m.fehler);
-  if ($('empf').hidden) return;
+  $('md-empf').hidden = !istAdmin || Boolean(m.fehler);
+  if ($('md-empf').hidden) return;
+  bereichStatus('md-empf', '');
   empfMeldung('');
   $('empf-wert').value = '';
   const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/empfaenger`).catch(() => null);
   if (!antwort?.ok || offenesModul !== m.id) return;
   const d = await antwort.json();
+  empfAktiv = d.aktiv;
   $('empf-wert').value = d.empfaenger.join(', ');
   $('empf-allgemein').textContent = d.allgemein.length ? `Immer: ${d.allgemein.join(', ')}` : 'Noch keine allgemeinen Empfänger eingerichtet.';
-  if (!d.aktiv) empfMeldung('Die Benachrichtigung ist noch nicht eingerichtet oder ausgeschaltet (oben unter „Benachrichtigung“).', 'warnung');
+  if (!d.aktiv) empfMeldung('Die Benachrichtigung ist noch nicht eingerichtet oder ausgeschaltet (Einstellungen → Benachrichtigung).', 'warnung');
+  empfStatus(d.empfaenger, d.aktiv);
+}
+function empfStatus(empfaenger, aktiv = true) {
+  bereichStatus('md-empf', !aktiv ? 'Benachrichtigung ist aus' : empfaenger.length ? `${empfaenger.length} zusätzliche${empfaenger.length === 1 ? 'r' : ''} Empfänger` : 'Nur die allgemeinen Empfänger', aktiv ? '' : 'warnung');
 }
 $('empf-formular').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
@@ -321,6 +362,7 @@ $('empf-formular').addEventListener('submit', async (ereignis) => {
   if (!ergebnis) return;
   if (!ergebnis.antwort.ok) { empfMeldung(ergebnis.daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
   $('empf-wert').value = ergebnis.daten.empfaenger.join(', ');
+  empfStatus(ergebnis.daten.empfaenger, empfAktiv);
   empfMeldung(ergebnis.daten.empfaenger.length ? 'Gespeichert.' : 'Gespeichert – keine zusätzlichen Empfänger.', 'ok');
 });
 
@@ -390,17 +432,34 @@ function feldBauen(f, wert) {
   return el('div', { className: `feld ${f.typ}` }, label, eingabe, hilfe, fehler);
 }
 
-async function einstellungenOeffnen(m) {
-  einstModul = m;
-  $('einst-titel').textContent = `Einstellungen: ${m.name}`;
-  einstMeldung('Wird geladen …');
-  $('einst-felder').replaceChildren();
-  $('einstellungen').showModal();
-  const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/einstellungen`);
-  if (!antwort.ok) { einstMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); return; }
-  const { felder, werte } = await antwort.json();
+// Pflichtfelder ohne Wert (Passwort: nicht gesetzt, Liste: keine Zeile).
+const pflichtLeer = (felder, werte) => felder.filter((f) => {
+  const w = werte[f.schluessel];
+  if (!f.pflicht) return false;
+  if (f.typ === 'passwort') return !w?.gesetzt;
+  if (f.typ === 'liste') return !w?.length;
+  return w === undefined || w === null || w === '';
+}).length;
+
+function einstellungenZeigen(felder, werte) {
   $('einst-felder').replaceChildren(...felder.map((f) => feldBauen(f, werte[f.schluessel])));
+  const leer = pflichtLeer(felder, werte);
+  bereichStatus('md-einst', `${felder.length} ${felder.length === 1 ? 'Einstellung' : 'Einstellungen'}${leer ? ` · ${leer} ${leer === 1 ? 'Pflichtfeld' : 'Pflichtfelder'} leer` : ''}`, leer ? 'warnung' : '');
+}
+
+// Wird beim Öffnen der Details geladen (nicht beim automatischen Nachladen, damit Eingaben erhalten bleiben).
+async function einstellungenLaden(m) {
+  einstModul = m;
+  $('md-einst').hidden = !istAdmin || !m.hatEinstellungen || Boolean(m.fehler);
+  if ($('md-einst').hidden) return;
+  bereichStatus('md-einst', 'Wird geladen …');
   einstMeldung('');
+  $('einst-felder').replaceChildren();
+  const antwort = await api(`/api/module/${encodeURIComponent(m.id)}/einstellungen`).catch(() => null);
+  if (offenesModul !== m.id) return;
+  if (!antwort?.ok) { bereichStatus('md-einst', 'Konnte nicht geladen werden', 'fehler'); einstMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); return; }
+  const { felder, werte } = await antwort.json();
+  einstellungenZeigen(felder, werte);
 }
 
 $('einst-formular').addEventListener('submit', async (ereignis) => {
@@ -422,11 +481,9 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
     einstMeldung(daten.feldfehler?._ ?? daten.fehler ?? 'Speichern nicht möglich.', 'fehler');
     return;
   }
-  $('einst-felder').replaceChildren(...daten.felder.map((f) => feldBauen(f, daten.werte[f.schluessel])));
+  einstellungenZeigen(daten.felder, daten.werte);
   einstMeldung(daten.geaendert.length ? 'Gespeichert. Das Modul übernimmt die Änderung beim nächsten Lauf.' : 'Keine Änderungen.', 'ok');
 });
-$('einst-schliessen').addEventListener('click', () => $('einstellungen').close());
-$('einst-abbrechen').addEventListener('click', () => $('einstellungen').close());
 
 // ---- Benachrichtigung (nur Admins) ----
 const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link'];
@@ -440,6 +497,9 @@ function benZeigen(daten) {
     if (k === 'client_secret') { $('ben-client_secret').value = ''; $('ben-client_secret').placeholder = w.client_secret.gesetzt ? 'gesetzt' : 'nicht gesetzt'; continue; }
     $(`ben-${k}`).value = Array.isArray(w[k]) ? w[k].join(', ') : w[k] ?? '';
   }
+  const letzte = daten.verlauf[0];
+  bereichStatus('ber-ben', !w.aktiv ? 'Aus' : `Aktiv · ${w.empfaenger.length} Empfänger${letzte ? ` · ${letzte.ok ? 'zuletzt gesendet' : 'letzte Mail nicht gesendet'} ${relativ(letzte.zeit)}` : ''}`,
+    !w.aktiv ? 'warnung' : letzte && !letzte.ok ? 'fehler' : '');
   $('ben-leer').hidden = daten.verlauf.length > 0;
   $('ben-verlauf').replaceChildren(...daten.verlauf.map((e) => {
     const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.zeit)} – ${e.betreff}${e.ok ? '' : ` – nicht gesendet: ${e.fehler}`}` }));
@@ -453,16 +513,13 @@ function benFehlerZeigen(feldfehler = {}) {
   for (const k of ['aktiv', ...BEN_FELDER]) $(`ben-${k}-fehler`).textContent = feldfehler[k] ?? '';
 }
 
-$('benachrichtigung-oeffnen').addEventListener('click', async () => {
-  benMeldung('Wird geladen …');
+async function benLaden() {
   benFehlerZeigen();
-  $('benachrichtigung').showModal();
   const antwort = await api('/api/benachrichtigung');
-  if (!antwort.ok) { benMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); return; }
+  if (!antwort.ok) { benMeldung('Einstellungen konnten nicht geladen werden.', 'fehler'); bereichStatus('ber-ben', 'Konnte nicht geladen werden', 'fehler'); return; }
   benZeigen(await antwort.json());
   benMeldung('');
-});
-$('ben-schliessen').addEventListener('click', () => $('benachrichtigung').close());
+}
 $('ben-formular').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
   const werte = { aktiv: $('ben-aktiv').checked };
@@ -532,6 +589,8 @@ function bvZeigen(daten) {
       el('td', { textContent: b.zweiFaktor ? 'eingerichtet' : 'beim nächsten Anmelden' }),
       el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), zelle);
   }));
+  const ohne = daten.benutzer.filter((b) => !b.zweiFaktor).length;
+  bereichStatus('ber-bv', `${daten.benutzer.length} Benutzer · ${daten.sitzungen.length} ${daten.sitzungen.length === 1 ? 'Sitzung' : 'Sitzungen'}${ohne ? ` · ${ohne} ohne Zwei-Faktor` : ''}`, ohne ? 'warnung' : '');
   const auswahl = $('bv-setzen-name');
   const vorher = auswahl.value;
   auswahl.replaceChildren(...daten.benutzer.map((b) => new Option(b.name, b.name)));
@@ -545,7 +604,7 @@ function bvZeigen(daten) {
 
 async function bvLaden() {
   const antwort = await api('/api/benutzer');
-  if (!antwort.ok) { bvMeldung('Benutzer konnten nicht geladen werden.', 'fehler'); return; }
+  if (!antwort.ok) { bvMeldung('Benutzer konnten nicht geladen werden.', 'fehler'); bereichStatus('ber-bv', 'Konnte nicht geladen werden', 'fehler'); return; }
   bvZeigen(await antwort.json());
 }
 
@@ -564,14 +623,12 @@ async function bvAktion(weg, koerper, knoepfe, erfolg) {
   return true;
 }
 
-$('benutzerverwaltung-oeffnen').addEventListener('click', async () => {
+async function bvOeffnen() {
   bvMeldung('');
   $('bv-anlegen').reset();
   $('bv-setzen').reset();
-  $('benutzerverwaltung').showModal();
-  await bvLaden().catch(() => bvMeldung(KEINE_VERBINDUNG, 'fehler'));
-});
-$('bv-schliessen').addEventListener('click', () => $('benutzerverwaltung').close());
+  await bvLaden();
+}
 $('bv-anlegen').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
   const name = $('bv-name').value.trim();
@@ -630,6 +687,9 @@ function updateZeigen(st) {
   $('upd-zurueck').hidden = !(st.vorherige && st.viaStarter) || beschaeftigt;
   $('upd-zurueck').textContent = st.vorherige ? `Zurück auf v${st.vorherige.version}` : 'Vorherige Version wiederherstellen';
   tokenZeigen(st.token);
+  bereichStatus('ber-upd', !st.eingerichtet ? 'Nicht eingerichtet (GitHub-Token fehlt)' : beschaeftigt ? PHASEN[st.phase] : st.phase === 'fehler' ? 'Fehler beim letzten Vorgang'
+    : st.updateMoeglich ? `Update auf v${st.verfuegbar.version} verfügbar` : `v${st.installiert}${st.verfuegbar ? ' · aktuell' : ''}${st.token?.laeuftBaldAb ? ' · Token läuft bald ab' : ''}`,
+  !st.eingerichtet || st.phase === 'fehler' ? 'fehler' : st.updateMoeglich || st.token?.laeuftBaldAb ? 'warnung' : '');
   if (!st.eingerichtet) updateMeldung('Updates sind noch nicht eingerichtet: Bitte unten einen GitHub-Token eintragen.', 'fehler');
   else if (beschaeftigt) updateMeldung(PHASEN[st.phase]);
   else if (st.phase === 'fehler') updateMeldung(st.fehler, 'fehler');
@@ -725,13 +785,10 @@ async function updatesOeffnen() {
   $('upd-bestaetigen').hidden = true;
   tokMeldung('');
   $('tok-wert').value = '';
-  if (!$('updates').open) $('updates').showModal();
   const antwort = await api('/api/updates');
   if (antwort.ok) updateZeigen(await antwort.json());
 }
 
-$('updates-oeffnen').addEventListener('click', updatesOeffnen);
-$('updates-schliessen').addEventListener('click', () => $('updates').close());
 $('upd-suchen').addEventListener('click', async () => { updateMeldung(PHASEN.suche); $('upd-suchen').disabled = true; await updateAktion('suchen'); });
 $('upd-installieren').addEventListener('click', () => {
   $('upd-bestaetigen-version').textContent = `v${updateStatus.verfuegbar.version}`;
@@ -771,6 +828,12 @@ async function protokollLaden() {
   const gewaehlt = $('prot-quelle').value;
   $('prot-quelle').replaceChildren(new Option('Alle', ''), ...quellen.map((q) => new Option(q, q)));
   $('prot-quelle').value = quellen.includes(gewaehlt) ? gewaehlt : '';
+  // Statuszeile nur ohne Filter: Fehler und Warnungen der letzten 24 Stunden.
+  if (!parameter.toString()) {
+    const tag = eintraege.filter((e) => Date.now() - Date.parse(e.zeit) < 86_400_000);
+    const fehler = tag.filter((e) => e.stufe === 'fehler').length;
+    bereichStatus('ber-prot', tag.length ? `24 h: ${fehler} Fehler, ${tag.length - fehler} ${tag.length - fehler === 1 ? 'Warnung' : 'Warnungen'} · letzter Eintrag ${relativ(tag[0].zeit)}` : 'Keine Einträge in den letzten 24 Stunden', fehler ? 'fehler' : tag.length ? 'warnung' : 'ok');
+  }
   $('prot-leer').hidden = eintraege.length > 0;
   $('prot-liste').replaceChildren(...eintraege.map((e) => {
     const li = document.createElement('li');
@@ -791,18 +854,152 @@ async function protokollLaden() {
     return li;
   }));
 }
-$('protokoll-oeffnen').addEventListener('click', async () => { $('protokoll').showModal(); await protokollLaden(); });
-$('protokoll-schliessen').addEventListener('click', () => $('protokoll').close());
 $('prot-aktualisieren').addEventListener('click', protokollLaden);
 $('prot-stufe').addEventListener('change', protokollLaden);
 $('prot-quelle').addEventListener('change', protokollLaden);
 
+// ---- HTTPS & Domain (nur Admins) ----
+const TLS_MODUS = { aus: 'HTTP im internen Netz (unverschlüsselt)', letsencrypt: 'HTTPS mit Zertifikat von Let’s Encrypt', dateien: 'HTTPS mit eigenem Zertifikat (Dateien)' };
+const HTTP_PORT = 8080;
+const TLS_FELDER = ['hostname', 'email', 'dns_anbieter', 'token'];
+const tlsMeldung = (text, art = '') => { $('tls-meldung').textContent = text; $('tls-meldung').dataset.art = art; };
+const tlsVorgang = (text, art = '') => { $('tls-vorgang').textContent = text; $('tls-vorgang').dataset.art = art; };
+const umschaltMeldung = (text, art = '') => { $('tls-umschalten-meldung').textContent = text; $('tls-umschalten-meldung').dataset.art = art; };
+const datum = (iso) => new Date(iso).toLocaleDateString('de-DE');
+let tlsTimer = null;
+
+const zertifikatText = (z) => (z ? `${z.domain} – ${z.gueltig ? `gültig bis ${datum(z.gueltigBis)}` : `abgelaufen am ${datum(z.gueltigBis)}`}` : 'noch keines');
+
+function tlsFehlerZeigen(feldfehler = {}) {
+  for (const k of TLS_FELDER) $(`tls-${k}-fehler`).textContent = feldfehler[k] ?? '';
+}
+
+function tlsZeigen(st, formular = false) {
+  const v = st.vorgang;
+  const art = v?.art === 'test' ? 'Testzertifikat' : 'Zertifikat';
+  const https = st.modus === 'letsencrypt';
+  $('tls-fakten').replaceChildren(
+    ...fakt('Betrieb', `${TLS_MODUS[st.modus] ?? st.modus} · Port ${st.port}`),
+    ...fakt('Zertifikat', zertifikatText(st.zertifikat)),
+    ...fakt('Testzertifikat', st.testzertifikat ? zertifikatText(st.testzertifikat) : null),
+    ...fakt(https ? 'Adresse' : 'Adresse mit HTTPS', st.adresse),
+  );
+  if (formular) {
+    $('tls-hostname').value = st.hostname;
+    $('tls-email').value = st.email;
+    $('tls-dns_anbieter').value = st.dnsAnbieter;
+    $('tls-token').value = '';
+    $('tls-token').placeholder = st.tokenGesetzt ? 'gesetzt – leer lassen, um ihn zu behalten' : 'nicht gesetzt';
+  }
+  const p = st.pruefung;
+  $('tls-pruefung').hidden = !p;
+  if (p) {
+    $('tls-pruefung').replaceChildren(...[p.zone, p.aufloesung].map((e) => { const li = el('li', { textContent: e.text }); li.dataset.ok = e.ok ? 'ja' : 'nein'; return li; }),
+      el('li', { className: 'leise', textContent: `Geprüft ${relativ(p.zeit)}` }));
+  }
+  const bereit = Boolean(st.hostname && st.email && st.tokenGesetzt);
+  if (v?.laeuft) tlsVorgang(v.schritt ?? `${art} wird angefragt …`);
+  else if (v?.ok) tlsVorgang(`${art} erhalten (${relativ(v.ende)}).${v.art === 'test' ? ' Die Einrichtung funktioniert – jetzt das echte Zertifikat anfragen.' : https ? ' Es ist sofort aktiv.' : ''}`, 'ok');
+  else if (v?.ok === false) tlsVorgang(`${art} nicht erhalten: ${v.fehler}`, 'fehler');
+  else tlsVorgang(bereit ? '' : 'Zuerst Domain, E-Mail und Token speichern.');
+  $('tls-pruefen').disabled = !bereit;
+  $('tls-test').disabled = !bereit || Boolean(v?.laeuft);
+  $('tls-echt').disabled = !bereit || Boolean(v?.laeuft);
+  $('tls-echt').textContent = https ? 'Zertifikat erneuern' : 'Zertifikat anfragen';
+  const aktiv = st.umschaltenGrund === 'HTTPS ist bereits aktiv.';
+  $('tls-umschalten').hidden = aktiv;
+  $('tls-umschalten').disabled = !st.umschaltenMoeglich;
+  $('tls-http').hidden = st.modus === 'aus';
+  const warnung = st.umschaltenMoeglich && p && !p.aufloesung.ok ? ` Achtung: Laut letzter Prüfung zeigt ${st.hostname} nicht auf diesen Rechner – dann ist die Oberfläche bis zum DNS-Eintrag nur über https://<IP-Adresse>:${st.httpsPort}/ mit Zertifikatswarnung erreichbar.` : '';
+  $('tls-umschalten-text').textContent = aktiv ? `HTTPS ist aktiv: ${st.adresse} Das Zertifikat wird automatisch vor Ablauf erneuert.`
+    : st.umschaltenMoeglich ? `Danach ist die Oberfläche nur noch unter ${st.adresse} erreichbar (nicht mehr per HTTP). Die Basis startet dafür neu; alle müssen sich neu anmelden.${st.neustartMoeglich ? '' : ' Die Basis läuft nicht über Start.exe – nach dem Umschalten bitte von Hand neu starten.'}${warnung}`
+      : st.umschaltenGrund;
+  const restTage = st.zertifikat ? Math.floor((Date.parse(st.zertifikat.gueltigBis) - Date.now()) / 86_400_000) : null;
+  bereichStatus('ber-tls', v?.laeuft ? `${art} wird angefragt …`
+    : https ? `HTTPS aktiv · ${st.hostname}${st.zertifikat ? ` · Zertifikat bis ${datum(st.zertifikat.gueltigBis)}` : ''}`
+      : st.modus === 'dateien' ? `HTTPS mit eigenem Zertifikat · Port ${st.port}`
+        : st.umschaltenMoeglich ? `HTTP intern · Zertifikat für ${st.hostname} liegt bereit`
+          : st.hostname ? `HTTP intern · ${st.hostname} eingetragen` : 'HTTP intern · nicht eingerichtet',
+  v?.ok === false ? 'fehler' : https && restTage !== null && restTage < 14 ? 'warnung' : https ? 'ok' : '');
+  // Während einer Anfrage alle 3 s nachsehen (zählt nicht als Aktivität).
+  clearTimeout(tlsTimer);
+  if (v?.laeuft && $('einstellungen').open) tlsTimer = setTimeout(() => tlsLaden(false, true).catch(() => {}), 3000);
+}
+
+async function tlsLaden(formular = true, hintergrund = false) {
+  if (formular) { tlsMeldung(''); tlsFehlerZeigen(); umschaltMeldung(''); }
+  const antwort = await api('/api/tls', hintergrund ? HINTERGRUND : {});
+  const daten = await antwort.json().catch(() => ({}));
+  if (!antwort.ok) { bereichStatus('ber-tls', daten.fehler ?? 'Konnte nicht geladen werden', 'fehler'); return; }
+  tlsZeigen(daten, formular);
+}
+
+// Sendet eine Aktion; liefert { ok, daten } oder undefined ohne Verbindung (Meldung steht dann schon da).
+const tlsSenden = (weg, koerper, knoepfe, melden) => gesperrt(knoepfe, melden, async () => {
+  const antwort = await senden(`/api/tls/${weg}`, koerper);
+  return { ok: antwort.ok, daten: await antwort.json().catch(() => ({})) };
+});
+
+$('tls-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  tlsFehlerZeigen();
+  tlsMeldung('Wird gespeichert …');
+  const ergebnis = await tlsSenden('einstellungen', { hostname: $('tls-hostname').value, email: $('tls-email').value, dns_anbieter: $('tls-dns_anbieter').value, token: $('tls-token').value }, [$('tls-speichern')], tlsMeldung);
+  if (!ergebnis) return;
+  const { ok, daten } = ergebnis;
+  if (!ok) { tlsFehlerZeigen(daten.feldfehler); tlsMeldung(daten.fehler ?? 'Bitte die markierten Felder prüfen.', 'fehler'); return; }
+  tlsZeigen(daten.status, true);
+  tlsMeldung(daten.geaendert ? 'Gespeichert.' : 'Keine Änderungen.', 'ok');
+});
+
+$('tls-pruefen').addEventListener('click', async () => {
+  $('tls-pruefung').hidden = false;
+  $('tls-pruefung').replaceChildren(el('li', { className: 'leise', textContent: 'Wird geprüft …' }));
+  const melden = (text) => {
+    const li = el('li', { textContent: text });
+    li.dataset.ok = 'nein';
+    $('tls-pruefung').replaceChildren(li);
+    $('tls-pruefung').hidden = false;
+  };
+  const ergebnis = await tlsSenden('pruefen', {}, [$('tls-pruefen')], melden);
+  if (!ergebnis) return;
+  const { ok, daten } = ergebnis;
+  if (!ok) { if (daten.status) tlsZeigen(daten.status); melden(daten.fehler ?? 'Prüfung nicht möglich.'); return; }
+  tlsZeigen(daten.status);
+});
+
+async function tlsAnfragen(test) {
+  tlsVorgang('Wird gestartet …');
+  const ergebnis = await tlsSenden('anfragen', { test }, [$('tls-test'), $('tls-echt')], tlsVorgang);
+  if (!ergebnis) return;
+  const { ok, daten } = ergebnis;
+  if (!ok) { if (daten.status) tlsZeigen(daten.status); tlsVorgang(daten.fehler ?? 'Anfrage nicht möglich.', 'fehler'); return; }
+  tlsZeigen(daten);
+}
+$('tls-test').addEventListener('click', () => tlsAnfragen(true));
+$('tls-echt').addEventListener('click', () => tlsAnfragen(false));
+
+// Umschalten mit Neustart: danach ist die Oberfläche unter einer anderen Adresse erreichbar.
+async function tlsUmschalten(weg) {
+  umschaltMeldung('Wird umgestellt …');
+  const ergebnis = await tlsSenden(weg, {}, [$('tls-umschalten'), $('tls-http')], umschaltMeldung);
+  if (!ergebnis) return;
+  const { ok, daten } = ergebnis;
+  if (!ok) { if (daten.status) tlsZeigen(daten.status); umschaltMeldung(daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  const ziel = weg === 'http' ? `http://${location.hostname}:${HTTP_PORT}/` : daten.adresse;
+  if (!daten.neustart) { umschaltMeldung(`${daten.hinweis} Danach: ${ziel}`, 'warnung'); return; }
+  clearInterval(aktualisierer);
+  $('tls-umschalten').disabled = true;
+  $('tls-http').disabled = true;
+  umschaltMeldung(`Die Basis startet neu. In wenigen Sekunden geht es weiter zu ${ziel} – dort neu anmelden.`, 'ok');
+  setTimeout(() => { location.href = ziel; }, 12_000);
+}
+nachfragen($('tls-umschalten'), 'Wirklich umschalten? Die Basis startet neu.', () => tlsUmschalten('umschalten'));
+nachfragen($('tls-http'), 'Wirklich zurück auf HTTP? Die Basis startet neu.', () => tlsUmschalten('http'));
+
 // ---- Neustart (nur Admins) ----
 const neustartMeldung = (text, art = '') => { $('neustart-meldung').textContent = text; $('neustart-meldung').dataset.art = art; };
-$('neustart-oeffnen').addEventListener('click', () => { neustartMeldung(''); $('neustart-ja').disabled = false; $('neustart').showModal(); });
-$('neustart-schliessen').addEventListener('click', () => $('neustart').close());
-$('neustart-nein').addEventListener('click', () => $('neustart').close());
-$('neustart-ja').addEventListener('click', async () => {
+nachfragen($('neustart-ja'), 'Wirklich neu starten?', async () => {
   $('neustart-ja').disabled = true;
   let antwort;
   try { antwort = await api('/api/neustart', { method: 'POST', headers: { 'X-Monitor-Anfrage': '1' } }); }
@@ -822,10 +1019,7 @@ $('neustart-ja').addEventListener('click', async () => {
 
 // ---- Basis beenden (nur Admins) ----
 const beendenMeldung = (text, art = '') => { $('beenden-meldung').textContent = text; $('beenden-meldung').dataset.art = art; };
-$('beenden-oeffnen').addEventListener('click', () => { beendenMeldung(''); $('beenden-module').checked = false; $('beenden-ja').disabled = false; $('beenden').showModal(); });
-$('beenden-schliessen').addEventListener('click', () => $('beenden').close());
-$('beenden-nein').addEventListener('click', () => $('beenden').close());
-$('beenden-ja').addEventListener('click', async () => {
+nachfragen($('beenden-ja'), 'Wirklich beenden?', async () => {
   $('beenden-ja').disabled = true;
   const mitModulen = $('beenden-module').checked;
   let antwort;
@@ -838,14 +1032,44 @@ $('beenden-ja').addEventListener('click', async () => {
     return;
   }
   clearInterval(aktualisierer);
-  $('beenden').close();
+  $('einstellungen').close();
   $('details').close();
-  for (const id of ['benachrichtigung-oeffnen', 'protokoll-oeffnen', 'neustart-oeffnen', 'beenden-oeffnen', 'updates-oeffnen', 'benutzerverwaltung-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
+  for (const id of ['einstellungen-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
   for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
   $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
   $('beendet-seite').hidden = false;
   document.title = 'Monitoring – beendet';
 });
+
+// ---- Einstellungen: ein Dialog, jeder Bereich einzeln aufklappbar (immer nur einer offen) ----
+function sysOeffnen() {
+  neustartMeldung('');
+  beendenMeldung('');
+  $('beenden-module').checked = false;
+  $('neustart-ja').disabled = false;
+  $('beenden-ja').disabled = false;
+  return Promise.resolve();
+}
+const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sys': sysOeffnen };
+const bereichLaden = (id) => BEREICHE[id]().catch((fehler) => { if (fehler.message !== 'abgemeldet') bereichStatus(id, KEINE_VERBINDUNG, 'fehler'); });
+
+for (const d of document.querySelectorAll('details.bereich')) {
+  d.addEventListener('toggle', () => {
+    if (!d.open) return;
+    // Für Browser ohne <details name>: andere Bereiche derselben Gruppe zuklappen.
+    if (d.getAttribute('name')) for (const anderer of document.querySelectorAll(`details.bereich[name="${d.getAttribute('name')}"]`)) if (anderer !== d) anderer.open = false;
+    if (BEREICHE[d.id]) bereichLaden(d.id);
+  });
+}
+
+$('einstellungen-oeffnen').addEventListener('click', () => {
+  for (const d of $('einstellungen').querySelectorAll('.bereich')) d.open = false;
+  $('einstellungen').showModal();
+  // Statuszeilen aller Bereiche gleichzeitig laden; die Inhalte sind danach schon gefüllt.
+  for (const id of Object.keys(BEREICHE)) if (!$(id).hidden) bereichLaden(id);
+});
+$('einstellungen-schliessen').addEventListener('click', () => $('einstellungen').close());
+$('einstellungen').addEventListener('close', () => clearTimeout(tlsTimer));
 
 $('details-schliessen').addEventListener('click', () => $('details').close());
 $('details').addEventListener('close', () => { offenesModul = null; clearTimeout(mupdTimer); });

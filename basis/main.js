@@ -20,6 +20,7 @@ import { Benutzerverwaltung, passwortRegelFehler } from './benutzerverwaltung.js
 import { Sicherheitsmeldungen } from './sicherheit.js';
 import { konfigWerteOeffnen, Tresor } from './geheimnis.js';
 import { geheimnisseUmstellen } from './umstellung.js';
+import { Domainverwaltung } from './domain.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
@@ -154,13 +155,15 @@ async function starten(konfig, configDatei, protokoll, tresor) {
     setTimeout(() => process.exit(NEUSTART_CODE), 300);
   };
   await updates.starten();
+  const domain = new Domainverwaltung({ configDatei, konfig, tresor, benutzerverwaltung, zertifikate, neustart: updates.viaStarter ? neustarten : null, log });
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
   }
+  domain.server = server;
   zertifikate.automatischErneuern(server);
   planer.start();
   updates.taeglichPruefen();

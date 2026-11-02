@@ -53,7 +53,7 @@ mit. Auf dem Worker muss also nichts installiert werden.
 
    Die mitgelieferte `config.example.json` ist für den **internen Betrieb ohne
    Zertifikat** eingestellt (HTTP, Port 8080, siehe „Interner Betrieb ohne
-   Zertifikat“). Für HTTPS siehe „HTTPS-Zertifikat“.
+   Zertifikat“). Für HTTPS siehe „HTTPS & Domain“.
 3. **Start.exe doppelklicken.** Die Basis startet unsichtbar im Hintergrund und
    die Seite öffnet sich im Browser. Von anderen Rechnern im Firmennetz:
    `http://<IP-Adresse des Workers>:8080/`.
@@ -126,64 +126,105 @@ Datei trotzdem niemals committen.
   Fehlerprotokoll vermerkt.
 - Passwort und Sitzung gehen **unverschlüsselt** durch das Firmennetz. Das ist
   als Übergang gedacht; beim Start steht deshalb eine Warnung im Protokoll.
-  Später auf HTTPS umstellen (nächster Abschnitt).
+  Später auf HTTPS umstellen (nächster Abschnitt, geht in der Oberfläche).
 - In der Windows-Firewall den Port nur für Domänen- und private Netzwerke
   freigeben (Befehl siehe „Einrichten unter Windows“) und im Router **keine**
   Portweiterleitung einrichten.
 
-## HTTPS-Zertifikat
+## HTTPS & Domain
+
+Mit einer eigenen (Sub-)Domain, z. B. `monitoring.konsum-weimar.de`, und einem
+Zertifikat von Let's Encrypt ist die Oberfläche verschlüsselt erreichbar.
 
 ### Empfohlen: Let's Encrypt über Hetzner- oder Cloudflare-DNS
 
 Die Basis holt und erneuert das Zertifikat selbst. Sie nutzt dafür die
 **DNS-Prüfung (DNS-01)**: Let's Encrypt prüft nur einen TXT-Eintrag im
-öffentlichen DNS. Für das Zertifikat muss der Worker deshalb **nicht aus dem
-Internet erreichbar sein**. Er braucht nur ausgehend HTTPS zu
-`acme-v02.api.letsencrypt.org`, `cloudflare-dns.com` und je nach Anbieter
-`api.hetzner.cloud` bzw. `api.cloudflare.com`.
+öffentlichen DNS, den die Basis über die API des DNS-Anbieters kurz anlegt. Für
+das Zertifikat muss der Worker deshalb **nicht aus dem Internet erreichbar
+sein**. Er braucht nur ausgehend HTTPS zu `acme-v02.api.letsencrypt.org`
+(Test: `acme-staging-v02.api.letsencrypt.org`), `cloudflare-dns.com` und je
+nach Anbieter `api.hetzner.cloud` bzw. `api.cloudflare.com`.
 
-#### Mit Hetzner (DNS in der Hetzner Console)
+#### Token bei Hetzner (DNS in der Hetzner Console)
 
-1. In der **Hetzner Console** das Projekt öffnen, in dem die Zone
-   (z. B. `konsum-weimar.de`) liegt → **Sicherheit → API-Tokens → API-Token
-   erstellen**, Rechte **„Lesen & Schreiben“**. Tokens aus der alten DNS Console
-   (dns.hetzner.com) funktionieren nicht. Tipp: Liegt die Zone allein in einem
-   eigenen Projekt, kann das Token nur diese Zone ändern.
-2. In `config.json`:
+In der **Hetzner Console** das Projekt öffnen, in dem die Zone (z. B.
+`konsum-weimar.de`) liegt → **Sicherheit → API-Tokens → API-Token erstellen**,
+Rechte **„Lesen & Schreiben“**. Tokens aus der alten DNS Console
+(dns.hetzner.com) funktionieren nicht. Tipp: Liegt die Zone allein in einem
+eigenen Projekt, kann das Token nur diese Zone ändern.
 
-   ```json
-   "hostname": "monitoring.konsum-weimar.de",
-   "port": 8443,
-   "tls": {
-     "modus": "letsencrypt",
-     "dns_anbieter": "hetzner",
-     "hetzner_token": "…",
-     "email": "it@konsum-weimar.de",
-     "staging": true
-   }
+#### Token bei Cloudflare
+
+In Cloudflare unter **Mein Profil → API-Token → Token erstellen** die Vorlage
+**„Zone-DNS bearbeiten“** wählen und das Token auf genau diese Zone beschränken.
+
+#### Einrichten in der Oberfläche
+
+Als Admin (nur aus dem Firmennetz oder über VPN) **Einstellungen → HTTPS &
+Domain** aufklappen:
+
+1. **Domain, E-Mail, DNS-Anbieter und API-Token** eintragen und speichern. Der
+   Token wird verschlüsselt in `config.json` gespeichert (siehe „Verschlüsselung
+   der Geheimnisse“) und nie wieder angezeigt; leer lassen behält den
+   gespeicherten. An die E-Mail-Adresse schreibt Let's Encrypt, falls ein
+   Zertifikat abläuft.
+2. **Verbindung prüfen:** Zeigt, ob der Token die Zone der Domain findet und
+   wohin die Domain zeigt. Für das Zertifikat reicht der Token; für den Aufruf
+   der Oberfläche muss die Domain auf den Worker zeigen (siehe „Name im DNS“).
+3. **Testzertifikat anfragen:** holt ein Zertifikat aus der Testumgebung von
+   Let's Encrypt nach `data\zertifikat-test`. Der Betrieb ändert sich nicht.
+   Dauert meist 1–3 Minuten; der Fortschritt steht im Bereich.
+4. **Zertifikat anfragen:** holt das echte Zertifikat nach `data\zertifikat`.
+   Echte Zertifikate gibt es nur wenige pro Woche für dieselbe Domain – deshalb
+   zuerst das Testzertifikat.
+5. In der Windows-Firewall des Workers Port **8443** freigeben (Eingabeaufforderung
+   als Administrator):
+
+   ```
+   netsh advfirewall firewall add rule name="Monitoring HTTPS" dir=in action=allow protocol=TCP localport=8443 profile=domain,private
    ```
 
-3. Einen A-Eintrag für den `hostname` anlegen (siehe „Name im DNS“ unten).
+6. **Auf HTTPS umschalten** (zweimal klicken): geht nur mit einem gültigen,
+   echten Zertifikat für die eingetragene Domain. Die Basis prüft, dass Port
+   8443 frei ist, setzt in `config.json` `tls.modus` auf `"letsencrypt"` und
+   `port` auf `8443` und startet neu. Danach ist die Oberfläche **nur noch**
+   unter `https://<domain>:8443/` erreichbar, alle melden sich neu an. Die Seite
+   leitet nach einigen Sekunden selbst dorthin weiter.
 
-#### Mit Cloudflare
+Läuft HTTPS, erneuert die Basis das Zertifikat 30 Tage vor Ablauf **ohne
+Neustart** (Prüfung alle 12 Stunden, Meldungen in `logs\basis.log`). Über
+**„Zertifikat erneuern“** geht das auch sofort; das neue Zertifikat gilt dann
+ebenfalls ohne Neustart.
 
-1. Die Domain wird in **Cloudflare** verwaltet.
-2. In Cloudflare unter **Mein Profil → API-Token → Token erstellen** die
-   Vorlage **„Zone-DNS bearbeiten“** wählen und das Token auf genau diese Zone
-   beschränken.
-3. In `config.json` wie oben, aber `"dns_anbieter": "cloudflare"` (oder
-   weglassen, das ist der Standard) und `"cloudflare_token": "…"`.
+**Zurück auf HTTP (intern)** (zweimal klicken) stellt wieder auf HTTP mit Port
+8080 um und startet neu. Domain, Token und Zertifikate bleiben gespeichert.
 
-#### Testen und umstellen
+#### Notfall: nach dem Umschalten nicht erreichbar
 
-Zuerst mit `"staging": true` testen:
-`.\runtime\node.exe basis\main.js --zertifikat`. Das Testzertifikat ist im
-Browser nicht vertrauenswürdig, zeigt aber, dass alles funktioniert. Danach
-`"staging": false` setzen, den Ordner `data\zertifikat` löschen und erneut
-`--zertifikat` ausführen. Dann die Basis neu starten.
+Auf dem Worker in `config.json` `"modus": "aus"` (im Abschnitt `"tls"`) und
+`"port": 8080` setzen, die übrigen Einträge unter `"tls"` dürfen stehen
+bleiben. Dann `Start.exe --neustart` ausführen. Die Oberfläche ist wieder unter
+`http://<IP-Adresse>:8080/` erreichbar.
 
-Die laufende Basis prüft alle 12 Stunden und erneuert das Zertifikat 30 Tage vor
-Ablauf **ohne Neustart**. Meldungen dazu stehen in `logs\basis.log`.
+#### Alternativ: von Hand in config.json
+
+```json
+"hostname": "monitoring.konsum-weimar.de",
+"port": 8443,
+"tls": {
+  "modus": "letsencrypt",
+  "dns_anbieter": "hetzner",
+  "hetzner_token": "…",
+  "email": "it@konsum-weimar.de",
+  "staging": true
+}
+```
+
+Für Cloudflare `"dns_anbieter": "cloudflare"` und `"cloudflare_token": "…"`.
+Mit `"staging": true` testen: `.\runtime\node.exe basis\main.js --zertifikat`.
+Danach `"staging": false` setzen, den Ordner `data\zertifikat` löschen, erneut
+`--zertifikat` ausführen und die Basis neu starten.
 
 #### Name im DNS
 
@@ -481,6 +522,19 @@ ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
 Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
 Problemen stehen oben.
 
+In den Details stehen Status und Knöpfe (Pausieren, Beenden, Dienst starten)
+oben. Darunter folgen aufklappbare Bereiche, jeweils mit einer Statuszeile, die
+auch zugeklappt sichtbar ist: **Einstellungen** (Formular des Moduls; zeigt
+leere Pflichtfelder), **Benachrichtigung** (zusätzliche Empfänger), **Updates**,
+**Kennzahlen** (beim Öffnen aufgeklappt) und **Verlauf**. Die ersten drei sehen
+nur Admins.
+
+Alle Einstellungen der Basis liegen für Admins hinter dem Knopf
+**„Einstellungen“** oben rechts: HTTPS & Domain, Benachrichtigung, Benutzer,
+Updates, Fehlerprotokoll und System (Neu starten, Beenden). Jeder Bereich zeigt
+zugeklappt eine Statuszeile (z. B. „Aktiv · 2 Empfänger“ oder „Update auf v…
+verfügbar“); es ist immer nur ein Bereich aufgeklappt.
+
 ## Benachrichtigung per Mail
 
 Die Basis verschickt Mails über **Microsoft 365** (Microsoft Graph) mit einer
@@ -511,8 +565,8 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
   Modul wird gespeichert – ein Neustart der Basis verschickt nichts doppelt.
 - Schlägt der Versand fehl, steht das im Fehlerprotokoll; die Basis versucht
   es alle 5 Minuten erneut.
-- **Empfänger je Modul:** In den Details eines Moduls unter „Benachrichtigung
-  für dieses Modul“ zusätzliche Empfänger eintragen. Sie bekommen die Mails
+- **Empfänger je Modul:** In den Details eines Moduls unter „Benachrichtigung“
+  zusätzliche Empfänger eintragen. Sie bekommen die Mails
   dieses Moduls **zusätzlich** zu den allgemeinen Empfängern (doppelte Adressen
   nur einmal).
 - Sicherheitsmails gehen an die allgemeinen Empfänger, höchstens eine je Art
@@ -543,7 +597,7 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
    Anwendungsberechtigung `Mail.Send` mit Administratorzustimmung geben – sonst
    darf sie als jedes Postfach senden und die Beschränkung wirkt nicht.
    Änderungen brauchen bis zu 2 Stunden, bis sie greifen.
-4. **In der Basis eintragen:** Als Admin oben auf **„Benachrichtigung“**:
+4. **In der Basis eintragen:** Als Admin **Einstellungen → Benachrichtigung**:
    Mandanten-ID, Anwendungs-ID, Schlüssel, Absenderpostfach, Empfänger, ggf.
    Adresse der Oberfläche (für den Link in der Mail), „aktiv“ anhaken,
    speichern und **„Testmail senden“**.
@@ -554,8 +608,9 @@ verschlüsselt gespeichert.
 
 ## Updates
 
-Admins finden oben rechts den Knopf **„Updates“**. Ein Punkt am Knopf zeigt an,
-dass die tägliche Prüfung eine neue Version gefunden hat.
+Admins finden die Updates unter **Einstellungen → Updates**. Ein Punkt am Knopf
+„Einstellungen“ zeigt an, dass die tägliche Prüfung eine neue Version gefunden
+hat; die Statuszeile des Bereichs nennt die Version.
 
 | Aktion | Wirkung |
 | --- | --- |
@@ -579,7 +634,7 @@ Voraussetzungen:
    - Recht **Contents: Read-only** (unter „Repository permissions“; „Metadata“
      kommt automatisch dazu, weitere Rechte sind nicht nötig)
    - mit Ablaufdatum
-3. Den Token in der Oberfläche eintragen: **„Updates“ → GitHub-Zugang → Token
+3. Den Token in der Oberfläche eintragen: **Einstellungen → Updates → GitHub-Zugang → Token
    speichern**. Die Basis prüft vorher bei GitHub, ob der Token das Repo **und
    dessen Releases** lesen darf (abgelehnte Tokens werden nicht gespeichert),
    und braucht keinen Neustart.
@@ -629,11 +684,13 @@ dem vollständigen Windows-Paket.
 **Dauerbetrieb:** `Start.exe --autostart` einmal ausführen. Der Starter
 startet die Basis nach einem Absturz nach 10 Sekunden neu.
 
-**Neustart:** Admins finden oben den Knopf **„Neu starten“**. Er startet die
+**Neustart:** Admins finden unter **Einstellungen → System** den Knopf
+**„Neu starten“** (zweimal klicken). Er startet die
 Basis und alle Module neu, laufende Prüfungen werden dabei abgebrochen. Danach
 ist eine neue Anmeldung nötig. Alternativ `Start.exe --neustart`.
 
-**Beenden:** Admins finden oben den Knopf **„Beenden“**. Nach einer Rückfrage
+**Beenden:** Admins finden unter **Einstellungen → System** den Knopf
+**„Basis beenden“**. Nach einer Rückfrage (zweiter Klick)
 beendet sich die Basis; laufende Prüfungen werden abgebrochen. Mit dem Haken
 „Auch alle eigenständigen Module und ihre Windows-Dienste beenden“ beendet sie
 vorher alle eigenständigen Module, die das unterstützen (siehe „Eigenständige
@@ -665,7 +722,8 @@ Jede Datei ist auf 5 MB begrenzt. Danach wird sie umbenannt (`.1` bis `.5`),
 Cloudflare-Token sowie typische Token-Formate werden vor dem Schreiben durch
 `***` ersetzt. Das gilt auch für gespeicherte Modulergebnisse.
 
-Admins sehen das Protokoll über den Knopf **„Protokoll“**: filterbar nach
+Admins sehen das Protokoll unter **Einstellungen → Fehlerprotokoll** (die
+Statuszeile zeigt Fehler und Warnungen der letzten 24 Stunden): filterbar nach
 Stufe und Quelle, mit aufklappbaren Details und einem Download als Textdatei.
 
 In der Windows-Firewall eingehend TCP auf den gewählten Port nur aus dem
@@ -676,7 +734,7 @@ Firmennetz freigeben.
 Den ersten Admin legt `--benutzer-anlegen <Name> --admin` an (siehe oben). Danach
 geht alles in der Oberfläche:
 
-- **Benutzer** (Knopf oben, nur Admins):
+- **Einstellungen → Benutzer** (nur Admins):
   - Benutzer mit Passwort anlegen, optional als Admin.
   - Passwort eines Benutzers neu setzen. Alle Sitzungen dieses Benutzers enden
     dabei sofort; beim eigenen Konto bleibt die aktuelle Sitzung bestehen.

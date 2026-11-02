@@ -86,6 +86,22 @@ export class Benutzerverwaltung {
     return lauf;
   }
 
+  // Andere Einstellungen in config.json ändern (z. B. HTTPS & Domain), nacheinander mit den Benutzeränderungen.
+  // arbeit(roh) ändert das Objekt und darf asynchron sein; vorher eine Sicherungskopie.
+  konfigAendern(arbeit) {
+    const lauf = this.kette.then(async () => {
+      const roh = JSON.parse((await readFile(this.configDatei, 'utf8')).replace(/^\uFEFF/, ''));
+      const ergebnis = await arbeit(roh);
+      await copyFile(this.configDatei, `${this.configDatei}.vor-benutzeraenderung.json`);
+      const temp = `${this.configDatei}.${randomUUID()}.tmp`;
+      await writeFile(temp, JSON.stringify(roh, null, 2) + '\n', { mode: 0o600 });
+      await rename(temp, this.configDatei);
+      return ergebnis;
+    });
+    this.kette = lauf.catch(() => {});
+    return lauf;
+  }
+
   // Umstellung: Klartext-Geheimnisse in config.json verschlüsseln (Tokens, Zwei-Faktor-Schlüssel). Ohne Sicherungskopie,
   // denn die Kopie enthielte den Klartext. Liefert die Anzahl.
   konfigVerschluesseln() {

@@ -3,6 +3,7 @@ import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BasisFehler } from './fehler.js';
 import { melde } from './protokoll.js';
 import { Benutzerfehler, BenutzerUnbekannt } from './benutzerverwaltung.js';
 import { otpauthUri, qrBild } from './zweifaktor.js';
@@ -76,7 +77,7 @@ export function istInterneAdresse(adresse) {
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
-export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, log = () => {} }) {
+export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -240,6 +241,30 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
           throw fehler;
         }
         return json(res, 200, benutzerverwaltung.ansicht(token));
+      }
+      // HTTPS & Domain (nur Admins aus dem Firmennetz/VPN).
+      const tlsWeg = /^\/api\/tls(?:\/(einstellungen|pruefen|anfragen|umschalten|http))?$/.exec(weg);
+      if (tlsWeg) {
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
+        if (!domain) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        if (!tlsWeg[1] && req.method === 'GET') return json(res, 200, await domain.status());
+        if (!tlsWeg[1] || req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        try {
+          if (tlsWeg[1] === 'einstellungen') {
+            const r = await domain.speichern(eingabe, sitzung.benutzer);
+            return r.feldfehler ? json(res, 400, { feldfehler: r.feldfehler }) : json(res, 200, r);
+          }
+          if (tlsWeg[1] === 'pruefen') return json(res, 200, { pruefung: await domain.pruefen(), status: await domain.status() });
+          if (tlsWeg[1] === 'anfragen') return json(res, 202, await domain.anfragen(eingabe?.test !== false, sitzung.benutzer));
+          if (tlsWeg[1] === 'umschalten') return json(res, 202, await domain.umschalten(sitzung.benutzer));
+          return json(res, 202, await domain.aufHttp(sitzung.benutzer));
+        } catch (fehler) {
+          if (fehler instanceof BasisFehler) return json(res, 400, { fehler: fehler.message, status: await domain.status().catch(() => null) });
+          throw fehler;
+        }
       }
       if (weg === '/api/beenden') {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
