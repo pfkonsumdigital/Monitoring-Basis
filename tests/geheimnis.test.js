@@ -10,7 +10,7 @@ import { ansicht, passwoerter, speichern, verschluesseln, wirksameWerte } from '
 import { BasisFehler } from '../basis/fehler.js';
 import {
   eigeneSid, istKlartext, istVerschluesselt, konfigOeffnen, konfigSchuetzen, konfigWerteOeffnen, MODUL_ENTROPIE,
-  powershellPfad, rechteSetzen, SCHLUESSEL_DATEI, Tresor,
+  ohneModulpfad, powershellPfad, rechteSetzen, SCHLUESSEL_DATEI, Tresor,
 } from '../basis/geheimnis.js';
 import { pruefeKonfiguration } from '../basis/konfiguration.js';
 import { pruefeModul } from '../basis/module.js';
@@ -89,6 +89,7 @@ test('Tresor: Präfixe, Schlüsseldatei, Zwischenspeicher, falscher Schlüssel, 
     assert.equal(istKlartext(''), false);
     assert.equal(istKlartext('x'), true);
     assert.equal(powershellPfad({ SystemRoot: 'C:\\Windows' }), 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'fester Pfad, nicht über PATH');
+    assert.deepEqual(ohneModulpfad({ PATH: 'x', PSModulePath: 'C:\\ps7', psmodulepath: 'y' }), { PATH: 'x' }, 'PowerShell 5.1 ohne geerbten Modulpfad');
   } finally { await rm(ordner, { recursive: true, force: true }); }
 });
 

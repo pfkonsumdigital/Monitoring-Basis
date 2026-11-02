@@ -13,6 +13,7 @@ Geheimnisse verschlüsselt speichern.
 ### Geändert
 
 - Kein „Zurück“ mehr auf Versionen vor 0.12.0 (sie könnten die verschlüsselten Werte nicht lesen). Die automatische Rückkehr bei einem fehlgeschlagenen Update bleibt möglich, weil erst nach erfolgreichem Start verschlüsselt wird.
+- Windows PowerShell für die Verschlüsselung startet ohne geerbten `PSModulePath` (sonst kann es aus einer PowerShell-7-Umgebung heraus an Modulen scheitern).
 - Fehlt die Schlüsseldatei oder lässt sich ein Wert nicht öffnen, startet die Basis nicht und nennt die Abhilfe. Ein nicht lesbarer Mail-Schlüssel oder GitHub-Token aus der Oberfläche gilt als nicht gesetzt (mit Hinweis im Protokoll).
 
 ### Prüfung

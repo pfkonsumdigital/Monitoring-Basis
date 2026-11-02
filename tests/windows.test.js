@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { befehlAusfuehren, eigeneSid, powershellPfad, rechteSetzen, SCHLUESSEL_DATEI, Tresor } from '../basis/geheimnis.js';
+import { befehlAusfuehren, eigeneSid, ohneModulpfad, powershellPfad, rechteSetzen, SCHLUESSEL_DATEI, Tresor } from '../basis/geheimnis.js';
 
 // Läuft nur unter Windows (GitHub Actions: Job „windows“). Prüft die echte DPAPI und icacls.
 const nurWindows = { skip: process.platform !== 'win32' && 'nur unter Windows' };
@@ -42,9 +42,11 @@ test('Dateirechte: nur SYSTEM, Administratoren und das eigene Konto', nurWindows
     assert.match(sid, /^S-1-5-/);
     const r = await rechteSetzen([ordner], { ausfuehren, sid });
     assert.deepEqual(r.fehler, []);
-    const sids = (pfad) => execFileSync(powershellPfad(), ['-NoProfile', '-Command',
-      `(Get-Acl -LiteralPath '${pfad}').Access | ForEach-Object { $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } | Sort-Object -Unique`], { encoding: 'utf8' })
-      .split(/\r?\n/).filter(Boolean).sort();
+    // Rechte über .NET lesen (ohne Get-Acl, dessen Modul in manchen Umgebungen nicht lädt), als SIDs.
+    const sids = (pfad) => [...new Set(execFileSync(powershellPfad(), ['-NoProfile', '-Command',
+      `$p = '${pfad}'; if ([IO.Directory]::Exists($p)) { $i = New-Object IO.DirectoryInfo $p } else { $i = New-Object IO.FileInfo $p }; ` +
+      '$i.GetAccessControl().GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value }'],
+    { encoding: 'utf8', env: ohneModulpfad(process.env) }).split(/\r?\n/).map((z) => z.trim()).filter(Boolean))].sort();
     const erwartet = [...new Set(['S-1-5-18', 'S-1-5-32-544', sid])].sort();
     assert.deepEqual(sids(ordner), erwartet);
     assert.deepEqual(sids(path.join(ordner, 'unter', 'datei.json')), erwartet, 'Unterordner und Dateien erben');

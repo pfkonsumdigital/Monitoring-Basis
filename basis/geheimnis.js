@@ -44,11 +44,17 @@ export function powershellPfad(env = process.env) {
   return path.win32.join(env.SystemRoot || env.windir || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
+// Windows PowerShell 5.1 ohne geerbten PSModulePath starten: Kommt die Basis aus einer PowerShell-7-Umgebung,
+// verweist er sonst auf Module, die 5.1 nicht laden kann.
+export function ohneModulpfad(env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => k.toUpperCase() !== 'PSMODULEPATH'));
+}
+
 // Führt die DPAPI-Aufrufe aus (ein PowerShell-Prozess für viele Werte). Liefert Base64-Strings.
 export function dpapiPowershell({ spawnImpl = spawn, env = process.env, zeitlimitMs = 60_000 } = {}) {
   return (aktion, eintraege) => new Promise((resolve, reject) => {
     const kind = spawnImpl(powershellPfad(env), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-EncodedCommand', Buffer.from(SKRIPT, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+      '-EncodedCommand', Buffer.from(SKRIPT, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env: ohneModulpfad(env) });
     let aus = '';
     let err = '';
     const timer = setTimeout(() => { kind.kill(); reject(new BasisFehler('Windows-Verschlüsselung (DPAPI) antwortet nicht.')); }, zeitlimitMs);
