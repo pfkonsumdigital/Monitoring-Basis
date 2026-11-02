@@ -6,8 +6,12 @@ Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
 1. Module finden – auch neue, ohne Neustart
 2. Meldungen eigenständiger Module einsammeln oder einfache Module selbst nach Zeitplan starten
 3. Ergebnisse speichern und auswerten (Status, „keine Meldung“, Fehler seit, Verfügbarkeit)
-4. Module über ein Formular einstellen und pausieren
-5. Alles auf einer Webseite mit Login anzeigen
+4. Module über ein Formular einstellen, pausieren, beenden und aktualisieren
+5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor) anzeigen
+6. Bei Problemen per Mail benachrichtigen (Microsoft 365)
+
+Dieser Stand beschreibt **Version 0.13.1**. Was sich je Version geändert hat,
+steht in `CHANGELOG.md`.
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
 Modulen. Module laufen unabhängig von der Basis, und die Basis läuft unabhängig
@@ -23,14 +27,28 @@ Monitoring-Basis/
   oberflaeche/   HTML, CSS, JavaScript der Weboberfläche
   modules/       eigene Module (nicht im Git)
   beispiele/     Beispielmodule zum Kopieren
-  data/          Verlauf und Zertifikat (nicht im Git, automatisch angelegt)
-  logs/          basis.log, fehler.log (nicht im Git)
-  config.json    eigene Einstellungen (nicht im Git)
-  versionen/     per Update installierte Versionen (nicht im Git)
-  aktiv.json     welche Version läuft (nicht im Git)
+  data/          Ergebnisse, Zustände, Zertifikate, Schlüsseldatei (nicht im Git, automatisch angelegt)
+  logs/          basis.log, fehler.log, starter-ausgabe.log (nicht im Git)
+  config.json    eigene Einstellungen, Benutzer, Tokens (nicht im Git)
+  versionen/     per Online-Update installierte Versionen (nicht im Git)
+  aktiv.json     welche Version läuft (nicht im Git, fehlt bis zum ersten Update)
 ```
 
-Einzige Programm-Abhängigkeit ist `acme-client` für Let's Encrypt.
+Was in `data\` liegt:
+
+| Datei/Ordner | Inhalt |
+| --- | --- |
+| `ergebnisse\<Modul>.json` | Verlauf der Läufe je Modul |
+| `modulzustand.json` | Pause und „Beendet“ je Modul |
+| `benachrichtigung.json`, `benachrichtigung-zustand.json` | Mail-Einstellungen (Schlüssel verschlüsselt) und zuletzt gemeldeter Zustand je Modul |
+| `github.json` | GitHub-Token aus der Oberfläche (verschlüsselt) |
+| `anmeldeorte.json` | bekannte Adressen der Admins (für die Sicherheitsmail) |
+| `geheimnis.schluessel` | Schlüsseldatei für die Verschlüsselung – **nicht löschen, mitsichern** |
+| `zertifikat\`, `zertifikat-test\` | Zertifikat von Let's Encrypt bzw. Testzertifikat |
+| `modul-versionen\<Modul>\` | Sicherungen der Module vor einem Modul-Update |
+
+Programm-Abhängigkeiten sind nur `acme-client` (Let's Encrypt) und
+`qrcode-generator` (QR-Code beim Einrichten der Zwei-Faktor-Anmeldung).
 
 ## Einrichten unter Windows
 
@@ -57,6 +75,13 @@ mit. Auf dem Worker muss also nichts installiert werden.
 3. **Start.exe doppelklicken.** Die Basis startet unsichtbar im Hintergrund und
    die Seite öffnet sich im Browser. Von anderen Rechnern im Firmennetz:
    `http://<IP-Adresse des Workers>:8080/`.
+4. **Anmelden und Zwei-Faktor einrichten:** Nach dem Passwort zeigt die Basis
+   einen QR-Code für die Authenticator-App und danach 10
+   Wiederherstellungscodes (siehe „Zwei-Faktor-Anmeldung“). Das geht nur aus dem
+   Firmennetz oder über VPN.
+5. **Dauerbetrieb einrichten:** `Start.exe --autostart` (siehe unten).
+6. Optional unter **Einstellungen**: GitHub-Token für Updates, Mail-Benachrichtigung,
+   weitere Benutzer, HTTPS & Domain.
 
 ### Start.exe
 
@@ -73,6 +98,9 @@ Für die Optionen eine Verknüpfung anlegen und die Option im Feld „Ziel“
 anhängen, zum Beispiel `"C:\monitoring-basis\Start.exe" --neustart`. Ausgaben
 der Basis stehen in `logs\starter-ausgabe.log`. Läuft die Basis als Autostart
 unter SYSTEM, fragen `--stop` und `--neustart` nach Administratorrechten.
+
+Den Browser öffnet Start.exe mit `http://localhost:<port>/` bzw. bei HTTPS mit
+`https://<hostname>:<port>/` aus `config.json`.
 
 Start.exe ist nicht digital signiert. Je nach Unternehmensrichtlinie muss sie
 freigegeben werden.
@@ -91,6 +119,41 @@ node start.js
 Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 `https://<hostname>:<port>/`) und anmelden.
 
+### Befehle auf dem Worker (Wartung und Notfall)
+
+Nach dem ersten Online-Update läuft nicht mehr das Programm im Hauptordner,
+sondern die Version unter `versionen\X.Y.Z` (eingetragen in `aktiv.json`).
+Befehle deshalb **immer über die aktive Version** und mit
+`--config .\config.json` aufrufen. PowerShell **als Administrator** öffnen
+(die Ordner `data` und `modules` sind nur für Administratoren zugänglich):
+
+```powershell
+cd C:\monitoring-basis
+$v = (Get-Content .\aktiv.json -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json).aktiv
+if (-not $v) { $v = '.' }
+"Aktive Version: $v"
+.\runtime\node.exe "$v\basis\main.js" --config .\config.json <Befehl>
+```
+
+| `<Befehl>` | Wirkung |
+| --- | --- |
+| `--benutzer-anlegen <Name> [--admin]` | Benutzer anlegen **oder sein Passwort neu setzen** (fragt verdeckt zweimal). Admin-Recht und Zwei-Faktor-Anmeldung bleiben erhalten. |
+| `--zwei-faktor-zuruecksetzen <Name>` | Zwei-Faktor-Anmeldung entfernen; bei der nächsten Anmeldung (Firmennetz/VPN) wird sie neu eingerichtet. |
+| `--zertifikat` | Let's-Encrypt-Zertifikat jetzt holen bzw. erneuern (Einstellungen aus `config.json`). |
+| `--module-pruefen` | Alle Module auflisten und `module.json` prüfen. |
+| `--selbsttest` | Konfiguration, Module und Programmdateien prüfen. |
+| `--help` | Kurzhilfe. |
+
+Danach `.\Start.exe --neustart`: Die laufende Basis übernimmt Änderungen an
+Benutzern und Zwei-Faktor sicher erst nach einem Neustart. Ein Neustart hebt
+auch eine Anmeldesperre auf; danach ist eine neue Anmeldung nötig.
+
+Ohne `--config` sucht eine Version unter `versionen\` die `config.json` in
+ihrem eigenen Ordner und findet sie nicht. Der Aufruf über `basis\main.js` im
+Hauptordner startet dagegen die **ursprünglich installierte** Version – nach
+Updates kann die älter sein und neuere Einträge in `config.json` (z. B.
+Zwei-Faktor) nicht kennen.
+
 ### config.json
 
 | Feld | Bedeutung | Standard |
@@ -103,9 +166,9 @@ Danach im Browser `http://localhost:8080/` öffnen (bei HTTPS
 | `sitzung_stunden` | Höchstdauer einer Sitzung, danach ist eine neue Anmeldung nötig | `8` |
 | `sitzung_leerlauf_minuten` | Abmeldung nach so vielen Minuten ohne Aktion (das automatische Nachladen zählt nicht) | `30` |
 | `admin_netze` | Netze, aus denen Admin-Funktionen und das Einrichten der Zwei-Faktor-Anmeldung erlaubt sind (Firmennetz und VPN), z. B. `["192.168.100.0/24", "192.168.10.0/24", "127.0.0.0/8", "::1/128"]`; `["*"]` = überall | alle privaten Adressen |
-| `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, sonst Zertifikat, siehe unten | – |
-| `benutzer` | wird in der Oberfläche unter **Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
-| `updates` | optional, siehe „Updates“ | aus |
+| `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, `"letsencrypt"` oder `"dateien"`, siehe „HTTPS & Domain“. Wird am einfachsten in der Oberfläche eingerichtet. | – |
+| `benutzer` | wird unter **Einstellungen → Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
+| `updates` | optional, nur nötig für einen Token oder ein anderes Repo direkt in `config.json` (siehe „Updates“); sonst den Token in der Oberfläche eintragen | – |
 
 `config.json` enthält Passwort-Hashes und Tokens. Tokens und Zwei-Faktor-Schlüssel
 verschlüsselt die Basis beim Start selbst (siehe „Verschlüsselung der
@@ -221,10 +284,13 @@ bleiben. Dann `Start.exe --neustart` ausführen. Die Oberfläche ist wieder unte
 }
 ```
 
-Für Cloudflare `"dns_anbieter": "cloudflare"` und `"cloudflare_token": "…"`.
-Mit `"staging": true` testen: `.\runtime\node.exe basis\main.js --zertifikat`.
-Danach `"staging": false` setzen, den Ordner `data\zertifikat` löschen, erneut
-`--zertifikat` ausführen und die Basis neu starten.
+Ohne `dns_anbieter` gilt in `config.json` Cloudflare (in der Oberfläche ist
+Hetzner vorausgewählt); für Cloudflare `"cloudflare_token": "…"` statt
+`"hetzner_token"`. Mit `"staging": true` testen: `--zertifikat` über die aktive
+Version ausführen (siehe „Befehle auf dem Worker“). Das Testzertifikat ist im
+Browser nicht vertrauenswürdig. Danach `"staging": false` setzen, den Ordner
+`data\zertifikat` löschen, erneut `--zertifikat` ausführen und die Basis neu
+starten.
 
 #### Name im DNS
 
@@ -259,7 +325,8 @@ Jedes Modul ist ein Unterordner in `modules/` mit einer `module.json`. Der
 Ordnername muss der `id` entsprechen und darf nur Kleinbuchstaben, Ziffern
 und Bindestriche enthalten. Die Basis liest den Ordner alle 15 Sekunden neu
 ein: **neue, geänderte oder entfernte Module wirken ohne Neustart.** Mit
-`node basis/main.js --module-pruefen` lassen sich alle Module vorab prüfen.
+`--module-pruefen` lassen sich alle Module vorab prüfen (siehe „Befehle auf dem
+Worker“).
 Ein fehlerhaftes Modul erscheint rot in der Oberfläche und stört die anderen
 nicht.
 
@@ -512,7 +579,7 @@ pausiert ein Modul von Anfang an.
 ### Für alle Module
 
 `status` ist immer `ok`, `warnung` oder `fehler`. `details` ist eine Liste
-von Texten (höchstens 100), `messwerte` enthält nur Zahlen. Die Basis behält
+von Texten (höchstens 100), `messwerte` enthält nur Zahlen (höchstens 50). Die Basis behält
 je Modul die letzten `verlauf_anzahl` Läufe (Standard 1000), Details nur bei
 den neuesten 50.
 
@@ -521,6 +588,14 @@ Pausiert, Modul fehlerhaft), die letzte Meldung, den nächsten Lauf, seit wann
 ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
 Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
 Problemen stehen oben.
+
+### Oberfläche
+
+Die Kopfzeile zeigt die Version, den Knopf **„Einstellungen“** (nur Admins), den
+eigenen Benutzernamen, **„Passwort ändern“** und **„Abmelden“**. Ist ein Admin
+von außerhalb des Firmennetzes angemeldet, steht dort „Admin nur intern/VPN“
+und die Admin-Funktionen fehlen. Die Seite lädt alle 10 Sekunden neu; der
+Fenstertitel zeigt die Zahl der Probleme.
 
 In den Details stehen Status und Knöpfe (Pausieren, Beenden, Dienst starten)
 oben. Darunter folgen aufklappbare Bereiche, jeweils mit einer Statuszeile, die
@@ -616,7 +691,7 @@ hat; die Statuszeile des Bereichs nennt die Version.
 | --- | --- |
 | **Nach Updates suchen** | Fragt das neueste Release des GitHub-Repos ab und zeigt Version und Änderungen. |
 | **Auf vX.Y.Z updaten** | Installiert erst nach einer Bestätigung: Download, SHA-256-Prüfung, Entpacken nach `versionen\X.Y.Z`, Selbsttest mit der vorhandenen Konfiguration, danach Neustart. Nach dem Neustart ist eine neue Anmeldung nötig. |
-| **Zurück auf vX.Y.Z** | Schaltet auf die vorherige Version zurück und startet neu. |
+| **Zurück auf vX.Y.Z** | Schaltet auf die vorherige Version zurück und startet neu. Nicht auf Versionen vor 0.12.0 (siehe „Verschlüsselung der Geheimnisse“). |
 
 Es wird nie automatisch installiert. Ein Update ändert niemals `config.json`,
 `data`, `logs` oder `modules`. Kommt eine neue Version nicht innerhalb von
@@ -626,7 +701,9 @@ Versionen.
 
 Voraussetzungen:
 
-1. Die Basis läuft über `node start.js`, nicht direkt über `basis/main.js`.
+1. Die Basis läuft über den Starter: `Start.exe` (Windows-Paket) bzw.
+   `node start.js`, nicht direkt über `basis/main.js`. Sonst lässt sich nach
+   Updates nur suchen.
 2. In GitHub unter **Profilbild → Settings → Developer settings → Personal
    access tokens → Fine-grained tokens → Generate new token** einen Token anlegen:
    - Resource owner `pfkonsumdigital`
@@ -649,8 +726,9 @@ gilt. 14 Tage vor Ablauf steht täglich eine Warnung im Fehlerprotokoll. Der
 Token wird nie wieder angezeigt und aus Protokollen gefiltert. Er liegt
 verschlüsselt in `data/github.json`.
 
-Alternativ geht weiterhin der Eintrag in `config.json`; ein in der Oberfläche
-gespeicherter Token hat Vorrang, „Token entfernen“ schaltet zurück:
+Alternativ geht weiterhin der Eintrag in `config.json` (dann ist
+`github_token` Pflicht); ein in der Oberfläche gespeicherter Token hat Vorrang,
+„Token entfernen“ schaltet zurück:
 
 ```json
 "updates": { "github_token": "github_pat_…" }
@@ -718,9 +796,11 @@ Erfasst werden:
 - Fehler von Start.exe
 
 Jede Datei ist auf 5 MB begrenzt. Danach wird sie umbenannt (`.1` bis `.5`),
-ältere Dateien werden gelöscht. Passwort-Hashes, der GitHub- und der
-Cloudflare-Token sowie typische Token-Formate werden vor dem Schreiben durch
-`***` ersetzt. Das gilt auch für gespeicherte Modulergebnisse.
+ältere Dateien werden gelöscht. Passwort-Hashes, die Tokens (GitHub,
+Hetzner, Cloudflare), der Mail-Schlüssel, die Schlüssel der
+Authenticator-Apps, Passwörter der Module sowie typische Token-Formate werden
+vor dem Schreiben durch `***` ersetzt. Das gilt auch für gespeicherte
+Modulergebnisse.
 
 Admins sehen das Protokoll unter **Einstellungen → Fehlerprotokoll** (die
 Statuszeile zeigt Fehler und Warnungen der letzten 24 Stunden): filterbar nach
@@ -731,8 +811,8 @@ Firmennetz freigeben.
 
 ## Benutzer und Anmeldung
 
-Den ersten Admin legt `--benutzer-anlegen <Name> --admin` an (siehe oben). Danach
-geht alles in der Oberfläche:
+Den ersten Admin legt `--benutzer-anlegen <Name> --admin` an (siehe „Einrichten
+unter Windows“). Danach geht alles in der Oberfläche:
 
 - **Einstellungen → Benutzer** (nur Admins):
   - Benutzer mit Passwort anlegen, optional als Admin.
@@ -763,8 +843,8 @@ Nach dem Passwort fragt die Basis einen 6-stelligen Code aus einer
 Authenticator-App ab (Microsoft Authenticator, Google Authenticator, 1Password …;
 Verfahren TOTP nach RFC 6238, 30 Sekunden).
 
-- **Einrichten:** Bei der ersten Anmeldung nach dem Update – und bei jedem neuen
-  Benutzer – zeigt die Basis einen QR-Code. Mit der App scannen (oder den
+- **Einrichten:** Bei der ersten Anmeldung jedes Benutzers zeigt die Basis einen
+  QR-Code. Mit der App scannen (oder den
   Schlüssel abtippen), den Code eingeben, fertig. Danach zeigt sie **10
   Wiederherstellungscodes** einmalig an: notieren oder ausdrucken und sicher
   aufbewahren, nicht auf dem Handy. Jeder Code gilt nur einmal.
@@ -780,23 +860,33 @@ Verfahren TOTP nach RFC 6238, 30 Sekunden).
   das nicht auf. Da das Passwort dabei richtig war, kommt eine Sicherheitsmail:
   Passwort sofort ändern, wenn man es nicht selbst war.
 - **Handy verloren:** mit einem Wiederherstellungscode anmelden (es kommt eine
-  Sicherheitsmail) und einen anderen Admin bitten, unter **Benutzer** auf
-  **2FA zurücksetzen** zu klicken (zweimal). Die Sitzungen des Benutzers enden;
+  Sicherheitsmail) und einen anderen Admin bitten, unter **Einstellungen →
+  Benutzer** auf **2FA zurücksetzen** zu klicken (zweimal). Die Sitzungen des Benutzers enden;
   bei der nächsten Anmeldung im Firmennetz/VPN richtet er die App neu ein. Die
   eigene Zwei-Faktor-Anmeldung kann man nicht selbst zurücksetzen.
 - **Notfall** (z. B. Handy des einzigen Admins weg, keine Codes mehr): auf dem
-  Worker in PowerShell (als Administrator) im Programmordner
-
-  ```powershell
-  .\runtime\node.exe basis\main.js --zwei-faktor-zuruecksetzen <Name>
-  .\Start.exe --neustart
-  ```
-
-  Bei der nächsten Anmeldung richtet der Benutzer die App neu ein.
+  Worker `--zwei-faktor-zuruecksetzen <Name>` über die aktive Version ausführen
+  und `.\Start.exe --neustart` (siehe „Befehle auf dem Worker“). Bei der
+  nächsten Anmeldung richtet der Benutzer die App neu ein.
 - Ein Passwortwechsel lässt die Zwei-Faktor-Anmeldung bestehen.
 - Gespeichert wird in `config.json` beim Benutzer unter `zwei_faktor`: der
   Schlüssel der App verschlüsselt (siehe unten), die Wiederherstellungscodes nur
   als SHA-256-Hash.
+
+### Probleme bei der Anmeldung
+
+| Meldung auf der Anmeldeseite | Ursache | Abhilfe |
+| --- | --- | --- |
+| „Benutzername oder Passwort falsch.“ | Passwort oder Name stimmt nicht (Groß-/Kleinschreibung zählt). Häufig füllt der Browser einen falschen gespeicherten Wert ein – etwa wenn er beim Einrichten der Zwei-Faktor-Anmeldung einen Code als „neues Passwort“ gespeichert hat. | Name und Passwort von Hand eintippen. Sonst das Passwort mit `--benutzer-anlegen <Name>` neu setzen und neu starten (siehe „Befehle auf dem Worker“), danach den Eintrag im Passwort-Manager des Browsers korrigieren. |
+| „Zu viele Fehlversuche. Bitte 15 Minuten warten.“ | Sperre nach 5 Fehlversuchen je Adresse, 10 je Benutzer oder 5 falschen Codes | 15 Minuten warten oder `Start.exe --neustart` (Sperren liegen nur im Speicher) |
+| „Der Code stimmt nicht …“ | falscher oder schon benutzter Code, Uhr von Handy oder Worker weicht ab | Uhrzeit prüfen, nächsten Code abwarten, sonst Wiederherstellungscode |
+| „Die Zeit für den Bestätigungscode ist abgelaufen …“ | mehr als 5 Minuten (Einrichten: 10) zwischen Passwort und Code | neu anmelden |
+| „… muss einmalig im Firmennetz oder über VPN eingerichtet werden …“ | Zwei-Faktor noch nicht eingerichtet und Anmeldung von außen | im Firmennetz oder über VPN anmelden |
+| „Die Sitzung ist abgelaufen …“ / „Die Basis wurde neu gestartet …“ | Leerlauf, Höchstdauer oder Neustart | neu anmelden |
+| „Zugriff nur aus dem internen Netz.“ | HTTP-Betrieb, Zugriff von einer öffentlichen Adresse | nur intern oder über VPN aufrufen |
+
+Jeder Fehlversuch steht in `logs\basis.log` („Fehlgeschlagene Anmeldung von …“),
+Sperren zusätzlich im Fehlerprotokoll.
 
 ### Verschlüsselung der Geheimnisse
 
@@ -851,10 +941,12 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
 - **Zwei-Faktor-Anmeldung für alle** (siehe oben).
 - **Geheimnisse verschlüsselt** (DPAPI, an den Rechner gebunden) und Ordner
   `data`/`modules` nur für SYSTEM und Administratoren (siehe oben).
-- Nur HTTPS (TLS 1.2 oder neuer), HSTS, strenge Content-Security-Policy.
+- Mit Zertifikat nur HTTPS (TLS 1.2 oder neuer) mit HSTS; im HTTP-Betrieb
+  (`tls.modus` `"aus"`) nur Zugriffe aus privaten Netzen. Immer strenge
+  Content-Security-Policy, Schutz vor Einbetten in fremde Seiten.
 - Passwörter als scrypt-Hash nach OWASP-Empfehlung (N=2^17, r=8, p=1). Ältere,
   schwächere Hashes werden bei der nächsten Anmeldung automatisch erneuert.
-  Sitzungscookie `HttpOnly`, `Secure`, `SameSite=Strict`.
+  Sitzungscookie `HttpOnly`, `SameSite=Strict`, bei HTTPS zusätzlich `Secure`.
 - Sperren nach Fehlversuchen, je 15 Minuten: **5 je Adresse** und **10 je
   Benutzername** (gegen Raten von vielen Adressen aus). Die Listen sind begrenzt.
   Höchstens 2 Passwortprüfungen laufen gleichzeitig; bei mehr als 20 wartenden
@@ -881,8 +973,15 @@ npm ci
 npm test
 ```
 
-Die Tests prüfen Modulprüfung, Ausführung (Exitcodes, JSON, Zeitlimit,
-Abstürze), Plugins, Zeitplan, Speicher, Login und Sperre, den HTTPS-Server und
-die Zertifikatsabläufe. Cloudflare und Let's Encrypt werden dabei simuliert.
-Eine echte Zertifikatsausstellung lässt sich nur auf dem Worker mit echter
-Domain und Token prüfen.
+Die Tests prüfen u. a. Modulprüfung, Ausführung (Exitcodes, JSON, Zeitlimit,
+Abstürze), Plugins, Zeitplan, Speicher, Anmeldung mit Zwei-Faktor und Sperren,
+Benutzerverwaltung, Benachrichtigung, Updates von Basis und Modulen, Starter,
+Verschlüsselung, HTTPS & Domain und die Oberfläche (alle IDs vorhanden).
+Hetzner, Cloudflare, Let's Encrypt, GitHub und Microsoft 365 werden dabei
+simuliert; eine echte Zertifikatsausstellung lässt sich nur auf dem Worker mit
+echter Domain und Token prüfen. Start.exe: `cd launcher && go test ./...`.
+
+GitHub Actions: „Tests“ läuft bei jedem Push auf `main` (Linux: `npm test` und
+`go test`; Windows: echte DPAPI und Dateirechte in `tests/windows.test.js`).
+„Release bauen“ läuft bei einem Tag `vX.Y.Z` (siehe „Neue Version
+veröffentlichen“).

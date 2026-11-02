@@ -1,5 +1,21 @@
 # Änderungen
 
+## 0.13.1
+
+Nur Dokumentation – am Programm ändert sich nichts.
+
+### Geändert
+
+- **README auf den Stand 0.13.0 gebracht:**
+  - Neuer Abschnitt „Befehle auf dem Worker“: Wartungs- und Notfallbefehle (`--benutzer-anlegen`, `--zwei-faktor-zuruecksetzen`, `--zertifikat`, `--module-pruefen`, `--selbsttest`) immer über die aktive Version aus `aktiv.json` und mit `--config .\config.json`. Bisher stand dort `basis\main.js` im Hauptordner – nach Online-Updates ist das die ursprünglich installierte, ältere Version.
+  - Neuer Abschnitt „Probleme bei der Anmeldung“: Meldungen der Anmeldeseite mit Ursache und Abhilfe, u. a. falsches gespeichertes Passwort im Browser nach dem Einrichten der Zwei-Faktor-Anmeldung und Aufheben einer Sperre per Neustart.
+  - Einrichtung um Zwei-Faktor, Autostart und Einstellungen ergänzt; Inhalt von `data\` beschrieben; Abschnitt „Oberfläche“ (Kopfzeile, Details, Einstellungen).
+  - Korrigiert: Abhängigkeiten (auch `qrcode-generator`), Voraussetzung für Updates (Start.exe), `updates` in `config.json` nur bei eigenem Token, Standard-DNS-Anbieter in `config.json` (Cloudflare), welche Geheimnisse im Protokoll durch `***` ersetzt werden, HTTPS/HSTS/`Secure` nur mit Zertifikat, Liste der Tests und der GitHub Actions.
+
+### Prüfung
+
+- `npm test`: 135 Tests (dazu 2 nur unter Windows).
+
 ## 0.13.0
 
 HTTPS & Domain in der Oberfläche einrichten und übersichtlichere Einstellungen.
