@@ -164,10 +164,18 @@
             <div class="feld"><label for="ben-erinnerung_stunden">Erinnerung alle … Stunden</label><input id="ben-erinnerung_stunden" type="number" min="0" max="168" step="any"><small class="leise">0 = keine Erinnerung.</small><small class="feldfehler" id="ben-erinnerung_stunden-fehler"></small></div>
             <div class="feld"><label for="ben-link">Adresse der Oberfläche (für den Link in der Mail)</label><input id="ben-link" autocomplete="off" placeholder="http://10.0.0.5:8080/"><small class="feldfehler" id="ben-link-fehler"></small></div>
           </div>
+          <h3>Statusbericht</h3>
+          <p class="leise">Regelmäßige Mail an die allgemeinen Empfänger mit dem Zustand von Basis und Modulen – auch wenn alles in Ordnung ist. Bleibt sie aus, läuft die Basis nicht. War die Basis zur Berichtszeit aus, kommt der Bericht nach dem Start nach (bis 12 Stunden später).</p>
+          <div class="felder">
+            <div class="feld"><label for="ben-bericht">Statusbericht</label><select id="ben-bericht"><option value="aus">aus</option><option value="taeglich">täglich</option><option value="werktags">werktags (Montag bis Freitag)</option><option value="woechentlich">wöchentlich</option></select><small class="feldfehler" id="ben-bericht-fehler"></small></div>
+            <div class="feld" id="ben-bericht-tag"><label for="ben-bericht_wochentag">Wochentag</label><select id="ben-bericht_wochentag"><option value="1">Montag</option><option value="2">Dienstag</option><option value="3">Mittwoch</option><option value="4">Donnerstag</option><option value="5">Freitag</option><option value="6">Samstag</option><option value="7">Sonntag</option></select><small class="feldfehler" id="ben-bericht_wochentag-fehler"></small></div>
+            <div class="feld" id="ben-bericht-zeit"><label for="ben-bericht_uhrzeit">Uhrzeit</label><input id="ben-bericht_uhrzeit" type="time" step="60"><small class="leise" id="ben-bericht-naechster"></small><small class="feldfehler" id="ben-bericht_uhrzeit-fehler"></small></div>
+          </div>
           <p id="ben-meldung" class="upd-meldung" role="status"></p>
           <div class="aktionen">
             <button type="submit" id="ben-speichern">Speichern</button>
             <button type="button" id="ben-test" class="zweitrangig">Testmail senden</button>
+            <button type="button" id="ben-bericht-senden" class="zweitrangig">Statusbericht jetzt senden</button>
           </div>
         </form>
         <h3>Zuletzt gesendet</h3>

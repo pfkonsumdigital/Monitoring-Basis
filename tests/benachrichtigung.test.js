@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Benachrichtigung, GraphMail, pruefeEinstellungen } from '../basis/benachrichtigung.js';
+import { Benachrichtigung, berichtTermine, berichtText, GraphMail, pruefeEinstellungen } from '../basis/benachrichtigung.js';
 
 const TENANT = '11111111-2222-3333-4444-555555555555';
 const CLIENT = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -207,6 +207,137 @@ test('Benachrichtigung: Dienst gestoppt sofort melden, beendete Module nicht; Ma
     await u.b.speichern({ aktiv: false }, 'patrick');
     assert.equal(await u.b.basisBeendet('patrick', false), null, 'aus = keine Mail');
     assert.equal(betreffe().length, 2);
+  } finally {
+    await rm(u.ordner, { recursive: true, force: true });
+  }
+});
+
+test('Statusbericht: Termine täglich, werktags, wöchentlich, Zeitumstellung, Prüfung der Eingaben', () => {
+  const t = (w, iso) => { const r = berichtTermine({ bericht_uhrzeit: '07:30', bericht_wochentag: 1, ...w }, Date.parse(iso)); return [r.letzter && new Date(r.letzter).toISOString(), r.naechster && new Date(r.naechster).toISOString()]; };
+  // 05.11.2026 ist ein Donnerstag; Winterzeit: 07:30 Uhr = 06:30 UTC.
+  assert.deepEqual(t({ bericht: 'taeglich' }, '2026-11-05T06:29:00Z'), ['2026-11-04T06:30:00.000Z', '2026-11-05T06:30:00.000Z']);
+  assert.deepEqual(t({ bericht: 'taeglich' }, '2026-11-05T06:30:00Z'), ['2026-11-05T06:30:00.000Z', '2026-11-06T06:30:00.000Z']);
+  assert.deepEqual(t({ bericht: 'werktags' }, '2026-11-08T10:00:00Z'), ['2026-11-06T06:30:00.000Z', '2026-11-09T06:30:00.000Z'], 'Sonntag: letzter am Freitag, nächster am Montag');
+  assert.deepEqual(t({ bericht: 'woechentlich', bericht_wochentag: 1 }, '2026-11-05T10:00:00Z'), ['2026-11-02T06:30:00.000Z', '2026-11-09T06:30:00.000Z']);
+  assert.deepEqual(t({ bericht: 'woechentlich', bericht_wochentag: 7 }, '2026-11-08T07:00:00Z'), ['2026-11-08T06:30:00.000Z', '2026-11-15T06:30:00.000Z']);
+  assert.deepEqual(t({ bericht: 'taeglich' }, '2027-03-28T06:00:00Z'), ['2027-03-28T05:30:00.000Z', '2027-03-29T05:30:00.000Z'], 'Sommerzeit ab dem Umstellungstag');
+  assert.deepEqual(t({ bericht: 'taeglich' }, '2026-12-31T23:00:00Z'), ['2026-12-31T06:30:00.000Z', '2027-01-01T06:30:00.000Z'], 'Jahreswechsel');
+  assert.deepEqual(t({ bericht: 'aus' }, '2026-11-05T10:00:00Z'), [null, null]);
+  assert.equal(berichtText({ bericht: 'woechentlich', bericht_uhrzeit: '08:00', bericht_wochentag: 5 }), 'wöchentlich Freitag 08:00');
+  assert.equal(berichtText({ bericht: 'werktags', bericht_uhrzeit: '07:30', bericht_wochentag: 1 }), 'werktags 07:30');
+  assert.equal(berichtText({ bericht: 'aus' }), null);
+
+  const { werte } = pruefeEinstellungen({}, { aktiv: false, tenant_id: '', client_id: '', client_secret: '', absender: '', empfaenger: [], erinnerung_stunden: 4, melden_nach_laeufen: 1, link: '' });
+  assert.deepEqual([werte.bericht, werte.bericht_uhrzeit, werte.bericht_wochentag], ['aus', '07:30', 1], 'Standard: aus');
+  assert.deepEqual(pruefeEinstellungen({ bericht: 'woechentlich', bericht_uhrzeit: ' 18:05 ', bericht_wochentag: '5' }, werte).werte.bericht_wochentag, 5);
+  const { feldfehler } = pruefeEinstellungen({ bericht: 'stündlich', bericht_uhrzeit: '24:00', bericht_wochentag: 8 }, werte);
+  assert.deepEqual(Object.keys(feldfehler).sort(), ['bericht', 'bericht_uhrzeit', 'bericht_wochentag']);
+});
+
+test('Statusbericht: einmal je Termin, nicht doppelt nach Neustart, nachholen bis 12 h, Fehlschlag wiederholt', async () => {
+  let senden = 202;
+  const u = await aufbau({ sendStatus: () => senden });
+  try {
+    // Uhr: Do 29.10.2026, 13:00 Ortszeit. Bericht täglich 13:30, ab jetzt (der gestrige Termin wird nicht nachgeholt).
+    await u.b.speichern({ bericht: 'taeglich', bericht_uhrzeit: '13:30' }, 'patrick');
+    await u.b.modulEmpfaengerSpeichern('ftp', 'lager@firma.de', 'patrick');
+    u.b.basisInfo = () => ({ version: '0.14.0', seit: Date.parse('2026-10-28T12:00:00Z'), update: '0.15.0' });
+    assert.equal(u.b.ansicht().bericht.text, 'täglich 13:30');
+    assert.equal(u.b.ansicht().bericht.naechster, '2026-10-29T12:30:00.000Z');
+    const module = [
+      { id: 'a-ok', name: 'Zentrale OK', anzeige: 'ok' },
+      { id: 'pause', name: 'Pausiertes Modul', anzeige: 'inaktiv' },
+      { id: 'ftp', name: 'FTP-Dateialter', anzeige: 'fehler', problemLaeufe: 0 },
+      { id: 'b', name: 'Backup', anzeige: 'keine-meldung', problemLaeufe: 0 },
+    ];
+    const berichte = () => u.ms.mails().filter((m) => m.message.subject.includes('Statusbericht'));
+    await u.b.pruefen(module);
+    assert.equal(berichte().length, 0, 'vor 13:30 kein Bericht');
+
+    u.vor(31);
+    await u.b.pruefen(module);
+    assert.equal(berichte().length, 1);
+    const m = berichte()[0].message;
+    assert.equal(m.subject, '[Monitoring] Statusbericht: 2 Probleme');
+    assert.deepEqual(m.toRecipients.map((r) => r.emailAddress.address), ['it@firma.de', 'chef@firma.de'], 'nur allgemeine Empfänger');
+    const zeilen = m.body.content.split('\n');
+    assert.match(m.body.content, /Gesamt: 2 Probleme \(1 Fehler, 1 Keine Meldung\)/);
+    assert.match(m.body.content, /Basis: läuft seit 28\.10\.26, 13:00 \(25 h\) · v0\.14\.0 · Update auf v0\.15\.0 verfügbar/);
+    assert.deepEqual(zeilen.filter((z) => z.startsWith('- ')), ['- FTP-Dateialter: Fehler', '- Backup: Keine Meldung', '- Pausiertes Modul: Pausiert', '- Zentrale OK: OK']);
+    assert.match(m.body.content, /Oberfläche: http:\/\/10\.0\.0\.5:8080\//);
+    assert.doesNotMatch(m.body.content, /verspätet/i);
+
+    await u.b.pruefen(module);
+    u.vor(60);
+    await u.b.pruefen(module);
+    const b2 = u.neu();
+    await b2.laden();
+    await b2.pruefen(module);
+    assert.equal(berichte().length, 1, 'kein zweiter Bericht für denselben Termin, auch nicht nach Neustart');
+
+    // Basis war zur Berichtszeit aus: am nächsten Tag um 16:30 nachgeholt.
+    u.vor(24 * 60 + 120);
+    const b3 = u.neu();
+    await b3.laden();
+    await b3.pruefen([{ id: 'a-ok', name: 'Zentrale OK', anzeige: 'ok' }]);
+    assert.equal(berichte().length, 2);
+    assert.equal(berichte()[1].message.subject, '[Monitoring] Statusbericht: alles OK (verspätet)');
+    assert.match(berichte()[1].message.body.content, /Verspätet: geplant für 30\.10\.26, 13:30/);
+    assert.match(berichte()[1].message.body.content, /Gesamt: alles OK/);
+
+    // Mehr als 12 Stunden zu spät: nicht mehr nachholen.
+    u.vor(24 * 60 + 11 * 60);
+    const b4 = u.neu();
+    await b4.laden();
+    await b4.pruefen(module);
+    assert.equal(berichte().length, 2);
+    assert.ok(u.meldungen.some(([, t]) => /Statusbericht für 31\.10\.26, 13:30 nicht nachgeholt/.test(t)));
+
+    // Versand schlägt fehl: nach 5 Minuten erneut, dann ok.
+    u.vor(24 * 60 - 14 * 60 + 2);
+    senden = 503;
+    await b4.pruefen(module);
+    assert.equal(b4.ansicht().verlauf[0].ok, false);
+    u.vor(2);
+    await b4.pruefen(module);
+    assert.equal(u.ms.mails().length, 5 + 1, 'innerhalb von 5 Minuten kein neuer Versuch');
+    senden = 202;
+    u.vor(4);
+    await b4.pruefen(module);
+    assert.equal(b4.ansicht().verlauf[0].ok, true);
+    assert.equal(b4.ansicht().verlauf[0].art, 'bericht');
+    await b4.pruefen(module);
+    assert.equal(berichte().length, 4, 'zwei Versuche für den 01.11., danach nichts mehr');
+  } finally {
+    await rm(u.ordner, { recursive: true, force: true });
+  }
+});
+
+test('Statusbericht: aus, Benachrichtigung inaktiv, „jetzt senden“ und neuer Zeitplan ohne Nachholen', async () => {
+  const u = await aufbau();
+  try {
+    const berichte = () => u.ms.mails().filter((m) => m.message.subject.includes('Statusbericht'));
+    u.vor(24 * 60);
+    await u.b.pruefen([]);
+    assert.equal(berichte().length, 0, 'Standard aus');
+    // Zeitplan für 08:00 einschalten, obwohl es schon 13:00 ist: heute kein Bericht mehr.
+    await u.b.speichern({ bericht: 'taeglich', bericht_uhrzeit: '08:00' }, 'patrick');
+    await u.b.pruefen([]);
+    assert.equal(berichte().length, 0, 'vergangener Termin wird nach dem Einschalten nicht nachgeholt');
+    assert.ok(u.meldungen.some(([, t]) => /Benachrichtigung geändert durch patrick: bericht, bericht_uhrzeit/.test(t)));
+
+    // Benachrichtigung aus: kein geplanter Bericht.
+    await u.b.speichern({ aktiv: false }, 'patrick');
+    u.vor(24 * 60);
+    await u.b.pruefen([]);
+    assert.equal(berichte().length, 0);
+
+    // „Jetzt senden“ geht auch dann (wie die Testmail), solange alles eingetragen ist.
+    const e = await u.b.berichtSenden([], 'patrick');
+    assert.equal(e.ok, true);
+    assert.equal(berichte()[0].message.subject, '[Monitoring] Statusbericht: alles OK');
+    assert.match(berichte()[0].message.body.content, /Keine Module eingerichtet\./);
+    assert.ok(u.meldungen.some(([, t]) => /Statusbericht ausgelöst durch patrick/.test(t)));
   } finally {
     await rm(u.ordner, { recursive: true, force: true });
   }

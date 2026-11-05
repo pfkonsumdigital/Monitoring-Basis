@@ -155,6 +155,11 @@ async function starten(konfig, configDatei, protokoll, tresor) {
     setTimeout(() => process.exit(NEUSTART_CODE), 300);
   };
   await updates.starten();
+  const gestartet = Date.now();
+  benachrichtigung.basisInfo = () => {
+    const st = updates.status();
+    return { version: updates.installiert, seit: gestartet, update: st.updateMoeglich ? st.verfuegbar?.version : null };
+  };
   const domain = new Domainverwaltung({ configDatei, konfig, tresor, benutzerverwaltung, zertifikate, neustart: updates.viaStarter ? neustarten : null, log });
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';

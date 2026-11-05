@@ -1,5 +1,20 @@
 # Änderungen
 
+## 0.14.0
+
+Regelmäßiger Statusbericht per Mail.
+
+### Neu
+
+- **Statusbericht** unter Einstellungen → Benachrichtigung: aus (Standard), täglich, werktags oder wöchentlich zu einer Uhrzeit (Ortszeit Deutschland). Inhalt kurz: Gesamtstatus („alles OK“ bzw. „2 Probleme“), eine Zeile zur Basis (läuft seit, Version, Update verfügbar) und je Modul eine Zeile mit Status, Probleme zuerst. Geht an die allgemeinen Empfänger.
+  - War die Basis zur Berichtszeit aus, wird der Bericht nach dem Start nachgeholt (bis 12 Stunden später, „verspätet“). Je Termin nur ein Bericht, auch nach Neustarts; fehlgeschlagener Versand wird alle 5 Minuten wiederholt.
+  - Knopf „Statusbericht jetzt senden“; das Formular zeigt den nächsten Termin, die Statuszeile z. B. „Bericht werktags 07:30“.
+
+### Prüfung
+
+- `npm test`: 138 Tests (dazu 2 nur unter Windows), neu u. a. Termine für täglich, werktags, wöchentlich, Zeitumstellung und Jahreswechsel, kein Doppelversand nach Neustart, Nachholen bis 12 Stunden, Wiederholung nach Fehlschlag, kein Nachholen nach Änderung des Zeitplans, Inhalt und Empfänger, Knopf nur für Admins. Gegenproben für die Berichtslogik.
+- Browsertest (hell, dunkel, Handy).
+
 ## 0.13.1
 
 Nur Dokumentation – am Programm ändert sich nichts.

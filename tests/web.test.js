@@ -507,6 +507,13 @@ test('Webserver: Benachrichtigung nur für Admins, Schlüssel nie zurück, Testm
     assert.equal(test.status, 200);
     assert.deepEqual(gesendet, ['[Monitoring] Testmail']);
     assert.equal(test.json().verlauf[0].art, 'test');
+    // Statusbericht jetzt senden: nur Admins, mit Schutzkopf.
+    assert.equal((await hole('POST', '/api/benachrichtigung/bericht', { ...gast, ...schutz })).status, 403);
+    assert.equal((await hole('POST', '/api/benachrichtigung/bericht', chef)).status, 403, 'ohne Schutzkopf');
+    const bericht = await hole('POST', '/api/benachrichtigung/bericht', { ...chef, ...schutz });
+    assert.equal(bericht.status, 200);
+    assert.deepEqual(gesendet.slice(1), ['[Monitoring] Statusbericht: alles OK']);
+    assert.equal(bericht.json().verlauf[0].art, 'bericht');
   } finally {
     server.close();
     await rm(wurzel, { recursive: true, force: true });

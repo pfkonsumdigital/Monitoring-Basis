@@ -486,9 +486,16 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
 });
 
 // ---- Benachrichtigung (nur Admins) ----
-const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link'];
+const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link', 'bericht', 'bericht_wochentag', 'bericht_uhrzeit'];
 const benMeldung = (text, art = '') => { $('ben-meldung').textContent = text; $('ben-meldung').dataset.art = art; };
-const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail', sicherheit: 'Sicherheit' };
+const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail', sicherheit: 'Sicherheit', bericht: 'Statusbericht' };
+
+// Wochentag und Uhrzeit nur zeigen, wenn sie gebraucht werden.
+function berichtFelder() {
+  $('ben-bericht-tag').hidden = $('ben-bericht').value !== 'woechentlich';
+  $('ben-bericht-zeit').hidden = $('ben-bericht').value === 'aus';
+}
+$('ben-bericht').addEventListener('change', berichtFelder);
 
 function benZeigen(daten) {
   const w = daten.werte;
@@ -497,13 +504,16 @@ function benZeigen(daten) {
     if (k === 'client_secret') { $('ben-client_secret').value = ''; $('ben-client_secret').placeholder = w.client_secret.gesetzt ? 'gesetzt' : 'nicht gesetzt'; continue; }
     $(`ben-${k}`).value = Array.isArray(w[k]) ? w[k].join(', ') : w[k] ?? '';
   }
+  berichtFelder();
+  const naechster = daten.bericht?.naechster;
+  $('ben-bericht-naechster').textContent = naechster && w.aktiv ? `Nächster Bericht: ${new Date(naechster).toLocaleString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : naechster ? 'Die Benachrichtigung ist aus – es wird kein Bericht gesendet.' : '';
   const letzte = daten.verlauf[0];
-  bereichStatus('ber-ben', !w.aktiv ? 'Aus' : `Aktiv · ${w.empfaenger.length} Empfänger${letzte ? ` · ${letzte.ok ? 'zuletzt gesendet' : 'letzte Mail nicht gesendet'} ${relativ(letzte.zeit)}` : ''}`,
+  bereichStatus('ber-ben', !w.aktiv ? 'Aus' : `Aktiv · ${w.empfaenger.length} Empfänger${daten.bericht?.text ? ` · Bericht ${daten.bericht.text}` : ''}${letzte ? ` · ${letzte.ok ? 'zuletzt gesendet' : 'letzte Mail nicht gesendet'} ${relativ(letzte.zeit)}` : ''}`,
     !w.aktiv ? 'warnung' : letzte && !letzte.ok ? 'fehler' : '');
   $('ben-leer').hidden = daten.verlauf.length > 0;
   $('ben-verlauf').replaceChildren(...daten.verlauf.map((e) => {
     const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.zeit)} – ${e.betreff}${e.ok ? '' : ` – nicht gesendet: ${e.fehler}`}` }));
-    li.dataset.status = !e.ok ? 'fehler' : e.art === 'wieder-ok' || e.art === 'test' ? 'ok' : e.art === 'warnung' ? 'warnung' : 'fehler';
+    li.dataset.status = !e.ok ? 'fehler' : e.art === 'wieder-ok' || e.art === 'test' || e.art === 'bericht' ? 'ok' : e.art === 'warnung' ? 'warnung' : 'fehler';
     li.title = BEN_ART[e.art] ?? e.art;
     return li;
   }));
@@ -535,6 +545,13 @@ $('ben-formular').addEventListener('submit', async (ereignis) => {
   if (!antwort.ok) { benFehlerZeigen(daten.feldfehler); benMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
   benZeigen(daten);
   benMeldung(daten.geaendert.length ? 'Gespeichert.' : 'Keine Änderungen.', 'ok');
+});
+$('ben-bericht-senden').addEventListener('click', async () => {
+  benMeldung('Statusbericht wird gesendet …');
+  const daten = await gesperrt([$('ben-bericht-senden')], benMeldung, async () => (await senden('/api/benachrichtigung/bericht', {})).json().catch(() => ({})));
+  if (!daten) return;
+  if (daten.verlauf) benZeigen(daten);
+  benMeldung(daten.ok ? 'Statusbericht gesendet. Bitte Posteingang prüfen.' : `Nicht gesendet: ${daten.fehler ?? 'unbekannter Fehler'}`, daten.ok ? 'ok' : 'fehler');
 });
 $('ben-test').addEventListener('click', async () => {
   benMeldung('Testmail wird gesendet …');

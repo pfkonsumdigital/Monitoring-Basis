@@ -10,7 +10,7 @@ Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
 5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor) anzeigen
 6. Bei Problemen per Mail benachrichtigen (Microsoft 365)
 
-Dieser Stand beschreibt **Version 0.13.1**. Was sich je Version geändert hat,
+Dieser Stand beschreibt **Version 0.14.0**. Was sich je Version geändert hat,
 steht in `CHANGELOG.md`.
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
@@ -631,6 +631,7 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
 | Ein Admin meldet sich von einer für ihn neuen Adresse an | `[Monitoring] Sicherheit: Admin-Anmeldung von neuer Adresse (<Benutzer>)` |
 | Mehrere falsche Zwei-Faktor-Codes nach richtigem Passwort (Passwort vermutlich bekannt) | `[Monitoring] Sicherheit: falsche Zwei-Faktor-Codes (<Benutzer>)` |
 | Anmeldung mit einem Wiederherstellungscode | `[Monitoring] Sicherheit: Anmeldung mit Wiederherstellungscode (<Benutzer>)` |
+| Regelmäßiger Statusbericht, falls eingeschaltet (siehe unten) | `[Monitoring] Statusbericht: alles OK` bzw. `… : 2 Probleme` |
 
 - Gemeldet wird nur der **Wechsel**, nicht jeder weitere fehlerhafte Lauf.
 - **Melden nach … Läufen** (Standard 1 = sofort): erst melden, wenn Fehler
@@ -647,6 +648,30 @@ ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
 - Sicherheitsmails gehen an die allgemeinen Empfänger, höchstens eine je Art
   und 15 Minuten; weitere Ereignisse stehen gezählt in der nächsten Mail und
   einzeln im Protokoll.
+
+### Statusbericht
+
+Unter **Einstellungen → Benachrichtigung → Statusbericht** lässt sich eine
+regelmäßige Mail einschalten, die auch kommt, wenn alles in Ordnung ist:
+
+- **Rhythmus:** aus (Standard), täglich, werktags (Montag bis Freitag) oder
+  wöchentlich an einem Wochentag, jeweils zu einer Uhrzeit (Ortszeit
+  Deutschland, auch über die Zeitumstellung). Das Formular zeigt den nächsten
+  Termin; die Statuszeile des Bereichs z. B. „Bericht werktags 07:30“.
+- **Inhalt:** Gesamtstatus („alles OK“ oder „2 Probleme (1 Fehler, 1 Keine
+  Meldung)“), eine Zeile zur Basis (läuft seit, Version, ggf. „Update
+  verfügbar“) und je Modul eine Zeile mit Name und Status – Probleme zuerst,
+  dazu der Link zur Oberfläche. Als Problem zählen Fehler, Modul fehlerhaft,
+  Dienst gestoppt, Keine Meldung und Warnung; Pausiert und Beendet nicht.
+- **Empfänger:** nur die allgemeinen Empfänger.
+- **Nachholen:** War die Basis zur Berichtszeit aus, kommt der Bericht nach dem
+  Start, bis 12 Stunden nach dem Termin, mit „(verspätet)“ im Betreff. Je
+  Termin höchstens ein Bericht, auch nach Neustarts. Wird der Zeitplan geändert,
+  gilt er ab dann – ein heute schon vergangener Termin wird nicht nachgeholt.
+- **Schlägt der Versand fehl**, versucht die Basis es alle 5 Minuten erneut.
+- **„Statusbericht jetzt senden“** verschickt sofort einen Bericht, zum
+  Ausprobieren auch bei ausgeschalteter Benachrichtigung.
+- Bleibt der Bericht aus, läuft die Basis (oder der Worker) nicht.
 
 ### Einrichten
 

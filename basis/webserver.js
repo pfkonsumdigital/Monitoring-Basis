@@ -302,7 +302,7 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         return json(res, 200, { eintraege, quellen });
       }
 
-      if (weg === '/api/benachrichtigung' || weg === '/api/benachrichtigung/test') {
+      if (weg === '/api/benachrichtigung' || weg === '/api/benachrichtigung/test' || weg === '/api/benachrichtigung/bericht') {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!benachrichtigung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
         if (weg === '/api/benachrichtigung' && req.method === 'GET') return json(res, 200, benachrichtigung.ansicht());
@@ -310,6 +310,10 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         if (weg === '/api/benachrichtigung/test') {
           const ergebnis = await benachrichtigung.testmail(sitzung.benutzer);
+          return json(res, ergebnis.ok ? 200 : 409, { ...ergebnis, ...benachrichtigung.ansicht() });
+        }
+        if (weg === '/api/benachrichtigung/bericht') {
+          const ergebnis = await benachrichtigung.berichtSenden(module.ansichten(), sitzung.benutzer);
           return json(res, ergebnis.ok ? 200 : 409, { ...ergebnis, ...benachrichtigung.ansicht() });
         }
         let eingabe;
