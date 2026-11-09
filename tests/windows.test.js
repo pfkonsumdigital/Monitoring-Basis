@@ -167,7 +167,11 @@ Register-ScheduledTask -TaskName '${aufgabe}' -Action $a -Principal (New-Schedul
     pruefe(lauf);
     assert.match(lauf.stdout, /Kein Administrator/);
     assert.match(`${lauf.stdout}${lauf.stderr}`, /Modul 'boese'.*nicht freigegeben/);
-    assert.match(sdshow(dienst), new RegExp(`\\(A;;CCLCLORPWPRC;;;${svcSid}\\)`));
+    // Windows ordnet die Rechte im SDDL selbst (z. B. CCLCRPWPLORC): einzeln prüfen.
+    const ace = new RegExp(`\\(A;;([A-Z]+);;;${svcSid}\\)`).exec(sdshow(dienst));
+    assert.ok(ace, sdshow(dienst));
+    for (const recht of ['CC', 'LC', 'LO', 'RP', 'WP', 'RC']) assert.ok(ace[1].match(/../g).includes(recht), `${recht} in ${ace[1]}`);
+    assert.ok(!ace[1].match(/../g).some((r) => ['WD', 'WO', 'SD', 'DC'].includes(r)), `keine Verwaltungsrechte: ${ace[1]}`);
     assert.doesNotMatch(sdshow(fremd), new RegExp(svcSid), 'nicht freigegebenes Modul: Dienst unberührt');
     assert.match(kontoDerAufgabe(), new RegExp(`${svc}$`, 'i'));
     let probe = null;
