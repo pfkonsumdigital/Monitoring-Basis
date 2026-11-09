@@ -72,7 +72,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--akzent); ou
 .kacheln { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .kachel { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--flaeche); border: 1px solid var(--rand); border-left: 5px solid var(--neutral); border-radius: 8px; }
 .kachel[data-status="ok"] { border-left-color: var(--ok); }
-.kachel[data-status="warnung"] { border-left-color: var(--warnung); }
+.kachel[data-status="warnung"], .kachel[data-status="freigabe"] { border-left-color: var(--warnung); }
 .kachel[data-status="fehler"], .kachel[data-status="modulfehler"], .kachel[data-status="dienst-gestoppt"] { border-left-color: var(--fehler); }
 .kachel[data-status="keine-meldung"] { border-left-color: var(--stumm); }
 .kachel[data-status="inaktiv"], .kachel[data-status="beendet"] { opacity: 0.75; }
@@ -84,7 +84,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--akzent); ou
 
 .status { flex: none; font-size: 0.8rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--neutral-flaeche); color: var(--neutral); }
 .status[data-status="ok"] { background: var(--ok-flaeche); color: var(--ok); }
-.status[data-status="warnung"] { background: var(--warnung-flaeche); color: var(--warnung); }
+.status[data-status="warnung"], .status[data-status="freigabe"] { background: var(--warnung-flaeche); color: var(--warnung); }
 .status[data-status="fehler"], .status[data-status="modulfehler"], .status[data-status="dienst-gestoppt"] { background: var(--fehler-flaeche); color: var(--fehler); }
 .status[data-status="keine-meldung"] { background: var(--stumm-flaeche); color: var(--stumm); }
 .status[data-status="laeuft"] { color: var(--akzent); }
@@ -231,3 +231,8 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
   .bereich-status { margin-left: 0; text-align: left; flex-basis: 100%; }
   .bereich-inhalt { padding: 4px 10px 12px; }
 }
+/* Freigabe neuer oder geänderter Module */
+.freigabe { border: 1px solid var(--warnung); background: var(--warnung-flaeche); border-radius: 8px; padding: 0.75rem 1rem; margin: 0.75rem 0; min-width: 0; }
+.freigabe h3 { margin: 0 0 0.4rem; font-size: 1rem; color: var(--warnung); }
+.freigabe p { margin: 0 0 0.5rem; }
+.freigabe-liste { margin: 0 0 0.75rem; padding-left: 1.2rem; max-height: 14rem; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }

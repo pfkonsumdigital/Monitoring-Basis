@@ -32,6 +32,8 @@ export function adminNetzPruefer(netze) {
   };
 }
 
+const HOSTNAME = /^(?=.{1,254}$)[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*\.?$/i;
+
 export function pruefeKonfiguration(roh, basisOrdner) {
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) throw new BasisFehler('config.json muss ein JSON-Objekt sein.');
   const port = roh.port ?? 8443;
@@ -49,6 +51,12 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   // Ohne Verschlüsselung (nur internes Netz) wird kein Hostname gebraucht; Zugriff dann per IP und Port.
   if (tls.modus !== 'aus' && !istText(roh.hostname)) throw new BasisFehler('hostname fehlt in config.json (z. B. monitoring.firma.de).');
   if (roh.hostname !== undefined && !istText(roh.hostname)) throw new BasisFehler('hostname muss ein Text sein.');
+  // Weitere Namen, unter denen die Oberfläche erreichbar sein soll (z. B. der vollständige Rechnername im Firmen-DNS).
+  // Anfragen an andere Namen weist der Webserver ab (Schutz vor DNS-Rebinding).
+  const weitere = roh.weitere_hostnamen ?? [];
+  if (!Array.isArray(weitere) || weitere.length > 20 || weitere.some((h) => typeof h !== 'string' || !(HOSTNAME.test(h) || /^[0-9a-f:.]{2,45}$/i.test(h)))) {
+    throw new BasisFehler('weitere_hostnamen muss eine Liste von höchstens 20 Namen oder IP-Adressen sein, z. B. ["we-vmworker-22.firma.local"].');
+  }
   const ordner = (wert) => path.resolve(basisOrdner, wert);
   let tlsGeprueft;
   if (tls.modus === 'aus') {
@@ -94,6 +102,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     host: istText(roh.host) ? roh.host : '0.0.0.0',
     port,
     hostname: roh.hostname ?? null,
+    weitereHostnamen: weitere.map((h) => h.toLowerCase().replace(/\.$/, '')),
     moduleOrdner: ordner(roh.module_ordner ?? 'modules'),
     datenOrdner: ordner(roh.daten_ordner ?? 'data'),
     verlaufAnzahl: verlauf,

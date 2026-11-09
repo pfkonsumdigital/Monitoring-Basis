@@ -58,6 +58,11 @@ test('Programm: JSON-Ergebnis auf stdout hat Vorrang vor dem Exitcode', async ()
   assert.ok(e.beginn && e.dauerMs >= 0);
 });
 
+test('Programm: Python schreibt keinen Bytecode in den Modulordner (sonst ändert sich der Fingerabdruck)', async () => {
+  const e = await fuehreAus(programm('console.log(process.env.PYTHONDONTWRITEBYTECODE === "1" ? "gesetzt" : "fehlt")'));
+  assert.equal(e.zusammenfassung, 'gesetzt');
+});
+
 test('Programm: Exitcodes 0/1/2 und unbekannte Codes', async () => {
   assert.equal((await fuehreAus(programm('console.log("alles gut")'))).zusammenfassung, 'alles gut');
   assert.equal((await fuehreAus(programm('process.exit(0)'))).status, 'ok');
@@ -156,6 +161,12 @@ test('Konfiguration: Pflichtangaben und Pfade', () => {
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de', dns_anbieter: 'ionos', hetzner_token: 'H' } }, '/app'), /dns_anbieter muss/);
   assert.equal(pruefeKonfiguration({ hostname: 'm', tls: { modus: 'letsencrypt', email: 'a@b.de', cloudflare_token: 'C' } }, '/app').tls.dnsAnbieter, 'cloudflare', 'Standard bleibt Cloudflare');
   assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, benutzer: { 'a b': { hash: 'x' } } }, '/app'), /Benutzereintrag/);
+  // Weitere Host-Namen (Schutz vor DNS-Rebinding): Namen oder IP-Adressen, höchstens 20.
+  assert.deepEqual(k.weitereHostnamen, []);
+  assert.deepEqual(pruefeKonfiguration({ hostname: 'm', tls, weitere_hostnamen: ['WE-VM.firma.local.', '192.168.100.193', 'fe80::1', 'we_vm'] }, '/app').weitereHostnamen, ['we-vm.firma.local', '192.168.100.193', 'fe80::1', 'we_vm']);
+  for (const falsch of ['we-vm.firma.local', [1], ['a b'], ['böse.de'], ['-x.de'], ['x'.repeat(64) + '.de'], Array(21).fill('a.de')]) {
+    assert.throws(() => pruefeKonfiguration({ hostname: 'm', tls, weitere_hostnamen: falsch }, '/app'), /weitere_hostnamen/, JSON.stringify(falsch).slice(0, 40));
+  }
 });
 
 test('Konfiguration: Admin-Flag und Update-Abschnitt', () => {

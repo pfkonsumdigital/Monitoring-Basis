@@ -301,7 +301,9 @@ test('Umstellung nach dem Start: alles verschlüsseln, alte Kopien löschen, Dat
       tresor, configDatei, konfig: { datenOrdner: daten, moduleOrdner: module }, benutzerverwaltung: bv,
       updates: { tokenVerschluesseln: async () => 1 }, benachrichtigung: { verschluesseln: async () => 0 },
       module: { geheimnisseVerschluesseln: async () => ({ verschluesselt: 1, klartext: ['Altes Modul'] }),
-        module: [{ id: 'ftp', ordner: path.join(module, 'ftp'), dienst: 'MonitoringFTP' }, { id: 'sys', ordner: path.join(module, 'sys'), dienst: 'SysDienst' }, { id: 'ohne', ordner: path.join(module, 'ohne') }, { id: 'kaputt', fehler: 'x', dienst: 'X' }] },
+        module: [{ id: 'ftp', ordner: path.join(module, 'ftp'), dienst: 'MonitoringFTP' }, { id: 'sys', ordner: path.join(module, 'sys'), dienst: 'SysDienst' }, { id: 'ohne', ordner: path.join(module, 'ohne') }, { id: 'kaputt', fehler: 'x', dienst: 'X' }, { id: 'neu', ordner: path.join(module, 'neu'), dienst: 'Fremd' }],
+        // Nicht freigegebene Module (geänderter Dienst/Konto) bekommen keine Rechte.
+        freigabeNoetig: (m) => m.id === 'neu' },
       log: (m) => log.push(m), ausfuehren,
     });
     assert.equal(ergebnis.verschluesselt, 4);

@@ -16,7 +16,7 @@ function testModule(liste, planer, speicher) {
     ansichten: () => liste.map((m) => ({ ...berechneAnsicht(m, { verlauf: !m.fehler && speicher.letztes?.(m.id) ? [speicher.letztes(m.id)] : [], laeuft: planer.laeuft?.(m.id) ?? false }) })),
     finde: (id) => liste.find((m) => m.id === id) ?? null,
     verlauf: (id, n) => speicher.verlauf(id, n),
-    jetztPruefen: (id) => { const m = liste.find((x) => x.id === id); return m.fehler ? 'fehlerhaft' : planer.jetztPruefen(id) ? 'gestartet' : 'laeuft'; },
+    jetztPruefen: (id) => { const m = liste.find((x) => x.id === id); return { code: m.fehler ? 'fehlerhaft' : planer.jetztPruefen(id) ? 'gestartet' : 'laeuft' }; },
   };
 }
 
@@ -360,7 +360,7 @@ test('Webserver ohne Verschlüsselung: HTTP-Login, Cookie ohne Secure, kein HSTS
   const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
   const anmeldung = new Anmeldung({ benutzer: { anna: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
   const planer = { laeuft: () => false, naechster: () => null };
-  const anwendung = erstelleAnwendung({ module: testModule([], planer, { letztes: () => null }), anmeldung, sitzungMs: 60_000, verschluesselt: false, nurIntern: true, log });
+  const anwendung = erstelleAnwendung({ module: testModule([], planer, { letztes: () => null }), anmeldung, sitzungMs: 60_000, verschluesselt: false, nurIntern: true, adressen: () => ['192.168.1.10'], log });
   const server = await starteServer({ anwendung, tls: null, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
@@ -670,5 +670,118 @@ test('Webserver: Modul-Updates nur für Admins mit Schutzkopf', async () => {
     assert.deepEqual(aufrufe, [['suchen', 'ftp'], ['installieren', 'ftp', '1.1.0', 'chef'], ['installieren', 'ftp', '9.9.9', 'chef'], ['zurueck', 'ftp', 'chef']]);
   } finally {
     server.close();
+  }
+});
+
+test('Host-Kopf: Name ohne Port, IPv6, ungültige Werte; Prüfer mit eigenen Adressen', async () => {
+  const { hostAusKopf, hostPruefer } = await import('../basis/webserver.js');
+  assert.equal(hostAusKopf('Monitoring.Konsum-Weimar.de:8443'), 'monitoring.konsum-weimar.de');
+  assert.equal(hostAusKopf('monitoring.konsum-weimar.de.'), 'monitoring.konsum-weimar.de');
+  assert.equal(hostAusKopf('[::1]:8443'), '::1');
+  assert.equal(hostAusKopf('192.168.100.193'), '192.168.100.193');
+  for (const falsch of [undefined, '', 'a b', 'x:y:z', '[::1', 'böse.de', 'a/b', 'x'.repeat(301)]) assert.equal(hostAusKopf(falsch), null, String(falsch));
+  let abfragen = 0;
+  let zeit = 0;
+  const erlaubt = hostPruefer({ hostname: 'Monitoring.Firma.de', weitere: ['we-vm.firma.local'], adressen: () => { abfragen++; return ['192.168.100.193', 'fe80::1']; }, jetzt: () => zeit });
+  for (const name of ['monitoring.firma.de', 'we-vm.firma.local', 'localhost', '127.0.0.1', '::1', '192.168.100.193', 'fe80::1']) assert.equal(erlaubt(name), true, name);
+  assert.equal(erlaubt('angreifer.example'), false);
+  assert.equal(erlaubt('192.168.100.194'), false);
+  assert.equal(abfragen, 1, 'Adressen höchstens einmal pro Minute ermitteln');
+  zeit += 61_000;
+  erlaubt('angreifer.example');
+  assert.equal(abfragen, 2);
+});
+
+test('Webserver: Host-Prüfung, Fehlerausgabe und Freigabe nur für Admins, manuelle Prüfung begrenzt', async () => {
+  const http = await import('node:http');
+  const fs = await import('node:fs/promises');
+  const { Modulverwaltung } = await import('../basis/modulverwaltung.js');
+  const { Ergebnisspeicher } = await import('../basis/speicher.js');
+  const { Planer } = await import('../basis/planer.js');
+  const { Freigaben } = await import('../basis/freigabe.js');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-webfg-'));
+  const ordner = path.join(wurzel, 'modules', 'plug');
+  await fs.mkdir(ordner, { recursive: true });
+  await writeFile(path.join(ordner, 'module.json'), JSON.stringify({ id: 'plug', name: 'Plug', typ: 'plugin', einstieg: 'index.js' }));
+  await writeFile(path.join(ordner, 'index.js'), 'export async function pruefen() { return { status: "ok" }; }');
+  const meldungen = [];
+  const log = Object.assign((m) => meldungen.push(['info', m]), { warnung: (q, m) => meldungen.push(['warnung', m]), fehler: (q, m) => meldungen.push(['fehler', m]) });
+  const datenOrdner = path.join(wurzel, 'data');
+  const speicher = new Ergebnisspeicher(datenOrdner, 50);
+  await speicher.sicherstellen('plug');
+  await speicher.hinzufuegen('plug', { status: 'fehler', zusammenfassung: 'kaputt', details: [], messwerte: {}, beginn: '2026-11-09T09:00:00Z', fehlerausgabe: 'Traceback: Passwort=Geheim123' });
+  const planer = new Planer({ ausfuehren: async () => ({ status: 'ok', zusammenfassung: 'x', beginn: new Date().toISOString(), dauerMs: 1 }), speichern: (id, e) => speicher.hinzufuegen(id, e) });
+  const freigaben = new Freigaben({ datenOrdner, log });
+  await freigaben.laden();
+  await freigaben.setzen([], 'Basis', 'Test'); // kein erster Start mehr: plug ist neu und braucht eine Freigabe
+  const module = new Modulverwaltung({ moduleOrdner: path.join(wurzel, 'modules'), datenOrdner, speicher, planer, uebernehmen: (id, e) => speicher.hinzufuegen(id, e), freigaben, log });
+  await module.start();
+  module.stop();
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, hostname: 'monitoring.firma.de', weitereHosts: ['we-vm.firma.local'], adressen: () => ['192.168.100.193'], log }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, kopf: res.headers, text: daten, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  try {
+    // DNS-Rebinding: fremder Name → 421, auch für Anmeldeseite und statische Dateien; einmal protokolliert.
+    for (const host of ['angreifer.example', `angreifer.example:${port}`]) {
+      const r = await hole('GET', '/login', { host });
+      assert.equal(r.status, 421);
+      assert.doesNotMatch(r.text, /angreifer/);
+    }
+    assert.equal((await hole('GET', '/app.js', { host: 'angreifer.example' })).status, 421);
+    assert.equal(meldungen.filter(([s, m]) => s === 'warnung' && /unbekannten Host-Namen „angreifer\.example“/.test(m)).length, 1);
+    assert.equal((await hole('GET', '/login', { host: 'a b' })).status, 400);
+    for (const host of ['monitoring.firma.de:8443', 'WE-VM.firma.local', '192.168.100.193:8443', `localhost:${port}`]) assert.equal((await hole('GET', '/login', { host })).status, 200, host);
+
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+    // Fehlerausgabe (stderr) nur für Admins.
+    const gs = (await hole('GET', '/api/status', gast)).json().module[0];
+    assert.equal(gs.letztes.fehlerausgabe, undefined);
+    assert.equal(gs.letztes.zusammenfassung, 'kaputt');
+    assert.deepEqual(gs.freigabe, { neu: true, wert: null, aenderungen: [], fehler: null }, 'Gäste sehen nur, dass eine Freigabe nötig ist');
+    assert.doesNotMatch((await hole('GET', '/api/module/plug/verlauf', gast)).text, /Geheim123|fehlerausgabe/);
+    const cs = (await hole('GET', '/api/status', chef)).json().module[0];
+    assert.match(cs.letztes.fehlerausgabe, /Traceback/);
+    assert.equal(cs.anzeige, 'freigabe');
+    assert.match(cs.freigabe.aenderungen[0], /Neues Modul \(plugin/);
+    assert.match((await hole('GET', '/api/module/plug/verlauf', chef)).text, /Traceback/);
+
+    // Prüfen vor der Freigabe nicht möglich.
+    assert.match((await hole('POST', '/api/module/plug/pruefen', { ...gast, ...schutz })).json().fehler, /wartet auf Freigabe/);
+    // Freigabe nur für Admins, mit Schutzkopf und dem aktuellen Fingerabdruck.
+    const wert = JSON.stringify({ wert: cs.freigabe.wert });
+    assert.equal((await hole('POST', '/api/module/plug/freigeben', { ...gast, ...schutz }, wert)).status, 403);
+    assert.equal((await hole('POST', '/api/module/plug/freigeben', chef, wert)).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole('POST', '/api/module/plug/freigeben', { ...chef, ...schutz, origin: 'http://angreifer.example' }, wert)).status, 403, 'fremde Herkunft');
+    assert.equal((await hole('GET', '/api/module/plug/freigeben', chef)).status, 404);
+    assert.equal((await hole('POST', '/api/module/plug/freigeben', { ...chef, ...schutz }, '{kaputt')).status, 400);
+    assert.equal((await hole('POST', '/api/module/plug/freigeben', { ...chef, ...schutz }, JSON.stringify({ wert: 'e'.repeat(64) }))).status, 409);
+    assert.equal((await hole('POST', '/api/module/gibtsnicht/freigeben', { ...chef, ...schutz }, wert)).status, 404);
+    const frei = await hole('POST', '/api/module/plug/freigeben', { ...chef, ...schutz }, wert);
+    assert.equal(frei.status, 200);
+    assert.match(frei.json().text, /freigegeben durch chef/);
+    assert.equal((await hole('GET', '/api/status', gast)).json().module[0].freigabe, null);
+
+    // Manuelle Prüfung: einmal pro Minute und Modul, auch für Nicht-Admins.
+    assert.equal((await hole('POST', '/api/module/plug/pruefen', { ...gast, ...schutz })).status, 202);
+    const zweite = await hole('POST', '/api/module/plug/pruefen', { ...chef, ...schutz });
+    assert.equal(zweite.status, 429);
+    assert.match(zweite.json().fehler, /gerade erst manuell geprüft\. Bitte in \d+ Sekunden erneut versuchen/);
+    assert.match(zweite.kopf['retry-after'], /^\d+$/);
+  } finally {
+    planer.stop();
+    server.close();
+    await rm(wurzel, { recursive: true, force: true });
   }
 });

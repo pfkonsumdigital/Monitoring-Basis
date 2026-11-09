@@ -1,7 +1,8 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pruefeFelder } from './einstellungen.js';
 import { DIENST_MUSTER } from './dienste.js';
+import { leseBegrenzt, MODUL_JSON_MAX } from './dateien.js';
 
 const ID_MUSTER = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const istText = (wert) => typeof wert === 'string' && wert.trim() !== '' && !/[\r\n\0]/.test(wert);
@@ -77,10 +78,13 @@ export async function ladeModule(moduleOrdner) {
   for (const eintrag of eintraege.filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const ordner = path.join(moduleOrdner, eintrag.name);
     let roh;
-    try { roh = JSON.parse((await readFile(path.join(ordner, 'module.json'), 'utf8')).replace(/^﻿/, '')); }
+    try { roh = JSON.parse((await leseBegrenzt(path.join(ordner, 'module.json'), MODUL_JSON_MAX)).replace(/^﻿/, '')); }
     catch (fehler) {
       if (fehler.code === 'ENOENT') continue;
-      ergebnis.push({ id: eintrag.name, name: eintrag.name, ordner, fehler: 'module.json ist kein gültiges JSON' });
+      const text = fehler.code === 'ZU_GROSS' ? `module.json ist zu groß (höchstens ${MODUL_JSON_MAX / 1024} KB)`
+        : fehler.code === 'KEINE_DATEI' ? 'module.json ist keine normale Datei (Verknüpfungen sind nicht erlaubt)'
+          : 'module.json ist kein gültiges JSON';
+      ergebnis.push({ id: ID_MUSTER.test(eintrag.name) ? eintrag.name : `ungueltig-${ergebnis.length}`, name: eintrag.name, ordner, fehler: text });
       continue;
     }
     const geprueft = pruefeModul(roh, eintrag.name, ordner);

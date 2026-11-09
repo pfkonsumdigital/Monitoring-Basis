@@ -342,3 +342,26 @@ test('Statusbericht: aus, Benachrichtigung inaktiv, „jetzt senden“ und neuer
     await rm(u.ordner, { recursive: true, force: true });
   }
 });
+
+test('Benachrichtigung: Freigabe nötig sofort melden, mit Änderungen; im Statusbericht als Problem', async () => {
+  const u = await aufbau();
+  try {
+    const freigabe = { neu: false, wert: 'a'.repeat(64), aenderungen: ['geändert: pruefe.exe', 'neu: lib/x.dll'], fehler: null };
+    await u.b.pruefen([modul('freigabe', { problemLaeufe: 0, freigabe })]);
+    const [mail] = u.ms.mails();
+    assert.equal(mail.message.subject, '[Monitoring] FREIGABE NÖTIG: FTP-Dateialter');
+    const text = mail.message.body.content;
+    assert.match(text, /Status: Freigabe nötig/);
+    assert.match(text, /Problem: Das Modul ist geändert und wird erst ausgeführt, wenn ein Admin es in der Oberfläche freigibt\./);
+    assert.match(text, /Änderungen seit der letzten Freigabe:\n- geändert: pruefe\.exe\n- neu: lib\/x\.dll/);
+    await u.b.pruefen([modul('freigabe', { problemLaeufe: 0, freigabe })]);
+    assert.equal(u.ms.mails().length, 1, 'nicht doppelt');
+    await u.b.pruefen([modul('ok')]);
+    assert.equal(u.ms.mails()[1].message.subject, '[Monitoring] WIEDER OK: FTP-Dateialter');
+    const { text: bericht } = u.b.berichtMail([modul('ok', { id: 'a', name: 'A' }), modul('freigabe', { problemLaeufe: 0, freigabe })], u.uhr());
+    assert.match(bericht, /FTP-Dateialter: Freigabe nötig/);
+    assert.ok(bericht.indexOf('FTP-Dateialter: Freigabe nötig') < bericht.indexOf('A: OK'), 'Probleme zuerst');
+  } finally {
+    await rm(u.ordner, { recursive: true, force: true });
+  }
+});

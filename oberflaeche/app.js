@@ -1,6 +1,6 @@
 'use strict';
 
-const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', unbekannt: 'Noch keine Meldung', inaktiv: 'Pausiert', laeuft: 'Läuft …', beendet: 'Beendet', 'dienst-gestoppt': 'Dienst gestoppt' };
+const STATUS_TEXT = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', unbekannt: 'Noch keine Meldung', inaktiv: 'Pausiert', laeuft: 'Läuft …', beendet: 'Beendet', 'dienst-gestoppt': 'Dienst gestoppt', freigabe: 'Freigabe nötig' };
 const DIENST_TEXT = { laeuft: 'läuft', gestoppt: 'gestoppt', startet: 'wird gestartet …', stoppt: 'wird beendet …', pausiert: 'angehalten', fehlt: 'nicht installiert', unbekannt: 'Zustand unbekannt', 'nicht-verfuegbar': 'nur unter Windows abfragbar' };
 const $ = (id) => document.getElementById(id);
 let offenesModul = null;
@@ -62,6 +62,7 @@ function nachfragen(knopf, frage, aktion) {
 
 function textZuModul(m) {
   if (m.fehler) return m.fehler;
+  if (m.anzeige === 'freigabe') return m.freigabe?.fehler ?? `${m.freigabe?.neu ? 'Neues Modul' : 'Geändert'} – wird erst nach Freigabe durch einen Admin ausgeführt.`;
   if (m.anzeige === 'keine-meldung') {
     const letzte = m.letztes?.ende ?? m.letztes?.beginn;
     return letzte ? `Keine Meldung seit ${relativ(letzte).replace(/^vor /, '')} – läuft das Modul noch?` : 'Das Modul hat sich noch nie gemeldet – läuft es?';
@@ -83,7 +84,7 @@ function zeitenText(m) {
   const letzte = m.letztes?.ende ?? m.letztes?.beginn;
   if (letzte) teile.push(`${m.betriebsart === 'eigenstaendig' ? 'Letzte Meldung' : 'Geprüft'} ${relativ(letzte)}`);
   if (m.problemLaeufe && m.problemSeit) teile.push(`Problem seit ${relativ(m.problemSeit)} (${m.problemLaeufe} ${m.problemLaeufe === 1 ? 'Lauf' : 'Läufe'})`);
-  if (m.naechsterLauf && !m.laeuft && !['inaktiv', 'beendet', 'keine-meldung', 'dienst-gestoppt'].includes(m.anzeige)) teile.push(`nächster Lauf ${relativ(m.naechsterLauf)}`);
+  if (m.naechsterLauf && !m.laeuft && !['inaktiv', 'beendet', 'keine-meldung', 'dienst-gestoppt', 'freigabe'].includes(m.anzeige)) teile.push(`nächster Lauf ${relativ(m.naechsterLauf)}`);
   else if (m.betriebsart === 'basis' && !m.intervallMinuten && !m.fehler) teile.push('nur manuell');
   return teile.join(' · ');
 }
@@ -124,7 +125,7 @@ async function aktualisieren() {
     letzteModule = daten.module;
     const zaehler = { ok: 0, warnung: 0, fehler: 0, 'keine-meldung': 0 };
     for (const m of daten.module) {
-      const s = ['modulfehler', 'dienst-gestoppt'].includes(m.anzeige) ? 'fehler' : m.anzeige;
+      const s = ['modulfehler', 'dienst-gestoppt'].includes(m.anzeige) ? 'fehler' : m.anzeige === 'freigabe' ? 'warnung' : m.anzeige;
       if (s in zaehler) zaehler[s]++;
     }
     for (const [s, n] of Object.entries(zaehler)) $(`anzahl-${s}`).textContent = n;
@@ -158,8 +159,10 @@ async function pruefen(id, knopf) {
   if (!antwort.ok) {
     const { fehler } = await antwort.json().catch(() => ({}));
     knopf.textContent = fehler || 'Nicht möglich';
+    knopf.title = knopf.textContent;
   }
-  setTimeout(aktualisieren, 800);
+  // Eine Ablehnung (z. B. „gerade erst geprüft“) etwas länger stehen lassen.
+  setTimeout(aktualisieren, antwort.ok ? 800 : 4000);
 }
 
 function fakt(name, wert) { return wert ? [el('dt', { textContent: name }), el('dd', { textContent: wert })] : []; }
@@ -205,6 +208,7 @@ async function detailsFuellen(m, hintergrund = false) {
     beendenKnopf.dataset.bestaetigen = '';
     modulAktion(m, 'beenden', beendenKnopf);
   };
+  freigabeFuellen(m);
   $('md-upd').hidden = !istAdmin || !m.repo || Boolean(m.fehler);
   if (!$('md-upd').hidden) modulUpdateLaden(m.id, false, hintergrund);
   $('details-starten').hidden = !m.kannStarten;
@@ -297,6 +301,44 @@ async function modulUpdateAktion(id, aktion, koerper = {}) {
   }
   modulUpdateZeigen(daten);
   if (aktion === 'suchen') aktualisieren();
+}
+
+// Neues oder geändertes Modul: Admins sehen die Änderungen und geben frei; alle anderen nur den Hinweis.
+function freigabeFuellen(m) {
+  const f = m.freigabe;
+  $('details-freigabe').hidden = !f;
+  const knopf = $('freigabe-knopf');
+  if (!f) { knopf.dataset.wert = ''; return; }
+  const dienst = m.typ === 'eigenstaendig';
+  $('freigabe-titel').textContent = f.neu ? 'Neues Modul – Freigabe nötig' : 'Geändertes Modul – Freigabe nötig';
+  $('freigabe-text').textContent = f.fehler
+    ? `${f.fehler} So kann das Modul nicht freigegeben werden; bitte den Modulordner korrigieren.`
+    : !istAdmin ? 'Ein Admin muss die Änderungen prüfen und das Modul freigeben. Bis dahin wird es nicht ausgeführt.'
+      : dienst ? `Nach der Freigabe kann die Basis den Windows-Dienst „${m.dienst?.name ?? ''}“ starten und beenden. Bitte nur freigeben, wenn die Änderung bekannt und gewollt ist.`
+        : 'Nach der Freigabe führt die Basis dieses Modul als SYSTEM aus. Bitte nur freigeben, wenn die Änderungen bekannt und gewollt sind.';
+  const liste = istAdmin ? f.aenderungen ?? [] : [];
+  $('freigabe-liste').replaceChildren(...liste.map((t) => el('li', { textContent: t })));
+  $('freigabe-liste').hidden = !liste.length;
+  knopf.hidden = !istAdmin || !f.wert;
+  // Ändert sich das Modul während der Rückfrage, beginnt die Rückfrage neu.
+  if (knopf.dataset.modul !== m.id || knopf.dataset.wert !== (f.wert ?? '')) {
+    if (knopf.dataset.sicher === '1') { knopf.dataset.sicher = ''; knopf.textContent = knopf.dataset.text; }
+    knopf.dataset.modul = m.id;
+    knopf.dataset.wert = f.wert ?? '';
+  }
+}
+
+async function freigeben() {
+  const knopf = $('freigabe-knopf');
+  const { modul, wert } = knopf.dataset;
+  if (!modul || !wert) return;
+  aktionMeldung('Wird freigegeben …');
+  await gesperrt([knopf], aktionMeldung, async () => {
+    const antwort = await senden(`/api/module/${encodeURIComponent(modul)}/freigeben`, { wert });
+    const daten = await antwort.json().catch(() => ({}));
+    aktionMeldung(antwort.ok ? daten.text || 'Freigegeben.' : daten.fehler || 'Nicht möglich.', antwort.ok ? 'ok' : 'fehler');
+  });
+  aktualisieren();
 }
 
 const aktionMeldung = (text, art = '') => { $('details-aktion-meldung').textContent = text; $('details-aktion-meldung').dataset.art = art; };
@@ -1016,6 +1058,7 @@ nachfragen($('tls-http'), 'Wirklich zurück auf HTTP? Die Basis startet neu.', (
 
 // ---- Neustart (nur Admins) ----
 const neustartMeldung = (text, art = '') => { $('neustart-meldung').textContent = text; $('neustart-meldung').dataset.art = art; };
+nachfragen($('freigabe-knopf'), 'Wirklich freigeben?', freigeben);
 nachfragen($('neustart-ja'), 'Wirklich neu starten?', async () => {
   $('neustart-ja').disabled = true;
   let antwort;

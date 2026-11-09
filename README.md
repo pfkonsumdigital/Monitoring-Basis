@@ -40,6 +40,7 @@ Was in `data\` liegt:
 | --- | --- |
 | `ergebnisse\<Modul>.json` | Verlauf der Läufe je Modul |
 | `modulzustand.json` | Pause und „Beendet“ je Modul |
+| `modulfreigaben.json` | freigegebener Stand (Fingerabdruck) je ausführbarem Modul, mit Zeit und Admin – siehe „Freigabe neuer und geänderter Module“ |
 | `benachrichtigung.json`, `benachrichtigung-zustand.json` | Mail-Einstellungen (Schlüssel verschlüsselt) und zuletzt gemeldeter Zustand je Modul |
 | `github.json` | GitHub-Token aus der Oberfläche (verschlüsselt) |
 | `anmeldeorte.json` | bekannte Adressen der Admins (für die Sicherheitsmail) |
@@ -165,6 +166,7 @@ Zwei-Faktor) nicht kennen.
 | `verlauf_anzahl` | gespeicherte Ergebnisse je Modul | `1000` |
 | `sitzung_stunden` | Höchstdauer einer Sitzung, danach ist eine neue Anmeldung nötig | `8` |
 | `sitzung_leerlauf_minuten` | Abmeldung nach so vielen Minuten ohne Aktion (das automatische Nachladen zählt nicht) | `30` |
+| `weitere_hostnamen` | weitere Namen oder IP-Adressen, unter denen die Oberfläche aufgerufen wird, z. B. `["we-vmworker-22.konsum-weimar.local"]` (höchstens 20). Ohne Eintrag erlaubt: `hostname`, der Rechnername, `localhost` und die IP-Adressen des Workers. Anfragen an andere Namen beantwortet die Basis mit „Unbekannter Host-Name“ (Schutz vor DNS-Rebinding). | `[]` |
 | `admin_netze` | Netze, aus denen Admin-Funktionen und das Einrichten der Zwei-Faktor-Anmeldung erlaubt sind (Firmennetz und VPN), z. B. `["192.168.100.0/24", "192.168.10.0/24", "127.0.0.0/8", "::1/128"]`; `["*"]` = überall | alle privaten Adressen |
 | `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, `"letsencrypt"` oder `"dateien"`, siehe „HTTPS & Domain“. Wird am einfachsten in der Oberfläche eingerichtet. | – |
 | `benutzer` | wird unter **Einstellungen → Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
@@ -328,7 +330,8 @@ ein: **neue, geänderte oder entfernte Module wirken ohne Neustart.** Mit
 `--module-pruefen` lassen sich alle Module vorab prüfen (siehe „Befehle auf dem
 Worker“).
 Ein fehlerhaftes Modul erscheint rot in der Oberfläche und stört die anderen
-nicht.
+nicht. Neue und geänderte Module, die die Basis ausführt, laufen erst nach der
+Freigabe durch einen Admin (siehe „Freigabe neuer und geänderter Module“).
 
 Es gibt zwei Betriebsarten:
 
@@ -349,6 +352,61 @@ modules\ftp\
 
 Basis und Modul sprechen sonst nicht miteinander. Ist die Basis aus, prüft das
 Modul mit den zuletzt gespeicherten Einstellungen weiter.
+
+Größengrenzen: `module.json` höchstens 256 KB, `status.json` und
+`einstellungen.json` höchstens 1 MB. Verknüpfungen (Symlinks, Junctions) statt
+echter Dateien werden nicht gelesen. Eine zu große oder verknüpfte
+`status.json` gilt wie eine unlesbare Meldung („Meldung nicht lesbar“); ihr
+Inhalt landet nie im Protokoll.
+
+### Freigabe neuer und geänderter Module
+
+Die Basis führt Module vom Typ `programm` und `plugin` als SYSTEM aus und kann
+die Windows-Dienste eigenständiger Module (`dienst`) starten und beenden. Damit
+eine unbemerkt geänderte oder neu abgelegte Datei nicht automatisch mit diesen
+Rechten läuft, gilt: **Ein solches Modul läuft nur in dem Stand, den ein Admin
+freigegeben hat.**
+
+- **Was zählt:** bei `programm` und `plugin` `typ`, `befehl`, `argumente`,
+  `arbeitsordner` bzw. `einstieg` und die Prüfsumme (SHA-256) **jeder Datei im
+  Modulordner**, auch in Unterordnern; dazu die Programmdatei aus `befehl` und
+  als Argument genannte Dateien, wenn sie außerhalb des Modulordners liegen.
+  Bei eigenständigen Modulen mit `dienst` zählt nur der Dienstname – ihre
+  Dateien startet Windows, nicht die Basis. Eigenständige Module ohne `dienst`
+  brauchen keine Freigabe.
+- **Was nicht zählt:** die übrigen Angaben in `module.json` (Name, Version,
+  Intervall, Beschreibung, Einstellungsfelder …), `einstellungen.json`,
+  `status.json`, `befehl.json`, Dateien mit der Endung `.tmp` und die Ordner
+  `daten\` und `logs\` direkt im Modulordner.
+- **Regeln für Module:** Daten und Protokolle nur nach `daten\` bzw. `logs\`
+  schreiben – jede andere neue oder geänderte Datei hält das Modul bis zur
+  nächsten Freigabe an. Dort keinen Code ablegen, der ausgeführt wird. Keine
+  Verknüpfungen (Symlinks, Junctions) im Modulordner; höchstens 5000 Dateien
+  und 500 MB. Python legt keinen Bytecode (`__pycache__`) an – die Basis setzt
+  `PYTHONDONTWRITEBYTECODE=1`.
+- **Ablauf:** Die Basis prüft den Modulordner alle 15 Sekunden und vor jedem
+  Start noch einmal vollständig. Weicht der Stand ab, steht das Modul auf
+  **„Freigabe nötig“** (gelb), wird nicht gestartet, das Fehlerprotokoll und –
+  falls eingerichtet – eine Mail nennen die Änderungen. Hat sich eine Datei erst
+  kurz vor dem Start geändert, erscheint statt des Laufs ein Fehler „Nicht
+  gestartet: …“.
+- **Freigeben:** Details des Moduls → Kasten „Freigabe nötig“ mit der Liste
+  der Änderungen (z. B. „geändert: lib\hilfe.dll“, „befehl: … → …“) →
+  **„Freigeben“** und zur Bestätigung noch einmal klicken. Nur Admins aus dem
+  Firmennetz/VPN. Freigegeben wird genau der angezeigte Stand: Hat sich das
+  Modul inzwischen erneut geändert, lehnt die Basis ab und zeigt die neuen
+  Änderungen. Nicht-Admins sehen nur, dass eine Freigabe nötig ist.
+- **Modul-Updates** über die Basis (geprüftes Paket, von einem Admin
+  gestartet) werden automatisch freigegeben. „Zurück zu vX.Y.Z“ nicht – die
+  Sicherung muss erneut freigegeben werden, wenn sie vom aktuellen Stand
+  abweicht. Module mit `dienst`, die auf Freigabe warten, lassen sich erst nach
+  der Freigabe aktualisieren.
+- **Beim ersten Start von 0.15.0** übernimmt die Basis alle vorhandenen Module
+  einmalig als freigegeben (Protokoll: „Modul-Freigaben eingeführt …“).
+  Fehlt `data\modulfreigaben.json` später, passiert das erneut; ist die Datei
+  beschädigt, gilt nichts als freigegeben.
+- Windows-Dienste und Dateirechte für Dienstkonten setzt die Basis nur für
+  freigegebene Module.
 
 ### Eigenständiges Modul
 
@@ -527,8 +585,11 @@ Ablauf der Installation:
    vor dem Update gestoppt war, bleibt gestoppt. Module ohne Dienst startest du
    auf dem Worker; bis sie sich melden, stehen sie auf „Beendet“.
 
+Die neue Version gilt danach als freigegeben (siehe „Freigabe neuer und
+geänderter Module“).
+
 „Zurück zu vX.Y.Z“ tauscht genauso mit der zuletzt gesicherten Version (die
-aktuellen Einstellungen bleiben). Aufbewahrt werden die zwei neuesten
+aktuellen Einstellungen bleiben); sie muss danach ggf. neu freigegeben werden. Aufbewahrt werden die zwei neuesten
 Sicherungen je Modul. `data\` muss auf demselben Laufwerk liegen wie `modules\`.
 
 ### Von der Basis gestartet: Programm (beliebige Sprache)
@@ -573,7 +634,9 @@ export async function pruefen({ einstellungen, modulId, modulOrdner }) {
 
 Für beide gilt: eigener Prozess mit Zeitlimit (`timeout_sekunden`, Standard
 60), ohne `intervall_minuten` nur über **„Jetzt prüfen“**, nie doppelt, der
-nächste Lauf zählt ab Ende des vorherigen. `"aktiv": false` in `module.json`
+nächste Lauf zählt ab Ende des vorherigen. „Jetzt prüfen“ dürfen alle
+angemeldeten Benutzer, aber nur bei aktiven, freigegebenen Modulen und je
+Modul höchstens einmal pro Minute. `"aktiv": false` in `module.json`
 pausiert ein Modul von Anfang an.
 
 ### Für alle Module
@@ -584,10 +647,11 @@ je Modul die letzten `verlauf_anzahl` Läufe (Standard 1000), Details nur bei
 den neuesten 50.
 
 Die Übersicht zeigt je Modul den Status (OK, Warnung, Fehler, Keine Meldung,
-Pausiert, Modul fehlerhaft), die letzte Meldung, den nächsten Lauf, seit wann
+Pausiert, Modul fehlerhaft, Freigabe nötig), die letzte Meldung, den nächsten Lauf, seit wann
 ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
 Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
-Problemen stehen oben.
+Problemen stehen oben. Die Fehlerausgabe eines Moduls (stderr) sehen nur
+Admins – sie kann interne Pfade oder Server nennen.
 
 ### Oberfläche
 
@@ -909,6 +973,7 @@ Verfahren TOTP nach RFC 6238, 30 Sekunden).
 | „… muss einmalig im Firmennetz oder über VPN eingerichtet werden …“ | Zwei-Faktor noch nicht eingerichtet und Anmeldung von außen | im Firmennetz oder über VPN anmelden |
 | „Die Sitzung ist abgelaufen …“ / „Die Basis wurde neu gestartet …“ | Leerlauf, Höchstdauer oder Neustart | neu anmelden |
 | „Zugriff nur aus dem internen Netz.“ | HTTP-Betrieb, Zugriff von einer öffentlichen Adresse | nur intern oder über VPN aufrufen |
+| „Unbekannter Host-Name …“ (statt der Anmeldeseite) | Die Seite wurde über einen Namen aufgerufen, den die Basis nicht kennt, z. B. den vollständigen Rechnernamen | über `hostname` bzw. die IP-Adresse aufrufen oder den Namen in `config.json` unter `weitere_hostnamen` eintragen und neu starten; der abgewiesene Name steht im Fehlerprotokoll |
 
 Jeder Fehlversuch steht in `logs\basis.log` („Fehlgeschlagene Anmeldung von …“),
 Sperren zusätzlich im Fehlerprotokoll.
@@ -990,6 +1055,17 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
   erneute Anmeldung nötig.
 - Aktionen nur mit passender Herkunft und eigenem Anfragekopf (Schutz vor
   CSRF).
+- **Nur bekannte Host-Namen** (`hostname`, `weitere_hostnamen`, Rechnername,
+  `localhost`, eigene IP-Adressen); alles andere bekommt „421 Unbekannter
+  Host-Name“ und wird einmal je Name protokolliert. Schutz vor DNS-Rebinding:
+  Eine fremde Webseite kann ihren Namen sonst auf die interne Adresse umbiegen
+  und die Oberfläche im Browser eines Mitarbeiters ansprechen.
+- **Ausführbare Module nur nach Freigabe** durch einen Admin, jede Änderung
+  erneut (siehe „Freigabe neuer und geänderter Module“).
+- **Größengrenzen** für Dateien der Module (`module.json` 256 KB, `status.json`
+  und `einstellungen.json` 1 MB), keine Verknüpfungen.
+- Fehlerausgabe (stderr) der Module nur für Admins; „Jetzt prüfen“ nur bei
+  aktiven Modulen und höchstens einmal pro Minute je Modul.
 
 ## Entwicklung
 
@@ -1001,12 +1077,14 @@ npm test
 Die Tests prüfen u. a. Modulprüfung, Ausführung (Exitcodes, JSON, Zeitlimit,
 Abstürze), Plugins, Zeitplan, Speicher, Anmeldung mit Zwei-Faktor und Sperren,
 Benutzerverwaltung, Benachrichtigung, Updates von Basis und Modulen, Starter,
-Verschlüsselung, HTTPS & Domain und die Oberfläche (alle IDs vorhanden).
+Verschlüsselung, HTTPS & Domain, Modul-Freigaben (Fingerabdruck,
+Verknüpfungen, Grenzen, Prüfung vor jedem Start), Host-Prüfung und die
+Oberfläche (alle IDs vorhanden).
 Hetzner, Cloudflare, Let's Encrypt, GitHub und Microsoft 365 werden dabei
 simuliert; eine echte Zertifikatsausstellung lässt sich nur auf dem Worker mit
 echter Domain und Token prüfen. Start.exe: `cd launcher && go test ./...`.
 
 GitHub Actions: „Tests“ läuft bei jedem Push auf `main` (Linux: `npm test` und
-`go test`; Windows: echte DPAPI und Dateirechte in `tests/windows.test.js`).
+`go test`; Windows: echte DPAPI, Dateirechte und Junctions im Modulordner in `tests/windows.test.js`).
 „Release bauen“ läuft bei einem Tag `vX.Y.Z` (siehe „Neue Version
 veröffentlichen“).

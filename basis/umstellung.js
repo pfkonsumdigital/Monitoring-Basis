@@ -60,7 +60,8 @@ export async function geheimnisseUmstellen({ tresor, configDatei, konfig, benutz
     if (r.ok.length) log(`Dateirechte gesetzt (nur SYSTEM, Administratoren${sid && !['S-1-5-18', 'S-1-5-32-544'].includes(sid) ? ' und das Konto der Basis' : ''}): ${r.ok.join(', ')}.`);
     for (const f of r.fehler) melde(log, 'warnung', 'Sicherheit', `Dateirechte konnten nicht gesetzt werden – ${f}`);
     // Module, deren Windows-Dienst unter einem eigenen Konto läuft (z. B. FTPModul.exe --installieren --konto).
-    const d = await dienstRechte((module.module ?? []).filter((m) => !m.fehler && m.dienst), ausfuehren);
+    // Nur freigegebene Module: Der Dienst bzw. das Konto in module.json könnte sonst geändert worden sein.
+    const d = await dienstRechte((module.module ?? []).filter((m) => !m.fehler && m.dienst && !module.freigabeNoetig?.(m)), ausfuehren);
     ergebnis.dienste = d;
     if (d.ok.length) log(`Dienstkonten haben Zugriff auf ihren Modulordner: ${d.ok.join(', ')}.`);
     for (const f of d.fehler) melde(log, 'warnung', 'Sicherheit', `Rechte für das Dienstkonto konnten nicht gesetzt werden – ${f}`);

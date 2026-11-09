@@ -125,6 +125,7 @@ export class Modulupdates {
   // Startet die Installation im Hintergrund; der Fortschritt steht im Status (phase).
   async installieren(id, version, benutzer) {
     const m = this.modul(id);
+    this.freigabePruefen(m);
     const zugang = this.zugang(m);
     const ziel = this.zustandVon(id).verfuegbar;
     if (!ziel || ziel.version !== version) throw new BasisFehler('Bitte zuerst nach Updates suchen.');
@@ -150,12 +151,15 @@ export class Modulupdates {
   async zurueck(id, benutzer) {
     const m = this.verwaltung.finde(id);
     if (!m || m.fehler) throw new BasisFehler('Modul unbekannt oder fehlerhaft.');
+    this.freigabePruefen(m);
     const [vorherige] = await this.sicherungen(id);
     if (!vorherige) throw new BasisFehler('Es gibt keine gesicherte vorherige Version.');
     const z = this.zustandVon(id);
     if (!['bereit', 'fehler'].includes(z.phase)) throw new BasisFehler('Für dieses Modul läuft bereits ein Update-Vorgang.');
     this.log(`Modul ${id}: Zurück auf Version ${vorherige.version} durch ${benutzer}.`);
-    const lauf = this.exklusiv(id, 'beenden', (zustand) => this.austauschen(m, vorherige.ordner, benutzer, zustand, `Zurück auf ${vorherige.version}`))
+    // Die zurückgeholte Version wird nicht automatisch freigegeben: Die Sicherung kann Änderungen enthalten,
+    // die nie freigegeben wurden. Weicht sie von der aktuellen Freigabe ab, gibt ein Admin sie frei.
+    const lauf = this.exklusiv(id, 'beenden', (zustand) => this.austauschen(m, vorherige.ordner, benutzer, zustand, `Zurück auf ${vorherige.version}`, { freigeben: false }))
       .then(() => this.log(`Modul ${id}: Version ${vorherige.version} wiederhergestellt.`)).catch(() => {});
     this.laufend.set(id, lauf);
     return this.status(id);
@@ -210,14 +214,21 @@ export class Modulupdates {
     if (roh.version !== version) throw new BasisFehler(`Das Paket enthält Version ${roh.version ?? '–'} statt ${version}.`);
   }
 
+  // Ein Modul mit Windows-Dienst, dessen Stand nicht freigegeben ist, wird nicht angefasst: Der Dienstname in
+  // module.json könnte geändert worden sein, und die Basis würde dann einen fremden Dienst beenden und starten.
+  freigabePruefen(m) {
+    if (m.dienst && this.verwaltung.freigabeNoetig?.(m)) throw new BasisFehler('Das Modul wartet auf Freigabe durch einen Admin. Bitte zuerst die Änderungen in den Moduldetails prüfen und freigeben.');
+  }
+
   // Beendet das Modul, tauscht den Modulordner gegen „neu“ und startet es wieder.
-  async austauschen(m, neu, benutzer, z, grund) {
+  // freigeben: den eingesetzten Stand freigeben (Update aus dem geprüften Paket, ausgelöst von einem Admin).
+  async austauschen(m, neu, benutzer, z, grund, { freigeben = true } = {}) {
     z.phase = 'beenden';
     const weiter = await this.anhalten(m, grund);
     z.phase = 'austauschen';
     const sicherung = path.join(this.ordner, m.id, `${m.version ?? 'ohne-version'}-${new Date(this.jetzt()).toISOString().replace(/[:.]/g, '-')}`);
     try {
-      await this.verwaltung.gesperrt(() => this.ordnerTauschen(m, neu, sicherung));
+      await this.verwaltung.gesperrt(() => this.ordnerTauschen(m, neu, sicherung, freigeben ? { id: m.id, von: benutzer, grund } : null));
     } catch (fehler) {
       // Austausch gescheitert: die bisherige Version läuft weiter.
       await weiter().catch(() => {});
@@ -229,7 +240,7 @@ export class Modulupdates {
     await this.aufraeumen(m.id);
   }
 
-  async ordnerTauschen(m, neu, sicherung) {
+  async ordnerTauschen(m, neu, sicherung, freigeben = null) {
     try { await rename(m.ordner, sicherung); }
     catch (fehler) {
       throw new BasisFehler(`Der Modulordner konnte nicht gesichert werden (${fehler.code ?? fehler.message}). Läuft das Modul noch oder ist eine Datei geöffnet?`);
@@ -250,7 +261,7 @@ export class Modulupdates {
           : `${datei} konnte nicht übernommen werden (${fehler.code ?? fehler.message}), und die bisherige Version ließ sich nicht automatisch zurückholen. Sie liegt unverändert in ${sicherung}.`);
       }
     }
-    await this.verwaltung.einlesen();
+    await this.verwaltung.einlesen({ freigeben });
   }
 
   // Gilt ein eigenständiges Modul als laufend? Ja, wenn es nicht beendet ist und sich zuletzt rechtzeitig gemeldet hat

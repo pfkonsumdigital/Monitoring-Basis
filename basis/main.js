@@ -13,6 +13,7 @@ import { fuehreAus } from './ausfuehrung.js';
 import { Ergebnisspeicher } from './speicher.js';
 import { Planer } from './planer.js';
 import { Modulverwaltung } from './modulverwaltung.js';
+import { Freigaben } from './freigabe.js';
 import { Benachrichtigung } from './benachrichtigung.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
@@ -112,13 +113,16 @@ async function starten(konfig, configDatei, protokoll, tresor) {
     // Auffällige Ergebnisse zusätzlich ins Fehlerprotokoll, mit Fehlerausgabe des Moduls als Details.
     if (e.status !== 'ok') melde(log, e.status === 'fehler' ? 'fehler' : 'warnung', `Modul ${id}`, e.zusammenfassung, [...(e.details ?? []), e.fehlerausgabe].filter(Boolean).join('\n'));
   };
-  const planer = new Planer({ ausfuehren: (m) => fuehreAus(m), speichern: uebernehmen, log });
+  // Vor jedem Start prüft die Modulverwaltung, ob der Stand des Moduls freigegeben ist (sonst kein Start).
+  const planer = new Planer({ ausfuehren: async (m) => (await module.vorStart(m)) ?? fuehreAus(m), speichern: uebernehmen, log });
   const benachrichtigung = new Benachrichtigung({ datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, tresor, log });
   await benachrichtigung.laden();
+  const freigaben = new Freigaben({ datenOrdner: konfig.datenOrdner, log });
+  await freigaben.laden();
   const module = new Modulverwaltung({
     moduleOrdner: konfig.moduleOrdner, datenOrdner: konfig.datenOrdner, speicher, planer, uebernehmen,
     nachTakt: (ansichten) => benachrichtigung.pruefen(ansichten),
-    geheimnisse: protokoll.geheimnisse, tresor, log,
+    geheimnisse: protokoll.geheimnisse, tresor, freigaben, log,
   });
   await module.start();
   const adminNetz = adminNetzPruefer(konfig.adminNetze);
@@ -163,7 +167,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const domain = new Domainverwaltung({ configDatei, konfig, tresor, benutzerverwaltung, zertifikate, neustart: updates.viaStarter ? neustarten : null, log });
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

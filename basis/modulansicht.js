@@ -55,7 +55,7 @@ export function zeitBegrenzen(eintrag, empfangen) {
 }
 
 // Rangfolge für die Sortierung: Probleme zuerst.
-export const SCHWERE = { modulfehler: 0, fehler: 1, 'dienst-gestoppt': 1, 'keine-meldung': 2, warnung: 3, unbekannt: 4, laeuft: 5, ok: 6, inaktiv: 7, beendet: 7 };
+export const SCHWERE = { modulfehler: 0, freigabe: 1, fehler: 1, 'dienst-gestoppt': 1, 'keine-meldung': 2, warnung: 3, unbekannt: 4, laeuft: 5, ok: 6, inaktiv: 7, beendet: 7 };
 
 // Zustände eines Windows-Dienstes, die als Problem gelten (gestoppt, ohne dass ihn jemand über die Basis beendet hat).
 const DIENST_PROBLEM = ['gestoppt', 'pausiert', 'fehlt'];
@@ -79,7 +79,8 @@ function verfuegbarkeit(verlauf, jetzt, fensterMs) {
 // Berechnet alles, was die Oberfläche zu einem Modul zeigt.
 // verlauf: neueste zuerst. erkanntSeit: seit wann die Basis das Modul kennt (für „keine Meldung“ ohne jede Meldung).
 // beendet: { zeit, von } wenn über die Basis beendet. dienst: { zustand, fehler } des Windows-Dienstes.
-export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeuft = false, geplant = null, erkanntSeit = null, statusFehler = null, beendet = null, dienst = null, jetzt = Date.now() } = {}) {
+// freigabe: { neu, wert, aenderungen, fehler }, wenn das Modul neu oder geändert ist und erst ein Admin es freigeben muss.
+export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeuft = false, geplant = null, erkanntSeit = null, statusFehler = null, beendet = null, dienst = null, freigabe = null, jetzt = Date.now() } = {}) {
   const eigenstaendig = modul.typ === 'eigenstaendig';
   const letztes = verlauf[0] ?? null;
   const intervallMs = modul.intervallMinuten ? modul.intervallMinuten * MINUTE : null;
@@ -104,6 +105,7 @@ export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeu
 
   let anzeige;
   if (modul.fehler) anzeige = 'modulfehler';
+  else if (freigabe) anzeige = 'freigabe';
   else if (!aktiv) anzeige = 'inaktiv';
   else if (beendet) anzeige = 'beendet';
   else if (laeuft) anzeige = 'laeuft';
@@ -145,12 +147,14 @@ export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeu
     verfuegbarkeit: { h24: verfuegbarkeit(verlauf, jetzt, 24 * 60 * MINUTE), d7: verfuegbarkeit(verlauf, jetzt, 7 * 24 * 60 * MINUTE) },
     verlaufKurz: verlauf.slice(0, 30).reverse().map((e) => ({ status: e.status, zeit: e.beginn ?? e.ende })),
     hatEinstellungen: (modul.felder?.length ?? 0) > 0,
-    kannPruefen: !modul.fehler && !eigenstaendig,
+    // Manuell prüfen nur bei aktiven, freigegebenen Modulen, die die Basis selbst startet.
+    kannPruefen: !modul.fehler && !eigenstaendig && aktiv && !beendet && !freigabe,
+    freigabe: freigabe ? { neu: freigabe.neu === true, wert: freigabe.wert ?? null, aenderungen: freigabe.aenderungen ?? [], fehler: freigabe.fehler ?? null } : null,
     beendet: beendet?.zeit ?? null,
     beendetVon: beendet?.von ?? null,
     dienst: modul.dienst ? { name: modul.dienst, zustand: dienst?.zustand ?? 'unbekannt', fehler: dienst?.fehler ?? null } : null,
     // Eigenständig: nur wenn das Modul angibt, wie (Dienst oder befehl.json). Von der Basis gestartet: laufende Prüfung abbrechen.
-    kannBeenden: !modul.fehler && (eigenstaendig ? Boolean(modul.dienst || modul.befehlsdatei) && !beendet : laeuft),
-    kannStarten: !modul.fehler && eigenstaendig && Boolean(modul.dienst) && ['gestoppt', 'pausiert'].includes(dienst?.zustand),
+    kannBeenden: !modul.fehler && !freigabe && (eigenstaendig ? Boolean(modul.dienst || modul.befehlsdatei) && !beendet : laeuft),
+    kannStarten: !modul.fehler && !freigabe && eigenstaendig && Boolean(modul.dienst) && ['gestoppt', 'pausiert'].includes(dienst?.zustand),
   };
 }

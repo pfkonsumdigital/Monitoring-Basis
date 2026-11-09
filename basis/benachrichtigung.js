@@ -127,8 +127,8 @@ export function pruefeEinstellungen(eingabe, bisher) {
   return Object.keys(feldfehler).length ? { feldfehler } : { werte };
 }
 
-const TITEL = { fehler: 'FEHLER', warnung: 'WARNUNG', 'keine-meldung': 'KEINE MELDUNG', 'dienst-gestoppt': 'DIENST GESTOPPT', 'wieder-ok': 'WIEDER OK', erinnerung: 'ERINNERUNG' };
-const STATUSTEXT = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'dienst-gestoppt': 'Dienst gestoppt', ok: 'OK' };
+const TITEL = { fehler: 'FEHLER', warnung: 'WARNUNG', 'keine-meldung': 'KEINE MELDUNG', 'dienst-gestoppt': 'DIENST GESTOPPT', 'wieder-ok': 'WIEDER OK', erinnerung: 'ERINNERUNG', freigabe: 'FREIGABE NÖTIG' };
+const STATUSTEXT = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'dienst-gestoppt': 'Dienst gestoppt', ok: 'OK', freigabe: 'Freigabe nötig' };
 const zeitText = (ms) => new Date(ms).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'short', timeStyle: 'short' });
 function dauerText(ms) {
   const min = Math.max(1, Math.round(ms / 60_000));
@@ -178,13 +178,14 @@ export function berichtText(werte) {
 }
 
 // Anzeige im Statusbericht; Probleme zuerst.
-const BERICHT_STATUS = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', 'keine-meldung': 'Keine Meldung', 'dienst-gestoppt': 'Dienst gestoppt', inaktiv: 'Pausiert', beendet: 'Beendet', unbekannt: 'Noch keine Meldung', laeuft: 'Prüfung läuft' };
-const BERICHT_RANG = { fehler: 0, modulfehler: 0, 'dienst-gestoppt': 0, 'keine-meldung': 1, warnung: 2 };
+const BERICHT_STATUS = { ok: 'OK', warnung: 'Warnung', fehler: 'Fehler', modulfehler: 'Modul fehlerhaft', freigabe: 'Freigabe nötig', 'keine-meldung': 'Keine Meldung', 'dienst-gestoppt': 'Dienst gestoppt', inaktiv: 'Pausiert', beendet: 'Beendet', unbekannt: 'Noch keine Meldung', laeuft: 'Prüfung läuft' };
+const BERICHT_RANG = { fehler: 0, modulfehler: 0, 'dienst-gestoppt': 0, freigabe: 1, 'keine-meldung': 1, warnung: 2 };
 const istProblem = (m) => m.anzeige in BERICHT_RANG;
 
 // Welche Kategorie zählt für die Benachrichtigung? null = nichts melden/ändern.
 function kategorie(m, meldenNach) {
   if (m.anzeige === 'modulfehler') return 'fehler';
+  if (m.anzeige === 'freigabe') return 'freigabe';
   if (m.anzeige === 'keine-meldung') return 'keine-meldung';
   if (m.anzeige === 'dienst-gestoppt') return 'dienst-gestoppt';
   if (m.anzeige === 'ok') return 'ok';
@@ -384,10 +385,11 @@ export class Benachrichtigung {
     return this.text([
       `Modul: ${m.name}${m.version ? ` (v${m.version})` : ''}`,
       `Status: ${STATUSTEXT[m.anzeige === 'modulfehler' ? 'fehler' : m.anzeige] ?? m.anzeige}`,
-      m.fehler ? `Problem: ${m.fehler}` : m.anzeige === 'dienst-gestoppt' ? `Problem: ${m.dienst?.fehler ?? `Windows-Dienst „${m.dienst?.name}“ ist gestoppt.`}` : m.anzeige === 'keine-meldung' ? `Letzte Meldung: ${l ? zeitText(Date.parse(l.ende ?? l.beginn)) : 'noch nie'}` : l ? `Meldung: ${l.zusammenfassung}` : null,
+      m.fehler ? `Problem: ${m.fehler}` : m.anzeige === 'freigabe' ? `Problem: ${m.freigabe?.fehler ?? `Das Modul ist ${m.freigabe?.neu ? 'neu' : 'geändert'} und wird erst ausgeführt, wenn ein Admin es in der Oberfläche freigibt.`}` : m.anzeige === 'dienst-gestoppt' ? `Problem: ${m.dienst?.fehler ?? `Windows-Dienst „${m.dienst?.name}“ ist gestoppt.`}` : m.anzeige === 'keine-meldung' ? `Letzte Meldung: ${l ? zeitText(Date.parse(l.ende ?? l.beginn)) : 'noch nie'}` : l ? `Meldung: ${l.zusammenfassung}` : null,
       art !== 'wieder-ok' && seit ? `Seit: ${zeitText(seit)} (${dauerText(jetzt - seit)})` : null,
       m.problemLaeufe > 1 ? `Läufe ohne OK: ${m.problemLaeufe}` : null,
-      ...(art !== 'wieder-ok' && l?.details?.length ? ['', 'Details:', ...l.details.slice(0, 20).map((d) => `- ${d}`), ...(l.details.length > 20 ? [`… und ${l.details.length - 20} weitere`] : [])] : []),
+      ...(m.anzeige === 'freigabe' && art !== 'wieder-ok' && m.freigabe?.aenderungen?.length ? ['', 'Änderungen seit der letzten Freigabe:', ...m.freigabe.aenderungen.slice(0, 20).map((d) => `- ${d}`), ...(m.freigabe.aenderungen.length > 20 ? [`… und ${m.freigabe.aenderungen.length - 20} weitere`] : [])] : []),
+      ...(m.anzeige !== 'freigabe' && art !== 'wieder-ok' && l?.details?.length ? ['', 'Details:', ...l.details.slice(0, 20).map((d) => `- ${d}`), ...(l.details.length > 20 ? [`… und ${l.details.length - 20} weitere`] : [])] : []),
       this.werte.link ? `\nOberfläche: ${this.werte.link}` : null,
       `\nZeit: ${zeitText(jetzt)}`,
     ]);
@@ -409,7 +411,7 @@ export class Benachrichtigung {
         if (k !== z.gemeldet) art = k === 'ok' ? 'wieder-ok' : k;
         else if (k !== 'ok' && this.werte.erinnerung_stunden > 0 && z.letzteMail && jetzt - z.letzteMail >= this.werte.erinnerung_stunden * STUNDE) art = 'erinnerung';
         if (!art) continue;
-        const seit = art === 'erinnerung' ? z.seit : k === 'dienst-gestoppt' ? jetzt : (m.problemSeit ? Date.parse(m.problemSeit) : m.ueberfaelligSeit ? Date.parse(m.ueberfaelligSeit) : jetzt);
+        const seit = art === 'erinnerung' ? z.seit : k === 'dienst-gestoppt' || k === 'freigabe' ? jetzt : (m.problemSeit ? Date.parse(m.problemSeit) : m.ueberfaelligSeit ? Date.parse(m.ueberfaelligSeit) : jetzt);
         const titel = art === 'erinnerung' ? `ERINNERUNG: ${m.name} – ${STATUSTEXT[k]} seit ${dauerText(jetzt - z.seit)}` : `${TITEL[art]}: ${m.name}`;
         const eintrag = await this.versenden(art, `[Monitoring] ${titel}`, this.mailText(m, art, jetzt, seit), m.id);
         geaendert = true;

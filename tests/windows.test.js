@@ -57,3 +57,35 @@ test('Dateirechte: nur SYSTEM, Administratoren und das eigene Konto', nurWindows
     assert.deepEqual((await rechteSetzen([leer], { ausfuehren, sid })).fehler, []);
   } finally { await rm(ordner, { recursive: true, force: true }); }
 });
+
+test('Modul-Freigabe unter Windows: Junction und Verknüpfung erkannt, Groß-/Kleinschreibung, Rechnername', nurWindows, async () => {
+  const { fingerabdruck } = await import('../basis/freigabe.js');
+  const { hostPruefer } = await import('../basis/webserver.js');
+  const os = await import('node:os');
+  const { symlink } = await import('node:fs/promises');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-fgwin-'));
+  try {
+    const ordner = path.join(wurzel, 'modules', 'prog');
+    await mkdir(path.join(ordner, 'lib'), { recursive: true });
+    await writeFile(path.join(ordner, 'pruefe.exe'), 'MZ');
+    const extern = path.join(wurzel, 'Werkzeuge');
+    await mkdir(extern);
+    await writeFile(path.join(extern, 'python.exe'), 'PY');
+    const m = { id: 'prog', typ: 'programm', ordner, befehl: 'python', argumente: [], arbeitsordner: extern };
+    const a = await fingerabdruck(m);
+    assert.deepEqual(Object.keys(a.angaben.extern), [path.join(extern, 'python.exe')], 'Programmsuche im Arbeitsordner');
+    assert.deepEqual(Object.keys(a.angaben.dateien), ['pruefe.exe']);
+    // Arbeitsordner im Modulordner, nur anders geschrieben: zählt als innen.
+    const innen = await fingerabdruck({ ...m, befehl: path.join(ordner.toUpperCase(), 'PRUEFE.EXE'), arbeitsordner: ordner.toUpperCase() });
+    assert.deepEqual(innen.angaben.extern, {});
+    assert.equal(innen.angaben.arbeitsordner, '.');
+    // Junction (geht ohne Sonderrechte) und Datei-Verknüpfung werden abgelehnt.
+    await symlink(extern, path.join(ordner, 'lib', 'verbindung'), 'junction');
+    assert.match((await fingerabdruck(m)).fehler, /Verknüpfung \(lib\/verbindung\)/);
+    await rm(path.join(ordner, 'lib', 'verbindung'));
+    assert.equal((await fingerabdruck(m)).wert, a.wert);
+    assert.equal(hostPruefer({ adressen: () => [] })(os.hostname().toLowerCase()), true, 'Rechnername erlaubt');
+  } finally {
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});

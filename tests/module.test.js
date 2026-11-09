@@ -293,9 +293,8 @@ test('Von der Basis gestartete Module bekommen die gespeicherten Einstellungen',
     const [modul] = v.planbar();
     const ergebnis = await fuehreAus(modul);
     assert.deepEqual(JSON.parse(ergebnis.zusammenfassung), { vorgabe: 1, grenze: 7 });
-    assert.equal(v.jetztPruefen('p'), 'gestartet');
-    assert.equal(v.jetztPruefen('p'), 'laeuft');
-    assert.equal(v.jetztPruefen('x'), 'unbekannt');
+    assert.deepEqual(v.jetztPruefen('p'), { code: 'gestartet' });
+    assert.deepEqual(v.jetztPruefen('x'), { code: 'unbekannt' });
   } finally {
     u.planer.stop();
     await rm(u.wurzel, { recursive: true, force: true });

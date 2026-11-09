@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { istKlartext, istVerschluesselt } from './geheimnis.js';
+import { EINSTELLUNGEN_MAX, leseBegrenzt } from './dateien.js';
 
 // Einstellungen eines Moduls: Das Modul beschreibt die Felder in module.json („einstellungsfelder“),
 // die Basis baut daraus ein Formular und schreibt die Werte nach <Modulordner>/einstellungen.json.
@@ -121,7 +122,7 @@ function pruefeListe(feld, wert) {
 
 export async function leseDatei(modulOrdner) {
   try {
-    const roh = JSON.parse((await readFile(path.join(modulOrdner, DATEI), 'utf8')).replace(/^﻿/, ''));
+    const roh = JSON.parse((await leseBegrenzt(path.join(modulOrdner, DATEI), EINSTELLUNGEN_MAX)).replace(/^﻿/, ''));
     return roh && typeof roh === 'object' && !Array.isArray(roh) ? roh : {};
   } catch {
     return {};

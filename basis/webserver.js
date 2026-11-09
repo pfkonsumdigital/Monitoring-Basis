@@ -1,6 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { readFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BasisFehler } from './fehler.js';
@@ -74,15 +75,68 @@ export function istInterneAdresse(adresse) {
   return a === '::1' || /^f[cd][0-9a-f]{0,2}:/.test(a) || /^fe[89ab][0-9a-f]?:/.test(a);
 }
 
+// Host-Kopf → Name ohne Port, in Kleinbuchstaben, ohne Punkt am Ende; IPv6 ohne Klammern. null, wenn ungültig.
+export function hostAusKopf(kopf) {
+  if (typeof kopf !== 'string' || !kopf || kopf.length > 300) return null;
+  const h = kopf.trim().toLowerCase();
+  const v6 = /^\[([0-9a-f:.]{2,45})\](?::\d{1,5})?$/.exec(h);
+  if (v6) return v6[1];
+  const name = /^([a-z0-9_.-]{1,254})(?::\d{1,5})?$/.exec(h);
+  if (!name) return null;
+  return name[1].replace(/\.$/, '') || null;
+}
+
+// Eigene Adressen dieses Rechners (alle Netzwerkkarten).
+export function eigeneAdressen() {
+  return Object.values(os.networkInterfaces()).flat().filter(Boolean).map((a) => String(a.address).toLowerCase().replace(/%.*$/, ''));
+}
+
+// Schutz vor DNS-Rebinding: Nur Anfragen an bekannte Namen dieses Rechners werden beantwortet. Sonst könnte eine fremde
+// Webseite ihren Namen auf die interne Adresse umbiegen und die Oberfläche im Browser eines Mitarbeiters auslesen.
+// Erlaubt: hostname aus config.json, weitere_hostnamen, der Rechnername, localhost und die eigenen IP-Adressen.
+export function hostPruefer({ hostname = null, weitere = [], adressen = eigeneAdressen, jetzt = () => Date.now() } = {}) {
+  const fest = new Set(['localhost', '127.0.0.1', '::1', os.hostname().toLowerCase(), ...[hostname, ...weitere].filter(Boolean).map((h) => String(h).toLowerCase().replace(/\.$/, ''))]);
+  let ips = new Set();
+  let stand = -Infinity;
+  return (name) => {
+    if (fest.has(name)) return true;
+    // Adressen können sich ändern (DHCP, VPN): höchstens einmal pro Minute neu ermitteln.
+    if (jetzt() - stand > 60_000) {
+      try { ips = new Set(adressen()); } catch { ips = new Set(); }
+      stand = jetzt();
+    }
+    return ips.has(name);
+  };
+}
+
+const PRUEFEN_TEXT = {
+  fehlerhaft: () => 'Das Modul ist fehlerhaft konfiguriert.',
+  eigenstaendig: () => 'Dieses Modul läuft eigenständig und meldet sich selbst.',
+  pausiert: () => 'Das Modul ist pausiert. Zum Prüfen bitte zuerst fortsetzen.',
+  beendet: () => 'Das Modul ist beendet.',
+  freigabe: () => 'Das Modul wartet auf Freigabe durch einen Admin.',
+  laeuft: () => 'Die Prüfung läuft bereits.',
+  warten: (r) => `Dieses Modul wurde gerade erst manuell geprüft. Bitte in ${r.sekunden} Sekunde${r.sekunden === 1 ? '' : 'n'} erneut versuchen.`,
+};
+
+// Fehlerausgabe (stderr) der Module kann interne Pfade, Server oder Zugangsdaten enthalten: nur für Admins.
+function ohneFehlerausgabe(e) {
+  if (!e || typeof e !== 'object' || !Object.hasOwn(e, 'fehlerausgabe')) return e;
+  const { fehlerausgabe, ...rest } = e;
+  return rest;
+}
+
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
-export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, log = () => {} }) {
+export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
   const herkunftOk = (req) => !req.headers.origin || req.headers.origin === `${schema}://${req.headers.host}`;
   const abgewiesen = new Set();
+  const hostErlaubt = hostPruefer({ hostname, weitere: weitereHosts, adressen });
+  const fremdeHosts = new Set();
   const seiteCache = new Map();
   const seite = async (name) => {
     if (!seiteCache.has(name)) seiteCache.set(name, await readFile(path.join(OEFFENTLICH, name), 'utf8'));
@@ -99,6 +153,15 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
           melde(log, 'warnung', 'Webserver', `Zugriff von externer Adresse ${req.socket.remoteAddress} abgewiesen (nur internes Netz erlaubt).`);
         }
         return senden(res, 403, 'Zugriff nur aus dem internen Netz.');
+      }
+      const host = hostAusKopf(req.headers.host);
+      if (!host) return senden(res, 400, 'Ungültige Anfrage.');
+      if (!hostErlaubt(host)) {
+        if (fremdeHosts.size < 100 && !fremdeHosts.has(host)) {
+          fremdeHosts.add(host);
+          melde(log, 'warnung', 'Webserver', `Anfrage an unbekannten Host-Namen „${host}“ von ${req.socket.remoteAddress} abgewiesen (Schutz vor DNS-Rebinding). Ist der Name richtig, in config.json unter „weitere_hostnamen“ eintragen und die Basis neu starten.`);
+        }
+        return senden(res, 421, 'Unbekannter Host-Name. Bitte die Oberfläche über ihre eingerichtete Adresse aufrufen. Weitere Namen trägt ein Admin in config.json unter „weitere_hostnamen“ ein.');
       }
       const url = new URL(req.url, 'https://basis.invalid');
       const weg = url.pathname;
@@ -207,7 +270,11 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
 
       if (weg === '/api/status' && req.method === 'GET') {
         return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, adminNurIntern, neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
-          module: module.ansichten().map((m) => (istAdmin && modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m)) });
+          module: module.ansichten().map((m) => {
+            if (istAdmin) return modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m;
+            // Für Nicht-Admins: keine Fehlerausgabe, bei Freigaben nur, dass eine nötig ist.
+            return { ...m, letztes: ohneFehlerausgabe(m.letztes), ...(m.freigabe ? { freigabe: { neu: m.freigabe.neu, wert: null, aenderungen: [], fehler: null } } : {}) };
+          }) });
       }
       // Eigenes Passwort ändern (jeder angemeldete Benutzer, bisheriges Passwort nötig).
       if (weg === '/api/passwort') {
@@ -375,18 +442,21 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         }
       }
 
-      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten|empfaenger)$/.exec(weg);
+      const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten|empfaenger|freigeben)$/.exec(weg);
       const modul = treffer && module.finde(treffer[1]);
       if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });
       if (treffer?.[2] === 'verlauf' && req.method === 'GET') {
         const anzahl = Math.min(Math.max(Number.parseInt(url.searchParams.get('anzahl') ?? '50', 10) || 50, 1), 1000);
-        return json(res, 200, { id: modul.id, verlauf: module.verlauf(modul.id, anzahl) });
+        const verlauf = module.verlauf(modul.id, anzahl);
+        return json(res, 200, { id: modul.id, verlauf: istAdmin ? verlauf : verlauf.map(ohneFehlerausgabe) });
       }
       if (treffer?.[2] === 'pruefen' && req.method === 'POST') {
         // Eigener Kopf erzwingt eine Same-Origin-Anfrage per fetch; einfache Formulare fremder Seiten scheitern.
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         const ergebnis = module.jetztPruefen(modul.id);
-        if (ergebnis !== 'gestartet') return json(res, 409, { fehler: { fehlerhaft: 'Das Modul ist fehlerhaft konfiguriert.', eigenstaendig: 'Dieses Modul läuft eigenständig und meldet sich selbst.', laeuft: 'Die Prüfung läuft bereits.' }[ergebnis] ?? 'Nicht möglich.' });
+        if (ergebnis.code === 'warten') return senden(res, 429, JSON.stringify({ fehler: PRUEFEN_TEXT.warten(ergebnis) }), 'application/json; charset=utf-8', { 'Retry-After': String(ergebnis.sekunden) });
+        if (ergebnis.code === 'unbekannt') return json(res, 404, { fehler: 'Modul unbekannt.' });
+        if (ergebnis.code !== 'gestartet') return json(res, 409, { fehler: PRUEFEN_TEXT[ergebnis.code]?.(ergebnis) ?? 'Nicht möglich.' });
         log(`Prüfung von ${modul.id} manuell gestartet durch ${sitzung.benutzer}.`);
         return json(res, 202, { gestartet: true });
       }
@@ -396,6 +466,18 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
         const ergebnis = await (treffer[2] === 'beenden' ? module.beenden(modul.id, sitzung.benutzer) : module.starten(modul.id, sitzung.benutzer));
+        if (!ergebnis) return json(res, 404, { fehler: 'Modul unbekannt.' });
+        return json(res, ergebnis.fehler ? 409 : 200, ergebnis);
+      }
+      // Freigabe eines neuen oder geänderten Moduls (nur Admins). wert = Fingerabdruck, den der Admin geprüft hat.
+      if (treffer?.[2] === 'freigeben') {
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (!module.freigeben) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const ergebnis = await module.freigeben(modul.id, sitzung.benutzer, { erwartet: eingabe?.wert });
         if (!ergebnis) return json(res, 404, { fehler: 'Modul unbekannt.' });
         return json(res, ergebnis.fehler ? 409 : 200, ergebnis);
       }

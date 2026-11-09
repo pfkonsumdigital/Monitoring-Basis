@@ -1,5 +1,33 @@
 # Änderungen
 
+## 0.15.0
+
+Sicherheit: ausführbare Module nur nach Freigabe, Schutz vor DNS-Rebinding, Größengrenzen, Fehlerausgabe nur für Admins, begrenztes „Jetzt prüfen“.
+
+### Neu
+
+- **Freigabe neuer und geänderter Module.** Module vom Typ `programm` und `plugin` (laufen als SYSTEM) und eigenständige Module mit `dienst` laufen nur in dem Stand, den ein Admin freigegeben hat. Der Fingerabdruck umfasst Befehl, Argumente, Arbeitsordner bzw. Einstieg, die SHA-256-Prüfsumme jeder Datei im Modulordner (auch in Unterordnern) und Programm- bzw. Skriptdateien außerhalb des Modulordners; bei Dienst-Modulen den Dienstnamen. Ausgenommen sind die übrigen Angaben in `module.json`, `einstellungen.json`, `status.json`, `befehl.json`, `*.tmp` und die Ordner `daten\` und `logs\`.
+  - Geprüft wird alle 15 Sekunden und vor jedem Start noch einmal vollständig (ohne Zwischenspeicher). Abweichung: Status **„Freigabe nötig“**, kein Start, Eintrag im Fehlerprotokoll und Mail „FREIGABE NÖTIG“ mit der Liste der Änderungen; auch im Statusbericht.
+  - Details des Moduls → Kasten mit den Änderungen → „Freigeben“ (zweimal klicken, nur Admins aus dem Firmennetz/VPN). Freigegeben wird nur der angezeigte Stand; hat sich das Modul inzwischen wieder geändert, wird abgelehnt.
+  - Verknüpfungen (Symlinks, Junctions) im Modulordner, mehr als 5000 Dateien oder mehr als 500 MB: keine Freigabe möglich.
+  - Ohne Freigabe startet bzw. beendet die Basis keinen Windows-Dienst des Moduls, fragt ihn nicht ab und setzt keine Dateirechte für sein Dienstkonto.
+  - Modul-Updates über die Basis werden automatisch freigegeben, „Zurück“ nicht.
+  - Gespeichert in `data\modulfreigaben.json`. Beim ersten Start von 0.15.0 werden die vorhandenen Module einmalig übernommen; eine beschädigte Datei gibt nichts frei.
+  - Die Basis setzt für gestartete Module `PYTHONDONTWRITEBYTECODE=1`, damit Python keine `__pycache__`-Dateien in den Modulordner schreibt.
+- **Schutz vor DNS-Rebinding:** Die Basis beantwortet nur Anfragen an `hostname`, den Rechnernamen, `localhost`, die eigenen IP-Adressen und neu `weitere_hostnamen` aus `config.json`. Andere Namen: „421 Unbekannter Host-Name“, einmal je Name im Fehlerprotokoll.
+
+### Geändert
+
+- **Größengrenzen:** `module.json` höchstens 256 KB, `status.json` und `einstellungen.json` höchstens 1 MB; Verknüpfungen statt echter Dateien werden nicht gelesen. Fehlermeldungen nennen nie den Inhalt.
+- **Fehlerausgabe (stderr) der Module nur für Admins** – in der Übersicht und im Verlauf.
+- **„Jetzt prüfen“** nur bei aktiven, nicht beendeten und freigegebenen Modulen, je Modul höchstens einmal pro Minute (sonst „Bitte in … Sekunden erneut versuchen“). Weiterhin für alle angemeldeten Benutzer.
+
+### Prüfung
+
+- `npm test`: 156 Tests (davon 3 nur unter Windows), neu u. a. Fingerabdruck (jede Änderung erkannt, Betriebsdateien ignoriert, Verknüpfungen, Grenzen, Dateien außerhalb, Programmsuche im Arbeitsordner), Freigabe-Datei (erster Start, beschädigt), Änderung zwischen zwei Takten verhindert den Start, Freigabe nur mit aktuellem Fingerabdruck, geänderter Dienstname bleibt unberührt, Modul-Update und „Zurück“, Host-Prüfung, Fehlerausgabe und Freigabe nur für Admins, Wartezeit für „Jetzt prüfen“, Größengrenzen, Mail „FREIGABE NÖTIG“. Unter Windows (GitHub Actions) zusätzlich: Junction im Modulordner wird erkannt, Pfade ohne Rücksicht auf Groß-/Kleinschreibung, Rechnername erlaubt.
+- Gegenproben (Mutationen) für alle Sicherheitsprüfungen: 49 von 50 erkannt; die übrige ist eine doppelte Größenprüfung (die zweite greift).
+- Browsertest (hell, dunkel, Handy).
+
 ## 0.14.0
 
 Regelmäßiger Statusbericht per Mail.

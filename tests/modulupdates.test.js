@@ -10,6 +10,7 @@ import { Modulverwaltung } from '../basis/modulverwaltung.js';
 import { Ergebnisspeicher } from '../basis/speicher.js';
 import { Planer } from '../basis/planer.js';
 import { DienstFehler } from '../basis/dienste.js';
+import { Freigaben } from '../basis/freigabe.js';
 
 const json = (wert) => JSON.stringify(wert, null, 2);
 const lies = async (datei) => JSON.parse(await readFile(datei, 'utf8'));
@@ -57,7 +58,7 @@ function dienste(start = {}) {
   };
 }
 
-async function aufbau(modulJson, { dienstStand = {} } = {}) {
+async function aufbau(modulJson, { dienstStand = {}, mitFreigaben = false } = {}) {
   const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-modupd-'));
   const moduleOrdner = path.join(wurzel, 'modules');
   const datenOrdner = path.join(wurzel, 'data');
@@ -72,11 +73,13 @@ async function aufbau(modulJson, { dienstStand = {} } = {}) {
   const speicher = new Ergebnisspeicher(datenOrdner, 50);
   const planer = new Planer({ ausfuehren: async () => ({ status: 'ok', zusammenfassung: 'x' }), speichern: async () => {} });
   const d = dienste(dienstStand);
-  const verwaltung = new Modulverwaltung({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen: (i, e) => speicher.hinzufuegen(i, e), dienste: d, abbrechen: () => 0, log });
+  let freigaben = null;
+  if (mitFreigaben) { freigaben = new Freigaben({ datenOrdner, log }); await freigaben.laden(); }
+  const verwaltung = new Modulverwaltung({ moduleOrdner, datenOrdner, speicher, planer, uebernehmen: (i, e) => speicher.hinzufuegen(i, e), dienste: d, abbrechen: () => 0, freigaben, log });
   await verwaltung.start();
   verwaltung.stop();
   const neu = (gh) => new Modulupdates({ verwaltung, updates: gh, datenOrdner, log, warteMs: 5, maxWartenMs: 200 });
-  return { wurzel, ordner, datenOrdner, verwaltung, meldungen, dienste: d, neu };
+  return { wurzel, ordner, datenOrdner, verwaltung, freigaben, meldungen, dienste: d, neu };
 }
 
 const FTP = { id: 'ftp', name: 'FTP', typ: 'eigenstaendig', version: '1.0.0', repo: 'pfkonsumdigital/Monitoring-Modul-FTP', dienst: 'MonitoringFTP' };
@@ -280,6 +283,49 @@ test('Modul-Update: vorher gestoppter Dienst bleibt gestoppt, „Beendet“ blei
     assert.equal(await readFile(path.join(u.ordner, 'modul.js'), 'utf8'), 'neu');
     assert.equal(u.dienste.aufrufe.some(([a]) => a === 'starten'), false, 'kein Start');
     assert.deepEqual(u.verwaltung.zustand.ftp.beendet, beendet);
+  } finally {
+    await rm(u.wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Modul-Update mit Freigaben: neue Version wird freigegeben, zurückgeholte nicht; Dienst-Module ohne Freigabe bleiben unberührt', async () => {
+  const SKRIPT = { id: 'skript', name: 'Skript', typ: 'programm', befehl: 'x.exe', version: '2.0.0', repo: 'a/c', intervall_minuten: 5 };
+  const prog = await aufbau(SKRIPT, { mitFreigaben: true });
+  try {
+    const v = prog.verwaltung;
+    assert.equal(v.freigabeNoetig(v.finde('skript')), false, 'beim ersten Start übernommen');
+    const paket = await paketBauen(prog.wurzel, { 'module.json': json({ ...SKRIPT, befehl: 'y.exe', version: '2.1.0' }), 'y.exe': 'neu' });
+    const mu = prog.neu(githubSimuliert({ id: 'skript', version: '2.1.0', paket }));
+    await mu.suchen('skript');
+    await mu.installieren('skript', '2.1.0', 'patrick');
+    await mu.laufend.get('skript');
+    assert.equal((await mu.status('skript')).fehler, null);
+    assert.equal(v.finde('skript').befehl, 'y.exe');
+    assert.equal(v.ansichten()[0].freigabe, null, 'Update aus dem geprüften Paket ist freigegeben');
+    assert.deepEqual([prog.freigaben.eintrag('skript').von, prog.freigaben.eintrag('skript').grund], ['patrick', 'Update auf 2.1.0']);
+    assert.ok(v.planbar().some((m) => m.id === 'skript'));
+
+    await mu.zurueck('skript', 'patrick');
+    await mu.laufend.get('skript');
+    assert.equal(v.finde('skript').befehl, 'x.exe');
+    const a = v.ansichten()[0];
+    assert.equal(a.anzeige, 'freigabe', 'Sicherung wird nicht automatisch freigegeben');
+    assert.ok(a.freigabe.aenderungen.includes('befehl: „y.exe“ → „x.exe“'));
+    assert.ok(!v.planbar().some((m) => m.id === 'skript'));
+  } finally {
+    await rm(prog.wurzel, { recursive: true, force: true });
+  }
+
+  const u = await aufbau(FTP, { dienstStand: { MonitoringFTP: 'laeuft' }, mitFreigaben: true });
+  try {
+    await writeFile(path.join(u.ordner, 'module.json'), json({ ...FTP, dienst: 'WinDefend' }));
+    await u.verwaltung.einlesen();
+    const paket = await paketBauen(u.wurzel, { 'module.json': json({ ...FTP, version: '1.1.0' }) });
+    const mu = u.neu(githubSimuliert({ id: 'ftp', version: '1.1.0', paket }));
+    await mu.suchen('ftp');
+    await assert.rejects(mu.installieren('ftp', '1.1.0', 'patrick'), /wartet auf Freigabe/);
+    await assert.rejects(mu.zurueck('ftp', 'patrick'), /wartet auf Freigabe/);
+    assert.deepEqual(u.dienste.aufrufe, [], 'kein Dienst angefasst');
   } finally {
     await rm(u.wurzel, { recursive: true, force: true });
   }
