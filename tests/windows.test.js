@@ -142,8 +142,10 @@ Teste 'runtimeNeu' { Set-Content "$root\\runtime\\neu.dll" 'x' }
 Teste 'nodeSchreiben' { [IO.File]::Open("$root\\runtime\\node.exe", 'Open', 'ReadWrite').Close() }
 $r | ConvertTo-Json | Set-Content "$root\\data\\probe.json"
 `);
-    pruefe(ps(`New-LocalUser -Name '${svc}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -PasswordNeverExpires | Out-Null
-New-LocalUser -Name '${adm}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) | Out-Null
+    // Fehler beim Anlegen sofort sichtbar machen (sonst nur auf stderr und Exitcode 0).
+    pruefe(ps(`$ErrorActionPreference = 'Stop'
+New-LocalUser -Name '${svc}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -PasswordNeverExpires | Out-Null
+New-LocalUser -Name '${adm}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -PasswordNeverExpires | Out-Null
 Add-LocalGroupMember -SID 'S-1-5-32-544' -Member '${adm}'
 $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File "${wurzel}\\probe.ps1"'
 Register-ScheduledTask -TaskName '${aufgabe}' -Action $a -Principal (New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest) | Out-Null`));
