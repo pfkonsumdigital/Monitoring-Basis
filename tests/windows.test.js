@@ -104,7 +104,10 @@ test('Dienstkonto einrichten (werkzeuge\\konto-einrichten.ps1): Abbruch bei Admi
   const fremd = `MBBoese${id}`;
   // Nicht im Benutzerprofil: dorthin dürfte das Testkonto nicht einmal durchgehen.
   const wurzel = path.join(`${process.env.SystemDrive}\\`, `mb-konto-${id}`);
-  const ps = (befehl) => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', befehl], { encoding: 'utf8' });
+  // Windows PowerShell 5.1 ohne den PSModulePath von PowerShell 7 (GitHub Actions), sonst laden Module wie
+  // Microsoft.PowerShell.Security nicht (ConvertTo-SecureString fehlt).
+  const umgebung = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'psmodulepath'));
+  const ps = (befehl) => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', befehl], { encoding: 'utf8', env: umgebung });
   const pruefe = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
   // Kontoname so, wie Windows ihn auflöst (RECHNER\name) – COMPUTERNAME weicht auf Testrechnern teils ab.
   const ntName = (konto) => pruefe(ps(`(Get-LocalUser '${konto}').SID.Translate([System.Security.Principal.NTAccount]).Value`)).trim();
