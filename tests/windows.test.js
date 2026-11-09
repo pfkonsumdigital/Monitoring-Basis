@@ -96,7 +96,6 @@ test('Dienstkonto einrichten (werkzeuge\\konto-einrichten.ps1): Abbruch bei Admi
   const { readFile: lesen } = await import('node:fs/promises');
   const skript = path.resolve('werkzeuge', 'konto-einrichten.ps1');
   const id = randomBytes(3).toString('hex');
-  const rechner = process.env.COMPUTERNAME;
   const svc = `mbsvc${id}`;
   const adm = `mbadm${id}`;
   const pw = `Mb!${randomBytes(10).toString('hex')}Aa9`;
@@ -107,8 +106,10 @@ test('Dienstkonto einrichten (werkzeuge\\konto-einrichten.ps1): Abbruch bei Admi
   const wurzel = path.join(`${process.env.SystemDrive}\\`, `mb-konto-${id}`);
   const ps = (befehl) => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', befehl], { encoding: 'utf8' });
   const pruefe = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
-  const einrichten = (konto, extra = '') => ps(`& '${skript}' -Konto '${rechner}\\${konto}' -Passwort (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -Installationsordner '${wurzel}' -Aufgabe '${aufgabe}' -WartenSekunden 0 ${extra}`);
-  const sidVon = (konto) => pruefe(ps(`(New-Object System.Security.Principal.NTAccount('${rechner}\\${konto}')).Translate([System.Security.Principal.SecurityIdentifier]).Value`)).trim();
+  // Kontoname so, wie Windows ihn auflöst (RECHNER\name) – COMPUTERNAME weicht auf Testrechnern teils ab.
+  const ntName = (konto) => pruefe(ps(`(Get-LocalUser '${konto}').SID.Translate([System.Security.Principal.NTAccount]).Value`)).trim();
+  const einrichten = (konto, extra = '') => ps(`& '${skript}' -Konto '${ntName(konto)}' -Passwort (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -Installationsordner '${wurzel}' -Aufgabe '${aufgabe}' -WartenSekunden 0 ${extra}`);
+  const sidVon = (konto) => pruefe(ps(`(Get-LocalUser '${konto}').SID.Value`)).trim();
   const sdshow = (name) => execFileSync('sc.exe', ['sdshow', name], { encoding: 'utf8' });
   const kontoDerAufgabe = () => pruefe(ps(`(Get-ScheduledTask -TaskName '${aufgabe}').Principal.UserId`)).trim();
   try {

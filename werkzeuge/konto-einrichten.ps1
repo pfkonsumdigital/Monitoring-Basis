@@ -80,18 +80,22 @@ function Gruppen-Sids([string]$sid) {
   return $ergebnis
 }
 
-# Mitglieder der lokalen Gruppe Administratoren (SIDs).
+# Mitglieder der lokalen Gruppe Administratoren (SIDs). Laesst sich die Gruppe nicht lesen: Abbruch (sicherer Zustand).
 function Lokale-Admins {
+  try { return @(Get-LocalGroupMember -SID $SID_ADMINS | ForEach-Object { $_.SID.Value }) } catch { }
   $name = (New-Object System.Security.Principal.SecurityIdentifier($SID_ADMINS)).Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
-  $gruppe = [ADSI]"WinNT://$env:COMPUTERNAME/$name,group"
-  $sids = @()
-  foreach ($m in @($gruppe.psbase.Invoke('Members'))) {
+  foreach ($rechner in @('.', $env:COMPUTERNAME, 'localhost')) {
     try {
-      $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
-      $sids += (New-Object System.Security.Principal.SecurityIdentifier($bytes, 0)).Value
+      $gruppe = [ADSI]"WinNT://$rechner/$name,group"
+      $sids = @()
+      foreach ($m in @($gruppe.psbase.Invoke('Members'))) {
+        $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+        $sids += (New-Object System.Security.Principal.SecurityIdentifier($bytes, 0)).Value
+      }
+      return $sids
     } catch { }
   }
-  return $sids
+  throw 'Die Mitglieder der lokalen Gruppe Administratoren liessen sich nicht lesen - abgebrochen, nichts geaendert.'
 }
 
 function Ist-Admin([string]$sid) {
