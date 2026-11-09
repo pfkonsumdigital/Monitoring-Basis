@@ -1,5 +1,31 @@
 # Änderungen
 
+## 0.16.0
+
+Eigenes Dienstkonto ohne Admin-Rechte statt SYSTEM.
+
+### Neu
+
+- **`werkzeuge\konto-einrichten.ps1`** (einmal als Administrator auf dem Worker): stellt die Basis auf ein Domänenkonto ohne Admin-Rechte um, z. B. `KONSUM-WEIMAR\svc-monitoring` (README „Eigenes Dienstkonto“).
+  - Bricht ab, wenn das Konto Admin-Rechte hat (lokale Administratoren, Domänen-, Schema-, Organisations-Admins), und ändert dann nichts.
+  - Dateirechte: Hauptordner nur SYSTEM, Administratoren und das Konto; das Konto darf eigene Dateien anlegen (`config.json`, `aktiv.json`, Sicherungen), aber `Start.exe` und `runtime\` nicht ändern. `data\` und `modules\` nur SYSTEM, Administratoren und das Konto; `logs\` und `versionen\` Ändern.
+  - Recht „Als Stapelverarbeitungsauftrag anmelden“; Starten, Beenden und Abfragen nur der Windows-Dienste freigegebener Module.
+  - Stellt die Aufgabe „Monitoring-Basis“ auf das Konto um (Kennwort wird abgefragt und nur im Aufgabenplaner gespeichert) und startet die Basis neu. `-Zurueck` stellt wieder auf SYSTEM.
+- **Selbstprüfung beim Start:** Die Basis protokolliert ihr Konto, warnt bei SYSTEM oder Admin-Rechten und meldet fehlende Schreibrechte (Hauptordner, `data`, `modules`, `logs`, `versionen`, `config.json`).
+- **Einstellungen → System** zeigt das Konto der Basis (nur Admins).
+
+### Geändert
+
+- Freigabe-Kasten und Fehlermeldung „Keine Berechtigung“ für Dienste nennen das tatsächliche Konto bzw. das Einrichtungsskript statt SYSTEM.
+- `Start.exe` bleibt unverändert; `Start.exe --autostart` richtet weiterhin SYSTEM ein – danach das Skript erneut ausführen.
+
+### Prüfung
+
+- `npm test`: 160 Tests (davon 4 nur unter Windows), neu u. a. Konto aus `whoami` (Dienstkonto, SYSTEM, Admin auch bei Benutzerkontensteuerung, Domänen-Admins), Schreibprüfung, Meldungen, Konto nur für Admins in der Oberfläche.
+- Unter Windows (GitHub Actions) mit echten lokalen Testkonten: Abbruch bei Admin-Konto, Rechte als das Konto geprüft (darf `data`, `modules`, `logs`, `versionen`, `config.json` und eigene Dateien im Hauptordner schreiben, aber `Start.exe` und `runtime\` weder ändern noch löschen noch umbenennen), Dienstrecht nur für das freigegebene Modul, Aufgabe läuft unter dem Konto, erneutes Ausführen ohne Doppelungen, `-Zurueck`.
+- Gegenproben (Mutationen) für die Konto-Erkennung und die Anzeige nur für Admins: alle erkannt.
+- Browsertest (hell, dunkel, Handy).
+
 ## 0.15.0
 
 Sicherheit: ausführbare Module nur nach Freigabe, Schutz vor DNS-Rebinding, Größengrenzen, Fehlerausgabe nur für Admins, begrenztes „Jetzt prüfen“.

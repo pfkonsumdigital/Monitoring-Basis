@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 let offenesModul = null;
 let istAdmin = false;
 let letzteModule = [];
+let kontoName = null; // Konto der Basis (nur für Admins bekannt)
 
 function relativ(iso) {
   if (!iso) return null;
@@ -120,8 +121,13 @@ async function aktualisieren() {
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
     $('sys-neustart').hidden = !daten.neustartMoeglich;
     $('sys-beenden').hidden = !daten.beendenMoeglich;
-    $('ber-sys').hidden = !daten.neustartMoeglich && !daten.beendenMoeglich;
-    bereichStatus('ber-sys', [daten.neustartMoeglich && 'Neu starten', daten.beendenMoeglich && 'Beenden'].filter(Boolean).join(' oder '));
+    const k = daten.konto ?? null;
+    kontoName = k ? (k.system ? 'SYSTEM' : k.name) : null;
+    $('sys-konto').hidden = !k;
+    if (k) $('sys-konto-text').textContent = kontoText(k);
+    $('ber-sys').hidden = !k && !daten.neustartMoeglich && !daten.beendenMoeglich;
+    const aktionen = [daten.neustartMoeglich && 'Neu starten', daten.beendenMoeglich && 'Beenden'].filter(Boolean).join(' oder ');
+    bereichStatus('ber-sys', [k && `Konto ${kontoName}`, aktionen].filter(Boolean).join(' · '), !k ? '' : k.fehlt?.length ? 'fehler' : k.system || k.admin ? 'warnung' : '');
     letzteModule = daten.module;
     const zaehler = { ok: 0, warnung: 0, fehler: 0, 'keine-meldung': 0 };
     for (const m of daten.module) {
@@ -303,6 +309,15 @@ async function modulUpdateAktion(id, aktion, koerper = {}) {
   if (aktion === 'suchen') aktualisieren();
 }
 
+// Konto der Basis in Einstellungen → System.
+function kontoText(k) {
+  const einrichten = 'auf dem Worker als Admin werkzeuge\\konto-einrichten.ps1 ausführen (README „Eigenes Dienstkonto“)';
+  const text = k.system ? `Die Basis läuft als SYSTEM und hat damit alle Rechte auf dem Worker. Empfohlen ist ein eigenes Dienstkonto ohne Admin-Rechte: ${einrichten}.`
+    : k.admin ? `Die Basis läuft unter ${k.name} mit Administratorrechten. Empfohlen ist ein Konto ohne Admin-Rechte: ${einrichten}.`
+      : `Die Basis läuft unter ${k.name} – ohne Administratorrechte.`;
+  return k.fehlt?.length ? `${text} Fehlende Schreibrechte: ${k.fehlt.join(', ')} – bitte ${einrichten}.` : text;
+}
+
 // Neues oder geändertes Modul: Admins sehen die Änderungen und geben frei; alle anderen nur den Hinweis.
 function freigabeFuellen(m) {
   const f = m.freigabe;
@@ -315,7 +330,7 @@ function freigabeFuellen(m) {
     ? `${f.fehler} So kann das Modul nicht freigegeben werden; bitte den Modulordner korrigieren.`
     : !istAdmin ? 'Ein Admin muss die Änderungen prüfen und das Modul freigeben. Bis dahin wird es nicht ausgeführt.'
       : dienst ? `Nach der Freigabe kann die Basis den Windows-Dienst „${m.dienst?.name ?? ''}“ starten und beenden. Bitte nur freigeben, wenn die Änderung bekannt und gewollt ist.`
-        : 'Nach der Freigabe führt die Basis dieses Modul als SYSTEM aus. Bitte nur freigeben, wenn die Änderungen bekannt und gewollt sind.';
+        : `Nach der Freigabe führt die Basis dieses Modul ${kontoName === 'SYSTEM' ? 'als SYSTEM' : kontoName ? `unter dem Konto ${kontoName}` : 'unter dem Konto der Basis'} aus. Bitte nur freigeben, wenn die Änderungen bekannt und gewollt sind.`;
   const liste = istAdmin ? f.aenderungen ?? [] : [];
   $('freigabe-liste').replaceChildren(...liste.map((t) => el('li', { textContent: t })));
   $('freigabe-liste').hidden = !liste.length;

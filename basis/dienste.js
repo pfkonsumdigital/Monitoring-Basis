@@ -16,7 +16,7 @@ export function zustandLesen(ausgabe) {
 // Windows-Fehlercodes von sc.exe (Exitcode) in verständliche Sätze.
 function fehlerText(code, name, ausgabe) {
   return {
-    5: `Keine Berechtigung für den Dienst „${name}“. Die Basis muss dafür als Autostart (Konto SYSTEM) oder als Administrator laufen.`,
+    5: `Keine Berechtigung für den Dienst „${name}“: Das Konto der Basis darf ihn nicht steuern. Auf dem Worker als Admin werkzeuge\\konto-einrichten.ps1 ausführen – es gibt dem Konto die Rechte für die Dienste freigegebener Module.`,
     1060: `Der Dienst „${name}“ ist auf diesem Rechner nicht installiert.`,
     1056: `Der Dienst „${name}“ läuft bereits.`,
     1062: `Der Dienst „${name}“ läuft nicht.`,

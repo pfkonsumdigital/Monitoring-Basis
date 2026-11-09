@@ -89,3 +89,101 @@ test('Modul-Freigabe unter Windows: Junction und Verknüpfung erkannt, Groß-/Kl
     await rm(wurzel, { recursive: true, force: true });
   }
 });
+
+test('Dienstkonto einrichten (werkzeuge\\konto-einrichten.ps1): Abbruch bei Admin, Rechte, Dienstrechte nur für freigegebene Module, Aufgabe, zurück', nurWindows, async () => {
+  const { randomBytes, createHash } = await import('node:crypto');
+  const { spawnSync } = await import('node:child_process');
+  const { readFile: lesen } = await import('node:fs/promises');
+  const skript = path.resolve('werkzeuge', 'konto-einrichten.ps1');
+  const id = randomBytes(3).toString('hex');
+  const rechner = process.env.COMPUTERNAME;
+  const svc = `mbsvc${id}`;
+  const adm = `mbadm${id}`;
+  const pw = `Mb!${randomBytes(10).toString('hex')}Aa9`;
+  const aufgabe = `MB-Test-${id}`;
+  const dienst = `MBTest${id}`;
+  const fremd = `MBBoese${id}`;
+  // Nicht im Benutzerprofil: dorthin dürfte das Testkonto nicht einmal durchgehen.
+  const wurzel = path.join(`${process.env.SystemDrive}\\`, `mb-konto-${id}`);
+  const ps = (befehl) => spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', befehl], { encoding: 'utf8' });
+  const pruefe = (r) => { assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`); return r.stdout; };
+  const einrichten = (konto, extra = '') => ps(`& '${skript}' -Konto '${rechner}\\${konto}' -Passwort (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -Installationsordner '${wurzel}' -Aufgabe '${aufgabe}' -WartenSekunden 0 ${extra}`);
+  const sidVon = (konto) => pruefe(ps(`(New-Object System.Security.Principal.NTAccount('${rechner}\\${konto}')).Translate([System.Security.Principal.SecurityIdentifier]).Value`)).trim();
+  const sdshow = (name) => execFileSync('sc.exe', ['sdshow', name], { encoding: 'utf8' });
+  const kontoDerAufgabe = () => pruefe(ps(`(Get-ScheduledTask -TaskName '${aufgabe}').Principal.UserId`)).trim();
+  try {
+    // Installationsordner wie auf dem Worker (Start.exe und node.exe als Platzhalter).
+    for (const o of ['data', 'modules\\ftp', 'modules\\boese', 'logs', 'runtime']) await mkdir(path.join(wurzel, o), { recursive: true });
+    await writeFile(path.join(wurzel, 'config.json'), JSON.stringify({ port: 18999, tls: { modus: 'aus' } }));
+    await writeFile(path.join(wurzel, 'Start.exe'), 'MZ-platzhalter');
+    await writeFile(path.join(wurzel, 'start.js'), '// platzhalter');
+    await writeFile(path.join(wurzel, 'runtime', 'node.exe'), 'MZ-platzhalter');
+    await writeFile(path.join(wurzel, 'modules', 'ftp', 'module.json'), JSON.stringify({ id: 'ftp', name: 'FTP', typ: 'eigenstaendig', dienst }));
+    await writeFile(path.join(wurzel, 'modules', 'boese', 'module.json'), JSON.stringify({ id: 'boese', name: 'Böse', typ: 'eigenstaendig', dienst: fremd }));
+    const wert = createHash('sha256').update(JSON.stringify({ typ: 'eigenstaendig', dienst })).digest('hex');
+    await writeFile(path.join(wurzel, 'data', 'modulfreigaben.json'), JSON.stringify({ version: 1, module: { ftp: { wert, angaben: { typ: 'eigenstaendig', dienst } } } }));
+    // Prüfskript: läuft als Aufgabe unter dem Testkonto und versucht, was die Basis darf und was nicht.
+    await writeFile(path.join(wurzel, 'probe.ps1'), `$ErrorActionPreference = 'Stop'
+$root = $PSScriptRoot
+$r = [ordered]@{ konto = [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+function Teste($name, [scriptblock]$b) { try { & $b; $r[$name] = 'ok' } catch { $r[$name] = 'verweigert' } }
+Teste 'data' { Set-Content "$root\\data\\p.txt" 'x'; Remove-Item "$root\\data\\p.txt" }
+Teste 'modules' { Set-Content "$root\\modules\\ftp\\p.txt" 'x'; Remove-Item "$root\\modules\\ftp\\p.txt" }
+Teste 'logs' { Set-Content "$root\\logs\\p.txt" 'x'; Remove-Item "$root\\logs\\p.txt" }
+Teste 'versionen' { New-Item -ItemType Directory "$root\\versionen\\neu" | Out-Null; Remove-Item "$root\\versionen\\neu" }
+Teste 'wurzelNeu' { Set-Content "$root\\neu.tmp" 'x'; Remove-Item "$root\\neu.tmp" }
+Teste 'configOeffnen' { [IO.File]::Open("$root\\config.json", 'Open', 'ReadWrite').Close() }
+Teste 'configErsetzen' { Set-Content "$root\\config.json.t.tmp" (Get-Content "$root\\config.json" -Raw); [IO.File]::Delete("$root\\config.json"); [IO.File]::Move("$root\\config.json.t.tmp", "$root\\config.json") }
+Teste 'startExeSchreiben' { [IO.File]::Open("$root\\Start.exe", 'Open', 'ReadWrite').Close() }
+Teste 'startExeLoeschen' { [IO.File]::Delete("$root\\Start.exe") }
+Teste 'startExeUmbenennen' { [IO.File]::Move("$root\\Start.exe", "$root\\x.exe") }
+Teste 'runtimeNeu' { Set-Content "$root\\runtime\\neu.dll" 'x' }
+Teste 'nodeSchreiben' { [IO.File]::Open("$root\\runtime\\node.exe", 'Open', 'ReadWrite').Close() }
+$r | ConvertTo-Json | Set-Content "$root\\data\\probe.json"
+`);
+    pruefe(ps(`New-LocalUser -Name '${svc}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) -PasswordNeverExpires | Out-Null
+New-LocalUser -Name '${adm}' -Password (ConvertTo-SecureString '${pw}' -AsPlainText -Force) | Out-Null
+Add-LocalGroupMember -SID 'S-1-5-32-544' -Member '${adm}'
+$a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File "${wurzel}\\probe.ps1"'
+Register-ScheduledTask -TaskName '${aufgabe}' -Action $a -Principal (New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest) | Out-Null`));
+    for (const name of [dienst, fremd]) execFileSync('sc.exe', ['create', name, 'binPath=', 'C:\\Windows\\System32\\cmd.exe /c exit 0', 'start=', 'demand'], { stdio: 'ignore' });
+    const svcSid = sidVon(svc);
+
+    // 1. Konto mit Admin-Rechten: Abbruch, nichts geändert.
+    const abbruch = einrichten(adm);
+    assert.notEqual(abbruch.status, 0);
+    assert.match(`${abbruch.stdout}${abbruch.stderr}`, /Administratorrechte/);
+    assert.match(kontoDerAufgabe(), /SYSTEM|S-1-5-18/);
+    assert.doesNotMatch(sdshow(dienst), new RegExp(sidVon(adm)));
+
+    // 2. Dienstkonto: Rechte, Dienstrecht nur für das freigegebene Modul, Aufgabe läuft unter dem Konto.
+    const lauf = einrichten(svc);
+    pruefe(lauf);
+    assert.match(lauf.stdout, /Kein Administrator/);
+    assert.match(`${lauf.stdout}${lauf.stderr}`, /Modul 'boese'.*nicht freigegeben/);
+    assert.match(sdshow(dienst), new RegExp(`\\(A;;CCLCLORPWPRC;;;${svcSid}\\)`));
+    assert.doesNotMatch(sdshow(fremd), new RegExp(svcSid), 'nicht freigegebenes Modul: Dienst unberührt');
+    assert.match(kontoDerAufgabe(), new RegExp(`${svc}$`, 'i'));
+    let probe = null;
+    for (let i = 0; i < 60 && !probe; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try { probe = JSON.parse((await lesen(path.join(wurzel, 'data', 'probe.json'), 'utf8')).replace(/^\uFEFF/, '')); } catch { probe = null; }
+    }
+    assert.ok(probe, 'Prüfskript lief nicht unter dem Konto (Anmelderecht als Stapelverarbeitung?)');
+    assert.match(probe.konto, new RegExp(`\\\\${svc}$`, 'i'));
+    for (const k of ['data', 'modules', 'logs', 'versionen', 'wurzelNeu', 'configOeffnen', 'configErsetzen']) assert.equal(probe[k], 'ok', k);
+    for (const k of ['startExeSchreiben', 'startExeLoeschen', 'startExeUmbenennen', 'runtimeNeu', 'nodeSchreiben']) assert.equal(probe[k], 'verweigert', k);
+    // Erneut ausführen ändert nichts Doppeltes.
+    pruefe(einrichten(svc));
+    assert.equal(sdshow(dienst).split(svcSid).length - 1, 1, 'Dienstrecht nur einmal');
+
+    // 3. Zurück auf SYSTEM: Dienstrecht entfernt.
+    pruefe(einrichten(svc, '-Zurueck'));
+    assert.match(kontoDerAufgabe(), /SYSTEM|S-1-5-18/);
+    assert.doesNotMatch(sdshow(dienst), new RegExp(svcSid));
+  } finally {
+    ps(`Unregister-ScheduledTask -TaskName '${aufgabe}' -Confirm:$false -ErrorAction SilentlyContinue; Remove-LocalUser -Name '${svc}' -ErrorAction SilentlyContinue; Remove-LocalUser -Name '${adm}' -ErrorAction SilentlyContinue`);
+    for (const name of [dienst, fremd]) spawnSync('sc.exe', ['delete', name]);
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});

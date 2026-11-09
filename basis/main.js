@@ -22,6 +22,7 @@ import { Sicherheitsmeldungen } from './sicherheit.js';
 import { konfigWerteOeffnen, Tresor } from './geheimnis.js';
 import { geheimnisseUmstellen } from './umstellung.js';
 import { Domainverwaltung } from './domain.js';
+import { kontoPruefen } from './konto.js';
 import { Zertifikatsverwaltung } from './zertifikat.js';
 import { erstelleAnwendung, starteServer } from './webserver.js';
 import { NEUSTART_CODE, Updateverwaltung, versionLesen } from './updates.js';
@@ -104,6 +105,12 @@ async function benutzerAnlegen(configDatei, name, admin) {
 async function starten(konfig, configDatei, protokoll, tresor) {
   const log = protokoll.alsFunktion();
   if (!Object.keys(konfig.benutzer).length) throw new BasisFehler('Es ist noch kein Benutzer angelegt. Zuerst: node basis/main.js --benutzer-anlegen <Name>');
+  // Unter welchem Konto läuft die Basis, und darf es überall schreiben, wo es muss?
+  const installOrdner = process.env.MONITOR_INSTALL_ORDNER || path.dirname(configDatei);
+  const konto = await kontoPruefen({
+    ordner: [installOrdner, konfig.datenOrdner, konfig.moduleOrdner, path.join(path.dirname(configDatei), 'logs'), path.join(installOrdner, 'versionen')],
+    datei: configDatei, log,
+  });
 
   const speicher = new Ergebnisspeicher(konfig.datenOrdner, konfig.verlaufAnzahl);
   const uebernehmen = async (id, roh) => {
@@ -143,7 +150,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const tls = await zertifikate.laden();
   let server;
   const updates = new Updateverwaltung({
-    installOrdner: process.env.MONITOR_INSTALL_ORDNER || path.dirname(configDatei), programmOrdner: APP_ORDNER, configDatei,
+    installOrdner, programmOrdner: APP_ORDNER, configDatei,
     updates: konfig.updates, installiert: await versionLesen(APP_ORDNER), log,
     datenOrdner: konfig.datenOrdner, geheimnisse: protokoll.geheimnisse, tresor,
     viaStarter: typeof process.send === 'function' && process.env.MONITOR_STARTER === '1',
@@ -167,7 +174,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const domain = new Domainverwaltung({ configDatei, konfig, tresor, benutzerverwaltung, zertifikate, neustart: updates.viaStarter ? neustarten : null, log });
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

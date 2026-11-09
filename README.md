@@ -98,13 +98,67 @@ mit. Auf dem Worker muss also nichts installiert werden.
 Für die Optionen eine Verknüpfung anlegen und die Option im Feld „Ziel“
 anhängen, zum Beispiel `"C:\monitoring-basis\Start.exe" --neustart`. Ausgaben
 der Basis stehen in `logs\starter-ausgabe.log`. Läuft die Basis als Autostart
-unter SYSTEM, fragen `--stop` und `--neustart` nach Administratorrechten.
+unter SYSTEM oder dem Dienstkonto, fragen `--stop` und `--neustart` nach
+Administratorrechten.
 
 Den Browser öffnet Start.exe mit `http://localhost:<port>/` bzw. bei HTTPS mit
 `https://<hostname>:<port>/` aus `config.json`.
 
 Start.exe ist nicht digital signiert. Je nach Unternehmensrichtlinie muss sie
 freigegeben werden.
+
+### Eigenes Dienstkonto (empfohlen)
+
+`Start.exe --autostart` richtet die Basis unter SYSTEM ein – mit allen Rechten
+auf dem Worker. Sicherer ist ein eigenes Domänenkonto **ohne Admin-Rechte**,
+z. B. `KONSUM-WEIMAR\svc-monitoring`. Dann laufen auch die Module, die die
+Basis startet, unter diesem Konto.
+
+1. **Im AD:** Benutzer anlegen, nur in „Domänen-Benutzer“, Kennwort „läuft nie
+   ab“. Empfohlen per Gruppenrichtlinie: lokale Anmeldung und Anmeldung über
+   Remotedesktop für das Konto verweigern.
+2. **Auf dem Worker** (einmal `Start.exe --autostart`, falls noch nicht
+   geschehen), dann PowerShell **als Administrator**:
+   ```powershell
+   cd C:\monitoring-basis
+   $v = (Get-Content .\aktiv.json | ConvertFrom-Json).aktiv
+   powershell -ExecutionPolicy Bypass -File "$v\werkzeuge\konto-einrichten.ps1" -Konto 'KONSUM-WEIMAR\svc-monitoring'
+   ```
+   Ohne `aktiv.json` (noch kein Online-Update) liegt das Skript unter
+   `.\werkzeuge\`. Es fragt das Kennwort ab (wird nur im Aufgabenplaner
+   gespeichert) und:
+   - **bricht ab, wenn das Konto Admin-Rechte hat** (lokale Administratoren,
+     Domänen-, Schema- oder Organisations-Admins) – dann ändert es nichts;
+   - setzt die Dateirechte: Hauptordner nur für SYSTEM, Administratoren und das
+     Konto (Benutzer haben keinen Zugriff mehr auf `config.json`); das Konto
+     darf dort lesen und eigene Dateien anlegen (`config.json`, `aktiv.json`,
+     Sicherungen), **`Start.exe` und `runtime\` aber nicht ändern**;
+     `data\` und `modules\` nur SYSTEM, Administratoren und das Konto;
+     `logs\` und `versionen\` Ändern;
+   - gibt dem Konto „Als Stapelverarbeitungsauftrag anmelden“ (lokale
+     Richtlinie; legt eine Gruppenrichtlinie dieses Recht fest, das Konto dort
+     eintragen);
+   - erlaubt dem Konto Starten, Beenden und Abfragen der Windows-Dienste
+     **freigegebener** Module (z. B. `MonitoringFTP`) – nur dieser Dienste;
+   - stellt die Aufgabe „Monitoring-Basis“ auf das Konto um, startet die Basis
+     neu und zeigt, unter welchem Konto sie läuft.
+3. **Prüfen:** Einstellungen → System zeigt „Die Basis läuft unter
+   KONSUM-WEIMAR\svc-monitoring – ohne Administratorrechte“. Beim Start
+   protokolliert die Basis ihr Konto, warnt bei SYSTEM oder Admin-Rechten und
+   meldet, wo ihr Schreibrechte fehlen.
+
+Später erneut ausführen: nach `Start.exe --autostart` (stellt wieder auf
+SYSTEM), nach einer Kennwortänderung und wenn ein Modul mit `dienst`
+dazukommt (erst in der Oberfläche freigeben). Zurück auf SYSTEM:
+`… konto-einrichten.ps1 -Konto 'KONSUM-WEIMAR\svc-monitoring' -Zurueck`.
+
+Gut zu wissen:
+- Die verschlüsselten Geheimnisse bleiben lesbar (an den Rechner und
+  `data\geheimnis.schluessel` gebunden, nicht an das Konto).
+- Module, die Netzwerkfreigaben lesen, brauchen dort Rechte für das Konto.
+- Notfallbefehle (z. B. `--benutzer-anlegen`) laufen aus `versionen\`, das
+  das Konto ändern darf. Auf einem Worker, dem man misstraut, sie deshalb
+  nicht als Administrator ausführen, sondern erst prüfen.
 
 ### Ohne Windows-Paket (Entwicklung, andere Systeme)
 
@@ -361,7 +415,8 @@ Inhalt landet nie im Protokoll.
 
 ### Freigabe neuer und geänderter Module
 
-Die Basis führt Module vom Typ `programm` und `plugin` als SYSTEM aus und kann
+Die Basis führt Module vom Typ `programm` und `plugin` unter ihrem eigenen
+Konto aus (SYSTEM oder das Dienstkonto, siehe „Eigenes Dienstkonto“) und kann
 die Windows-Dienste eigenständiger Module (`dienst`) starten und beenden. Damit
 eine unbemerkt geänderte oder neu abgelegte Datei nicht automatisch mit diesen
 Rechten läuft, gilt: **Ein solches Modul läuft nur in dem Stand, den ein Admin
@@ -469,10 +524,10 @@ Rückfrage):
 | `"dienst": "MonitoringFTP"` (Name des Windows-Dienstes) | Die Basis stoppt den Dienst (`sc.exe stop`). | Knopf **„Dienst starten“** (`sc.exe start`). |
 | `"befehlsdatei": true` | Die Basis legt `befehl.json` in den Modulordner, das Modul beendet sich selbst. | Nur auf dem Worker. |
 
-- Die Basis fasst nur den Dienst an, der in `module.json` steht. Stoppen und
-  Starten von Diensten klappt, wenn die Basis per Autostart (Konto SYSTEM)
-  oder als Administrator läuft; sonst zeigt die Oberfläche „Keine
-  Berechtigung“.
+- Die Basis fasst nur den Dienst an, der in `module.json` steht. Unter SYSTEM
+  darf sie jeden Dienst steuern; unter dem Dienstkonto nur die Dienste, für die
+  `konto-einrichten.ps1` die Rechte gesetzt hat (freigegebene Module). Sonst
+  zeigt die Oberfläche „Keine Berechtigung … konto-einrichten.ps1 ausführen“.
 - **Dienstzustand:** Bei Modulen mit `dienst` fragt die Basis alle 15 Sekunden
   den Zustand ab und zeigt ihn in den Details. Ist der Dienst gestoppt (oder
   nicht installiert), ohne dass ihn jemand über die Basis beendet hat, zeigt
@@ -678,7 +733,7 @@ verfügbar“); es ist immer nur ein Bereich aufgeklappt.
 
 Die Basis verschickt Mails über **Microsoft 365** (Microsoft Graph) mit einer
 eigenen App-Registrierung. Das funktioniert ohne angemeldeten Benutzer, also
-auch, wenn die Basis per Autostart unter SYSTEM läuft. Der Worker braucht
+auch, wenn die Basis per Autostart unter SYSTEM oder dem Dienstkonto läuft. Der Worker braucht
 ausgehend HTTPS zu `login.microsoftonline.com` und `graph.microsoft.com`.
 
 ### Wann kommt eine Mail?
@@ -866,7 +921,7 @@ die Benachrichtigung eingerichtet, geht eine Mail „Basis beendet“ an die
 Empfänger. Weder Starter noch Aufgabenplaner starten die Basis danach von
 selbst neu. Wieder starten: auf dem Worker `Start.exe` doppelklicken, im
 Aufgabenplaner die Aufgabe „Monitoring-Basis“ starten (dann wieder unter
-SYSTEM) oder den Rechner neu starten. Alternativ zum Knopf: `Start.exe --stop`.
+dem Konto der Aufgabe) oder den Rechner neu starten. Alternativ zum Knopf: `Start.exe --stop`.
 
 **Fehlerprotokoll:** Die Basis schreibt zwei Dateien in `logs\`:
 
@@ -1030,7 +1085,11 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
 
 - **Zwei-Faktor-Anmeldung für alle** (siehe oben).
 - **Geheimnisse verschlüsselt** (DPAPI, an den Rechner gebunden) und Ordner
-  `data`/`modules` nur für SYSTEM und Administratoren (siehe oben).
+  `data`/`modules` nur für SYSTEM, Administratoren und das Konto der Basis
+  (siehe oben).
+- **Eigenes Dienstkonto ohne Admin-Rechte** statt SYSTEM (siehe „Eigenes
+  Dienstkonto“); die Basis warnt beim Start, wenn sie als SYSTEM oder mit
+  Admin-Rechten läuft.
 - Mit Zertifikat nur HTTPS (TLS 1.2 oder neuer) mit HSTS; im HTTP-Betrieb
   (`tls.modus` `"aus"`) nur Zugriffe aus privaten Netzen. Immer strenge
   Content-Security-Policy, Schutz vor Einbetten in fremde Seiten.

@@ -718,7 +718,7 @@ test('Webserver: Host-Prüfung, Fehlerausgabe und Freigabe nur für Admins, manu
   await module.start();
   module.stop();
   const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
-  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, hostname: 'monitoring.firma.de', weitereHosts: ['we-vm.firma.local'], adressen: () => ['192.168.100.193'], log }), tls: null, host: '127.0.0.1', port: 0 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, hostname: 'monitoring.firma.de', weitereHosts: ['we-vm.firma.local'], adressen: () => ['192.168.100.193'], konto: { name: 'konsum-weimar\\svc-monitoring', system: false, admin: false, fehlt: [] }, log }), tls: null, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
@@ -746,6 +746,9 @@ test('Webserver: Host-Prüfung, Fehlerausgabe und Freigabe nur für Admins, manu
     const gast = await anmelden('gast');
     const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
     // Fehlerausgabe (stderr) nur für Admins.
+    // Konto der Basis nur für Admins.
+    assert.equal((await hole('GET', '/api/status', gast)).json().konto, undefined);
+    assert.deepEqual((await hole('GET', '/api/status', chef)).json().konto, { name: 'konsum-weimar\\svc-monitoring', system: false, admin: false, fehlt: [] });
     const gs = (await hole('GET', '/api/status', gast)).json().module[0];
     assert.equal(gs.letztes.fehlerausgabe, undefined);
     assert.equal(gs.letztes.zusammenfassung, 'kaputt');

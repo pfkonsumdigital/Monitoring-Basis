@@ -42,7 +42,7 @@ test('Dienststeuerung: bereits gestoppt/läuft ist kein Fehler; sonst verständl
   await ok.starten('Dienst');
 
   const verweigert = new Dienststeuerung({ execImpl: scSimuliert({ stop: [5, '[SC] OpenService FAILED 5:\r\n\r\nAccess is denied.'] }).execImpl, plattform: 'win32' });
-  await assert.rejects(verweigert.beenden('Dienst'), (f) => f instanceof DienstFehler && /Keine Berechtigung.*SYSTEM/.test(f.message));
+  await assert.rejects(verweigert.beenden('Dienst'), (f) => f instanceof DienstFehler && /Keine Berechtigung für den Dienst „Dienst“: Das Konto der Basis darf ihn nicht steuern. .*werkzeuge\\konto-einrichten.ps1/.test(f.message));
 
   const fehlt = new Dienststeuerung({ execImpl: scSimuliert({ query: [1060], start: [1060] }).execImpl, plattform: 'win32' });
   assert.deepEqual(await fehlt.zustand('Dienst'), { zustand: 'fehlt', fehler: 'Der Dienst „Dienst“ ist auf diesem Rechner nicht installiert.' });
