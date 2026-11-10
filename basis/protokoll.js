@@ -72,23 +72,47 @@ export class Protokoll {
   }
 
   // Neueste Warnungen/Fehler zuerst, optional gefiltert. Liest fehler.log und rotierte Dateien.
-  lesen({ anzahl = 200, stufe, quelle } = {}) {
-    const ergebnis = [];
-    for (let i = 0; i <= this.maxDateien && ergebnis.length < anzahl; i++) {
+  lesen(filter = {}) { return this.suchen({ ...filter, zaehlen: false }).eintraege; }
+
+  // Wie lesen, zusätzlich mit Zeitraum (von/bis in ms, jeweils einschließlich) und der Zahl aller Treffer.
+  // Liefert { eintraege (höchstens anzahl, neueste zuerst), gesamt, aeltester (Zeit des ältesten Eintrags überhaupt) }.
+  // zaehlen = false: nach anzahl Treffern aufhören (gesamt ist dann nur eine Untergrenze).
+  suchen({ anzahl = 200, stufe, quelle, von, bis, zaehlen = true } = {}) {
+    const eintraege = [];
+    let gesamt = 0;
+    let aeltester = null;
+    let fertig = false;
+    for (let i = 0; i <= this.maxDateien; i++) {
+      if (fertig && !zaehlen) break;
       const datei = i === 0 ? this.fehlerDatei : `${this.fehlerDatei}.${i}`;
       let text;
       try { text = readFileSync(datei, 'utf8'); } catch { continue; }
-      const zeilen = text.split('\n').filter(Boolean).reverse();
+      const zeilen = text.split('\n').filter(Boolean);
+      // Ältester Eintrag: erste lesbare Zeile der ältesten vorhandenen Datei.
+      for (const z of zeilen) { try { aeltester = JSON.parse(z).zeit ?? aeltester; break; } catch { /* nächste Zeile */ } }
+      if (fertig) continue;
+      zeilen.reverse();
+      // Rotierte Dateien sind älter als die aktuelle: Ist schon der neueste Eintrag einer Datei älter als „von“,
+      // kommen danach keine Treffer mehr. Innerhalb einer Datei wird nicht abgebrochen (Uhr könnte gesprungen sein).
+      if (von !== undefined) {
+        let neuester = NaN;
+        for (const z of zeilen) { try { neuester = Date.parse(JSON.parse(z).zeit); break; } catch { /* nächste Zeile */ } }
+        if (neuester < von) { fertig = true; continue; }
+      }
       for (const z of zeilen) {
         let e;
         try { e = JSON.parse(z); } catch { continue; }
+        const t = Date.parse(e.zeit);
+        if (bis !== undefined && t > bis) continue;
+        if (von !== undefined && t < von) continue;
         if (stufe && e.stufe !== stufe) continue;
         if (quelle && !String(e.quelle).startsWith(quelle)) continue;
-        ergebnis.push(e);
-        if (ergebnis.length >= anzahl) break;
+        gesamt += 1;
+        if (eintraege.length < anzahl) eintraege.push(e);
+        if (!zaehlen && eintraege.length >= anzahl) { fertig = true; break; }
       }
     }
-    return ergebnis;
+    return { eintraege, gesamt, aeltester };
   }
 }
 

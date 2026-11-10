@@ -15,6 +15,7 @@ import { Planer } from './planer.js';
 import { Modulverwaltung } from './modulverwaltung.js';
 import { Freigaben } from './freigabe.js';
 import { Benachrichtigung } from './benachrichtigung.js';
+import { Speicherbelegung } from './speicherbelegung.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Benutzerverwaltung, passwortRegelFehler } from './benutzerverwaltung.js';
@@ -174,8 +175,10 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   };
   const domain = new Domainverwaltung({ configDatei, konfig, tresor, benutzerverwaltung, zertifikate, neustart: updates.viaStarter ? neustarten : null, log });
   const modulupdates = new Modulupdates({ verwaltung: module, updates, datenOrdner: konfig.datenOrdner, log });
+  const speicherbelegung = new Speicherbelegung({ installOrdner, datenOrdner: konfig.datenOrdner, moduleOrdner: konfig.moduleOrdner,
+    logOrdner: path.join(path.dirname(configDatei), 'logs'), module: () => module.module.map((m) => ({ id: m.id, name: m.name })), log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
+  const anwendung = erstelleAnwendung({ module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

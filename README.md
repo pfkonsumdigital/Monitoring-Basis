@@ -730,7 +730,7 @@ nur Admins.
 
 Alle Einstellungen der Basis liegen für Admins hinter dem Knopf
 **„Einstellungen“** oben rechts: HTTPS & Domain, Benachrichtigung, Benutzer,
-Updates, Fehlerprotokoll und System (Neu starten, Beenden). Jeder Bereich zeigt
+Updates, Fehlerprotokoll, Speicher und System (Neu starten, Beenden). Jeder Bereich zeigt
 zugeklappt eine Statuszeile (z. B. „Aktiv · 2 Empfänger“ oder „Update auf v…
 verfügbar“); es ist immer nur ein Bereich aufgeklappt.
 
@@ -997,7 +997,39 @@ Modulergebnisse.
 
 Admins sehen das Protokoll unter **Einstellungen → Fehlerprotokoll** (die
 Statuszeile zeigt Fehler und Warnungen der letzten 24 Stunden): filterbar nach
-Stufe und Quelle, mit aufklappbaren Details und einem Download als Textdatei.
+Stufe, Quelle und **Zeitraum** (letzte Stunde, 24 Stunden, 7 Tage, 30 Tage,
+alles oder ein eigener Zeitraum mit Von/Bis in Ortszeit), mit aufklappbaren
+Details und einem Download als Textdatei, der dieselben Filter nutzt.
+Angezeigt werden bis zu 1000 Einträge; gibt es mehr, steht dort z. B.
+„1000 von 3412 Einträgen angezeigt – alle über Herunterladen“. Unter der Liste
+steht der älteste vorhandene Eintrag – ältere sind beim Rotieren gelöscht
+worden.
+
+**Speicher:** Unter **Einstellungen → Speicher** sehen Admins (aus dem
+Firmennetz oder über VPN), wie viel Platz belegt ist:
+
+- Laufwerk des Installationsordners: gesamt, belegt, frei (Balken; gelb unter
+  15 %, rot unter 5 % frei).
+- Basis: Programmversionen (`versionen\`), Laufzeit (`runtime\`), Protokolle
+  (`logs\`, davon Archiv = rotierte Dateien `.1` bis `.5`), übrige Daten
+  (`data\` ohne die Modul-Anteile) und Sonstiges (Start.exe, config.json …).
+- Je Modul, die größten zuerst: Modulordner, gespeicherter Verlauf
+  (`data\ergebnisse`), alte Versionen aus Modul-Updates
+  (`data\modul-versionen`) und Summe.
+- Gerechnet wird beim Öffnen der Einstellungen bzw. mit **„Neu berechnen“**; das
+  Ergebnis gilt 5 Minuten. Verknüpfungen und Junctions werden nicht verfolgt.
+  Nach 200 000 Dateien oder 20 Sekunden bricht die Berechnung ab und zeigt
+  Mindestwerte; nicht lesbare Ordner werden genannt.
+
+Aufräumen (jeweils zweimal klicken, steht im Protokoll):
+
+- **„Archiv löschen“** bei Protokolle: löscht die rotierten Dateien
+  (`basis.log.1` … und `fehler.log.1` …). Die aktuellen Dateien bleiben; das
+  Fehlerprotokoll reicht danach weniger weit zurück.
+- **„Alte Versionen löschen“** je Modul (ab zwei gespeicherten Versionen):
+  löscht alte Versionen und Reste abgebrochener Updates. Die neueste
+  Sicherung bleibt, damit „Zurück“ weiter geht. Während eines Updates des
+  Moduls nicht möglich.
 
 In der Windows-Firewall eingehend TCP auf den gewählten Port nur aus dem
 Firmennetz freigeben.

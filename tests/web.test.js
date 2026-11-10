@@ -876,3 +876,85 @@ test('Webserver: Meine Benachrichtigungen – jeder nur die eigenen, mit Schutzk
     await rm(wurzel, { recursive: true, force: true });
   }
 });
+
+test('Webserver: Fehlerprotokoll mit Zeitraum, Speicherbelegung und Aufräumen nur für Admins', async () => {
+  const http = await import('node:http');
+  const { Protokoll } = await import('../basis/protokoll.js');
+  const { Speicherbelegung } = await import('../basis/speicherbelegung.js');
+  const { Modulupdates } = await import('../basis/modulupdates.js');
+  const { mkdir } = await import('node:fs/promises');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-websp-'));
+  let uhr = Date.parse('2026-11-10T08:00:00Z');
+  const protokoll = new Protokoll({ ordner: path.join(wurzel, 'logs'), konsole: false, jetzt: () => new Date(uhr) });
+  for (let i = 0; i < 5; i++) { protokoll.fehler('Basis', `Fehler ${i}`); uhr += 3_600_000; }
+  await writeFile(path.join(wurzel, 'logs', 'basis.log.1'), 'alt\n');
+  await mkdir(path.join(wurzel, 'modules', 'ftp'), { recursive: true });
+  await writeFile(path.join(wurzel, 'modules', 'ftp', 'module.json'), '{}');
+  for (const [v, ms] of [['2.2.0', 2000], ['2.1.0', 1000]]) {
+    await mkdir(path.join(wurzel, 'data', 'modul-versionen', 'ftp', v), { recursive: true });
+    await writeFile(path.join(wurzel, 'data', 'modul-versionen', 'ftp', v, 'module.json'), JSON.stringify({ version: v }));
+    const { utimes } = await import('node:fs/promises');
+    await utimes(path.join(wurzel, 'data', 'modul-versionen', 'ftp', v), ms, ms);
+  }
+  const speicherbelegung = new Speicherbelegung({ installOrdner: wurzel, datenOrdner: path.join(wurzel, 'data'), moduleOrdner: path.join(wurzel, 'modules'), logOrdner: path.join(wurzel, 'logs') });
+  const modulupdates = new Modulupdates({ verwaltung: { finde: () => null, module: [] }, datenOrdner: path.join(wurzel, 'data') });
+  const benutzer = { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } };
+  const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
+  let internesNetz = true;
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule([], {}, {}), modulupdates, speicherbelegung, anmeldung, protokoll, sitzungMs: 60_000, verschluesselt: false, adminNetz: () => internesNetz }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, text: daten, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  const schutz = { 'x-monitor-anfrage': '1' };
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    // Zeitraum
+    const von = encodeURIComponent('2026-11-10T09:00:00.000Z');
+    const bis = encodeURIComponent('2026-11-10T11:00:00.000Z');
+    const r = (await hole('GET', `/api/protokoll?von=${von}&bis=${bis}`, chef)).json();
+    assert.deepEqual(r.eintraege.map((e) => e.meldung), ['Fehler 3', 'Fehler 2', 'Fehler 1']);
+    assert.equal(r.gesamt, 3);
+    assert.equal(r.aeltester, '2026-11-10T08:00:00.000Z');
+    const begrenzt = (await hole('GET', `/api/protokoll?anzahl=2`, chef)).json();
+    assert.equal(begrenzt.eintraege.length, 2);
+    assert.equal(begrenzt.gesamt, 5);
+    assert.equal((await hole('GET', '/api/protokoll?von=gestern', chef)).status, 400);
+    assert.equal((await hole('GET', `/api/protokoll?von=${bis}&bis=${von}`, chef)).status, 400, 'von nach bis');
+    const download = await hole('GET', `/api/protokoll/download?von=${von}&bis=${bis}`, chef);
+    assert.match(download.text, /Fehler 1\n.*Fehler 2\n.*Fehler 3\n$/);
+    assert.doesNotMatch(download.text, /Fehler 0|Fehler 4/);
+
+    // Speicher: nur Admins aus dem Firmennetz; Aufräumen nur mit Schutzkopf.
+    assert.equal((await hole('GET', '/api/speicher', gast)).status, 403);
+    internesNetz = false;
+    assert.equal((await hole('GET', '/api/speicher', chef)).status, 403);
+    internesNetz = true;
+    const b = (await hole('GET', '/api/speicher', chef)).json();
+    assert.equal(b.module[0].id, 'ftp');
+    assert.equal(b.module[0].versionenAnzahl, 2);
+    assert.ok(b.basis.find((t) => t.teil === 'logs').archiv > 0);
+    assert.equal((await hole('POST', '/api/speicher/archiv-loeschen', gast)).status, 403);
+    assert.equal((await hole('POST', '/api/speicher/archiv-loeschen', chef)).status, 403, 'ohne Schutzkopf');
+    const a = (await hole('POST', '/api/speicher/archiv-loeschen', { ...chef, ...schutz })).json();
+    assert.equal(a.geloescht, 1);
+    assert.equal(a.bericht.basis.find((t) => t.teil === 'logs').archiv, 0);
+    assert.equal((await hole('POST', '/api/speicher/modul/ftp/versionen-loeschen', chef)).status, 403, 'ohne Schutzkopf');
+    const v = (await hole('POST', '/api/speicher/modul/ftp/versionen-loeschen', { ...chef, ...schutz })).json();
+    assert.deepEqual([v.geloescht, v.behalten, v.bericht.module[0].versionenAnzahl], [1, '2.2.0', 1]);
+    assert.equal((await hole('POST', '/api/speicher/modul/..%2Fdata/versionen-loeschen', { ...chef, ...schutz })).status, 404, 'nur gültige Modul-IDs');
+    modulupdates.laufend.set('ftp', Promise.resolve());
+    assert.equal((await hole('POST', '/api/speicher/modul/ftp/versionen-loeschen', { ...chef, ...schutz })).status, 409);
+  } finally {
+    server.close();
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});

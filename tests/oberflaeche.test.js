@@ -25,7 +25,7 @@ test('Oberfläche: ein Knopf „Einstellungen“ statt sechs, Bereiche aufklappb
   assert.match(html, /id="einstellungen-oeffnen"[^>]*>Einstellungen<span id="update-hinweis"/);
   const bereiche = [...html.matchAll(/<details id="([a-z-]+)" class="bereich"([^>]*)>\s*<summary><span class="bereich-titel">([^<]+)<\/span><span id="([a-z-]+)" class="bereich-status">/g)];
   const einst = bereiche.filter((b) => b[1].startsWith('ber-'));
-  assert.deepEqual(einst.map((b) => b[3]), ['HTTPS &amp; Domain', 'Benachrichtigung', 'Benutzer', 'Updates', 'Fehlerprotokoll', 'System']);
+  assert.deepEqual(einst.map((b) => b[3]), ['HTTPS &amp; Domain', 'Benachrichtigung', 'Benutzer', 'Updates', 'Fehlerprotokoll', 'Speicher', 'System']);
   for (const b of einst) assert.match(b[2], /name="einst"/); // immer nur einer offen
   assert.deepEqual(bereiche.filter((b) => b[1].startsWith('md-')).map((b) => b[3]), ['Einstellungen', 'Benachrichtigung', 'Updates', 'Kennzahlen', 'Verlauf']);
   for (const b of bereiche) assert.equal(b[4], `${b[1]}-status`);

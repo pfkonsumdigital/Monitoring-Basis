@@ -358,6 +358,23 @@ export class Modulupdates {
     for (const e of eintraege) if (e.startsWith('.neu-') && !this.zustaende.get(id)?.phase?.match(/herunterladen|pruefen|entpacken/)) await rm(path.join(this.ordner, id, e), { recursive: true, force: true }).catch(() => {});
   }
 
+  // Speicher-Ansicht: alte Versionen eines Moduls löschen. Die neueste Sicherung bleibt für „Zurück“.
+  async aeltereVersionenLoeschen(id, benutzer) {
+    if (this.laufend.has(id)) throw new BasisFehler('Für dieses Modul läuft gerade ein Update. Bitte warten.');
+    const [neueste] = await this.sicherungen(id);
+    let eintraege = [];
+    try { eintraege = await readdir(path.join(this.ordner, id)); } catch { /* nichts da */ }
+    let geloescht = 0;
+    for (const e of eintraege) {
+      const voll = path.join(this.ordner, id, e);
+      if (neueste && voll === neueste.ordner) continue;
+      await rm(voll, { recursive: true, force: true });
+      geloescht += 1;
+    }
+    this.log(`Alte Versionen von Modul ${id} gelöscht durch ${benutzer}: ${geloescht}${neueste ? `, behalten: ${neueste.version} (für „Zurück“)` : ''}.`);
+    return { geloescht, behalten: neueste?.version ?? null };
+  }
+
   // Einmal täglich für alle Module mit Repo nach Updates suchen (installiert wird nie automatisch).
   taeglichPruefen() {
     const pruefen = async () => {

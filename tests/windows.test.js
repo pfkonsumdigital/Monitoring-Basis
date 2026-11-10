@@ -90,6 +90,25 @@ test('Modul-Freigabe unter Windows: Junction und Verknüpfung erkannt, Groß-/Kl
   }
 });
 
+test('Speicherbelegung unter Windows: Junction nicht verfolgt, Laufwerk über statfs', nurWindows, async () => {
+  const { Speicherbelegung } = await import('../basis/speicherbelegung.js');
+  const { symlink } = await import('node:fs/promises');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-spwin-'));
+  try {
+    const w = (...t) => path.join(wurzel, ...t);
+    await mkdir(w('modules', 'ftp'), { recursive: true });
+    await writeFile(w('modules', 'ftp', 'module.json'), 'x'.repeat(100));
+    await mkdir(w('extern'));
+    await writeFile(w('extern', 'gross.bin'), Buffer.alloc(50_000));
+    await symlink(w('extern'), w('modules', 'ftp', 'verbindung'), 'junction');
+    const b = await new Speicherbelegung({ installOrdner: w('modules'), datenOrdner: w('data'), moduleOrdner: w('modules'), logOrdner: w('logs') }).bericht();
+    assert.equal(b.module[0].ordner, 100, 'Junction nicht gezählt');
+    assert.ok(b.laufwerk && b.laufwerk.gesamt > 0 && b.laufwerk.frei > 0 && b.laufwerk.frei <= b.laufwerk.gesamt, JSON.stringify(b.laufwerk));
+  } finally {
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});
+
 test('Dienstkonto einrichten (werkzeuge\\konto-einrichten.ps1): Abbruch bei Admin, Rechte, Dienstrechte nur für freigegebene Module, Aufgabe, zurück', nurWindows, async () => {
   const { randomBytes, createHash } = await import('node:crypto');
   const { spawnSync } = await import('node:child_process');

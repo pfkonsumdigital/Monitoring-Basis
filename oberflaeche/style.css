@@ -240,3 +240,22 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .hinweis-kasten { border: 1px solid var(--warnung); background: var(--warnung-flaeche); color: var(--text); border-radius: 8px; padding: 8px 12px; margin: 0 0 8px; }
 .meine-tabelle td:first-child { padding-right: 16px; }
 #meine-adresse-text[data-art="warnung"] { color: var(--warnung); }
+/* Speicher */
+.sp-laufwerk { margin: 0 0 8px; }
+.sp-balken { height: 10px; border-radius: 5px; background: var(--rand); overflow: hidden; max-width: 480px; }
+.sp-balken span { display: block; height: 100%; background: var(--ok); }
+.sp-balken[data-art="warnung"] span { background: var(--warnung); }
+.sp-balken[data-art="fehler"] span { background: var(--fehler); }
+.sp-tabelle th.zahl, .sp-tabelle td.zahl { text-align: right; white-space: nowrap; }
+.sp-tabelle td { padding-right: 14px; }
+.filter input[type="datetime-local"] { font: inherit; color: var(--text); background: var(--hintergrund); border: 1px solid var(--rand); border-radius: 6px; padding: 4px 8px; }
+@media (max-width: 600px) {
+  .sp-tabelle, .sp-tabelle tbody { display: block; width: 100%; }
+  .sp-tabelle thead { display: none; }
+  .sp-tabelle tr { display: grid; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--rand); }
+  .sp-tabelle td { padding: 0; }
+  .sp-tabelle td:first-child { font-weight: 600; }
+  .sp-tabelle td.zahl { display: flex; justify-content: space-between; gap: 12px; text-align: left; }
+  .sp-tabelle td.zahl::before { content: attr(data-label); color: var(--leise); }
+  .sp-tabelle td.aktionen-zelle:empty { display: none; }
+}

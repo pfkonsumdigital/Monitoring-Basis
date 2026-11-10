@@ -1,5 +1,31 @@
 # Änderungen
 
+## 0.18.0
+
+Speicherbelegung mit Aufräumen und Zeitraum-Filter im Fehlerprotokoll.
+
+### Neu
+
+- **Einstellungen → Speicher** (nur Admins aus dem Firmennetz/VPN):
+  - Laufwerk des Installationsordners (gesamt, belegt, frei; Balken gelb unter 15 %, rot unter 5 % frei).
+  - Basis: Programmversionen, Laufzeit, Protokolle (davon Archiv), übrige Daten, Sonstiges; Gesamtsumme.
+  - Je Modul (größte zuerst): Modulordner, gespeicherter Verlauf, alte Versionen aus Modul-Updates, Summe.
+  - Berechnung beim Öffnen bzw. „Neu berechnen“, 5 Minuten zwischengespeichert; Verknüpfungen/Junctions werden nicht verfolgt; Obergrenze 200 000 Dateien bzw. 20 s (dann „mindestens …“); nicht lesbare Ordner werden genannt.
+  - Aufräumen (zweimal klicken, protokolliert): „Archiv löschen“ (rotierte `basis.log.N`/`fehler.log.N`) und je Modul „Alte Versionen löschen“ – die neueste Sicherung bleibt für „Zurück“; nicht während eines Modul-Updates.
+- **Fehlerprotokoll: Zeitraum** – letzte Stunde, 24 Stunden, 7 Tage, 30 Tage, alles oder eigener Zeitraum (Von/Bis in Ortszeit). Gilt auch für „Herunterladen“.
+- Fehlerprotokoll zeigt bis zu 1000 Einträge, die Gesamtzahl der Treffer („1000 von 3412 angezeigt“) und den ältesten vorhandenen Eintrag.
+- API: `GET /api/speicher` (`?neu=1`), `POST /api/speicher/archiv-loeschen`, `POST /api/speicher/modul/<id>/versionen-loeschen`; `/api/protokoll` und `/api/protokoll/download` mit `von`/`bis` (ISO-Zeitpunkt, einschließlich), Antwort mit `gesamt` und `aeltester`.
+
+### Geändert
+
+- Die Zeitraumsuche bricht innerhalb einer Protokolldatei nicht ab (robust, falls die Uhr zurückgestellt wurde); ältere rotierte Dateien werden übersprungen, sobald deren neuester Eintrag vor „Von“ liegt.
+
+### Prüfung
+
+- `npm test`: 178 Tests (davon 5 nur unter Windows), neu u. a. Aufteilung und Summen, Verknüpfungen nicht gezählt, Obergrenzen, Zwischenspeicher, gemeinsame Berechnung, fehlende Ordner, Archiv löschen, alte Modulversionen (neueste bleibt, nicht während eines Updates), Zeitraum über rotierte Dateien, Grenzen einschließlich, Zählung, ältester Eintrag, ungeordnete Zeiten; Web: nur Admins aus dem Firmennetz, Schutzkopf, ungültige Zeiträume, Download mit Zeitraum, nur gültige Modul-IDs. Unter Windows: Junction nicht gezählt, Laufwerksabfrage.
+- Gegenproben (Mutationen): 25 von 26 erkannt; die übrige ist eine gleichwertige Doppelprüfung der Dateigrenze.
+- Browsertest (hell, dunkel, Handy): Zeitraum-Auswahl, eigener Zeitraum, „Von nach Bis“, Speicheranzeige, Aufräumen, Neu berechnen; Speichertabellen auf dem Handy untereinander, kein seitliches Scrollen.
+
 ## 0.17.0
 
 Benutzer stellen ihre Benachrichtigungen selbst ein.

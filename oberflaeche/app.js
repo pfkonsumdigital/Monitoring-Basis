@@ -1009,14 +1009,35 @@ $('upd-zurueck').addEventListener('click', async () => {
 });
 
 // ---- Fehlerprotokoll (nur Admins) ----
+const protMeldung = (text, art = '') => { $('prot-meldung').textContent = text; $('prot-meldung').dataset.art = art; };
+// Zeitraum als von/bis (ISO). Eigener Zeitraum: Eingabe in Ortszeit des Browsers; „Bis“ schließt die ganze Minute ein.
+function protZeitraum(parameter) {
+  const wahl = $('prot-zeitraum').value;
+  $('prot-von-rahmen').hidden = wahl !== 'eigen';
+  $('prot-bis-rahmen').hidden = wahl !== 'eigen';
+  if (wahl === 'eigen') {
+    if ($('prot-von').value) parameter.set('von', new Date($('prot-von').value).toISOString());
+    if ($('prot-bis').value) parameter.set('bis', new Date(Date.parse($('prot-bis').value) + 59_999).toISOString());
+  } else if (wahl) parameter.set('von', new Date(Date.now() - Number(wahl) * 3_600_000).toISOString());
+}
+
 async function protokollLaden() {
   const parameter = new URLSearchParams();
   if ($('prot-stufe').value) parameter.set('stufe', $('prot-stufe').value);
   if ($('prot-quelle').value) parameter.set('quelle', $('prot-quelle').value);
+  protZeitraum(parameter);
   $('prot-download').href = `/api/protokoll/download?${parameter}`;
-  const antwort = await api(`/api/protokoll?${parameter}`);
-  if (!antwort.ok) return;
-  const { eintraege, quellen } = await antwort.json();
+  const antwort = await api(`/api/protokoll?${parameter}${parameter.toString() ? '&' : ''}anzahl=1000`);
+  if (!antwort.ok) {
+    const { fehler } = await antwort.json().catch(() => ({}));
+    protMeldung(fehler ?? 'Protokoll konnte nicht geladen werden.', 'fehler');
+    return;
+  }
+  protMeldung('');
+  const { eintraege, quellen, gesamt = eintraege.length, aeltester = null } = await antwort.json();
+  $('prot-anzahl').hidden = !eintraege.length;
+  $('prot-anzahl').textContent = gesamt > eintraege.length ? `${eintraege.length.toLocaleString('de-DE')} von ${gesamt.toLocaleString('de-DE')} Einträgen angezeigt – alle über „Herunterladen“.` : `${gesamt.toLocaleString('de-DE')} ${gesamt === 1 ? 'Eintrag' : 'Einträge'}.`;
+  $('prot-aeltester').textContent = aeltester ? `Ältester Eintrag im Protokoll: ${zeit(aeltester)} (ältere werden beim Rotieren gelöscht).` : '';
   const gewaehlt = $('prot-quelle').value;
   $('prot-quelle').replaceChildren(new Option('Alle', ''), ...quellen.map((q) => new Option(q, q)));
   $('prot-quelle').value = quellen.includes(gewaehlt) ? gewaehlt : '';
@@ -1027,6 +1048,7 @@ async function protokollLaden() {
     bereichStatus('ber-prot', tag.length ? `24 h: ${fehler} Fehler, ${tag.length - fehler} ${tag.length - fehler === 1 ? 'Warnung' : 'Warnungen'} · letzter Eintrag ${relativ(tag[0].zeit)}` : 'Keine Einträge in den letzten 24 Stunden', fehler ? 'fehler' : tag.length ? 'warnung' : 'ok');
   }
   $('prot-leer').hidden = eintraege.length > 0;
+  $('prot-leer').textContent = parameter.toString() ? 'Keine Einträge für diese Auswahl.' : 'Keine Einträge – alles in Ordnung.';
   $('prot-liste').replaceChildren(...eintraege.map((e) => {
     const li = document.createElement('li');
     li.dataset.stufe = e.stufe;
@@ -1049,6 +1071,93 @@ async function protokollLaden() {
 $('prot-aktualisieren').addEventListener('click', protokollLaden);
 $('prot-stufe').addEventListener('change', protokollLaden);
 $('prot-quelle').addEventListener('change', protokollLaden);
+$('prot-zeitraum').addEventListener('change', () => {
+  // Eigener Zeitraum: mit den letzten 24 Stunden vorbelegen.
+  if ($('prot-zeitraum').value === 'eigen' && !$('prot-von').value) {
+    const ort = (ms) => { const d = new Date(ms); return new Date(ms - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
+    $('prot-von').value = ort(Date.now() - 86_400_000);
+    $('prot-bis').value = ort(Date.now());
+  }
+  protokollLaden();
+});
+$('prot-von').addEventListener('change', protokollLaden);
+$('prot-bis').addEventListener('change', protokollLaden);
+
+// ---- Speicher (nur Admins) ----
+const spMeldung = (text, art = '') => { $('sp-meldung').textContent = text; $('sp-meldung').dataset.art = art; };
+function groesseText(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const einheiten = ['KB', 'MB', 'GB', 'TB'];
+  let wert = bytes / 1024; let i = 0;
+  while (wert >= 1024 && i < einheiten.length - 1) { wert /= 1024; i += 1; }
+  return `${wert.toLocaleString('de-DE', { maximumFractionDigits: wert < 10 ? 1 : 0 })} ${einheiten[i]}`;
+}
+// Zahlenzelle; die Beschriftung erscheint auf schmalen Bildschirmen statt der Kopfzeile.
+const zahlZelle = (beschriftung, inhalt) => { const td = el('td', { className: 'zahl' }, inhalt); td.dataset.label = beschriftung; return td; };
+const SP_BASIS = { versionen: 'Programmversionen (versionen)', runtime: 'Laufzeit (runtime)', logs: 'Protokolle (logs)', daten: 'Übrige Daten (data)', sonstiges: 'Sonstiges (Start.exe, config.json …)' };
+
+function spZeigen(b) {
+  const lw = b.laufwerk;
+  $('sp-laufwerk').hidden = !lw;
+  if (lw) {
+    const belegt = lw.gesamt - lw.frei;
+    const freiProzent = Math.round((lw.frei / lw.gesamt) * 100);
+    $('sp-balken-belegt').style.width = `${Math.min(100, Math.round((belegt / lw.gesamt) * 100))}%`;
+    $('sp-balken-belegt').parentElement.dataset.art = freiProzent < 5 ? 'fehler' : freiProzent < 15 ? 'warnung' : '';
+    $('sp-laufwerk-text').textContent = `Laufwerk: ${groesseText(lw.gesamt)} gesamt, ${groesseText(belegt)} belegt, ${groesseText(lw.frei)} frei (${freiProzent} %). Davon Monitoring: ${groesseText(b.gesamt)}.`;
+  }
+  const mindestens = b.unvollstaendig ? 'mindestens ' : '';
+  $('sp-basis').replaceChildren(...b.basis.map((t) => {
+    const zelle = el('td', { className: 'aktionen-zelle' });
+    if (t.teil === 'logs' && t.archiv > 0) {
+      const knopf = el('button', { type: 'button', className: 'zweitrangig', textContent: `Archiv löschen (${groesseText(t.archiv)})` });
+      nachfragen(knopf, 'Protokoll-Archiv wirklich löschen?', () => spAktion('/api/speicher/archiv-loeschen', [knopf], (d) => `Protokoll-Archiv gelöscht: ${d.geloescht} Datei(en), ${groesseText(d.bytes)}.`));
+      zelle.append(knopf);
+    }
+    const name = t.teil === 'versionen' ? `${SP_BASIS.versionen} – ${t.anzahl} ${t.anzahl === 1 ? 'Version' : 'Versionen'}` : t.teil === 'logs' && t.archiv ? `${SP_BASIS.logs} – davon Archiv ${groesseText(t.archiv)}` : SP_BASIS[t.teil] ?? t.teil;
+    return el('tr', {}, el('td', { textContent: name }), zahlZelle('Größe', groesseText(t.bytes)), zelle);
+  }), el('tr', { className: 'summe' }, el('td', {}, el('strong', { textContent: 'Gesamt (Basis und Module)' })), zahlZelle('Gesamt', el('strong', { textContent: mindestens + groesseText(b.gesamt) })), el('td', { className: 'aktionen-zelle' })));
+  $('sp-module-leer').hidden = b.module.length > 0;
+  $('sp-module').replaceChildren(...b.module.map((m) => {
+    const zelle = el('td', { className: 'aktionen-zelle' });
+    if (m.versionenAnzahl > 1) {
+      const knopf = el('button', { type: 'button', className: 'zweitrangig', textContent: 'Alte Versionen löschen' });
+      knopf.title = 'Die neueste Sicherung bleibt für „Zurück“ erhalten.';
+      nachfragen(knopf, 'Wirklich löschen?', () => spAktion(`/api/speicher/modul/${m.id}/versionen-loeschen`, [knopf], (d) => `${m.name}: ${d.geloescht} alte Version(en) gelöscht${d.behalten ? `, ${d.behalten} bleibt für „Zurück“` : ''}.`));
+      zelle.append(knopf);
+    }
+    return el('tr', {}, el('td', { textContent: m.name }), zahlZelle('Ordner', groesseText(m.ordner)), zahlZelle('Verlauf', groesseText(m.verlauf)),
+      zahlZelle('Alte Versionen', m.versionenAnzahl ? `${groesseText(m.versionen)} (${m.versionenAnzahl})` : '–'), zahlZelle('Summe', groesseText(m.summe)), zelle);
+  }));
+  $('sp-hinweis').textContent = [
+    `Berechnet ${relativ(b.berechnet)} in ${(b.dauerMs / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })} s.`,
+    b.unvollstaendig ? 'Die Berechnung wurde wegen sehr vieler Dateien oder zu langer Dauer abgebrochen – die Werte sind Mindestwerte.' : null,
+    b.unlesbarAnzahl ? `${b.unlesbarAnzahl} Ordner/Dateien konnten nicht gelesen werden (nicht mitgezählt): ${b.unlesbar.join(', ')}${b.unlesbarAnzahl > b.unlesbar.length ? ' …' : ''}` : null,
+  ].filter(Boolean).join(' ');
+  const freiProzent = lw ? Math.round((lw.frei / lw.gesamt) * 100) : null;
+  bereichStatus('ber-sp', `Gesamt ${mindestens}${groesseText(b.gesamt)}${lw ? ` · Laufwerk ${freiProzent} % frei` : ''}`, lw && freiProzent < 5 ? 'fehler' : lw && freiProzent < 15 ? 'warnung' : '');
+}
+
+async function spLaden(neu = false) {
+  if (neu) spMeldung('Wird berechnet …');
+  const antwort = await api(`/api/speicher${neu ? '?neu=1' : ''}`);
+  if (!antwort.ok) { spMeldung('Speicherbelegung konnte nicht berechnet werden.', 'fehler'); bereichStatus('ber-sp', 'Konnte nicht berechnet werden', 'fehler'); return; }
+  spZeigen(await antwort.json());
+  if (neu) spMeldung('');
+}
+async function spAktion(weg, knoepfe, erfolg) {
+  spMeldung('Wird gelöscht …');
+  const ergebnis = await gesperrt(knoepfe, spMeldung, async () => {
+    const antwort = await senden(weg, {});
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
+  if (!antwort.ok) { spMeldung(daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  if (daten.bericht) spZeigen(daten.bericht);
+  spMeldung(erfolg(daten), 'ok');
+}
+$('sp-neu').addEventListener('click', () => gesperrt([$('sp-neu')], spMeldung, () => spLaden(true)));
 
 // ---- HTTPS & Domain (nur Admins) ----
 const TLS_MODUS = { aus: 'HTTP im internen Netz (unverschlüsselt)', letsencrypt: 'HTTPS mit Zertifikat von Let’s Encrypt', dateien: 'HTTPS mit eigenem Zertifikat (Dateien)' };
@@ -1243,7 +1352,7 @@ function sysOeffnen() {
   $('beenden-ja').disabled = false;
   return Promise.resolve();
 }
-const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sys': sysOeffnen };
+const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sp': () => spLaden(), 'ber-sys': sysOeffnen };
 const bereichLaden = (id) => BEREICHE[id]().catch((fehler) => { if (fehler.message !== 'abgemeldet') bereichStatus(id, KEINE_VERBINDUNG, 'fehler'); });
 
 for (const d of document.querySelectorAll('details.bereich')) {

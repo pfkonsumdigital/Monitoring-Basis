@@ -129,7 +129,7 @@ function ohneFehlerausgabe(e) {
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
-export function erstelleAnwendung({ module, modulupdates = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, log = () => {} }) {
+export function erstelleAnwendung({ module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -367,6 +367,31 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
           throw fehler;
         }
       }
+      // Speicherbelegung (nur Admins aus dem Firmennetz/VPN): anzeigen, Protokoll-Archiv und alte Modulversionen löschen.
+      const sp = /^\/api\/speicher(?:\/(archiv-loeschen)|\/modul\/([a-z0-9-]+)\/versionen-loeschen)?$/.exec(weg);
+      if (sp) {
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
+        if (!speicherbelegung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        if (!sp[1] && !sp[2]) {
+          if (req.method !== 'GET') return json(res, 404, { fehler: 'Nicht gefunden.' });
+          return json(res, 200, await speicherbelegung.bericht({ neu: url.searchParams.get('neu') === '1' }));
+        }
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (sp[1]) {
+          const ergebnis = await speicherbelegung.protokollArchivLoeschen(sitzung.benutzer);
+          return json(res, 200, { ...ergebnis, bericht: await speicherbelegung.bericht({ neu: true }) });
+        }
+        if (!modulupdates) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        try {
+          const ergebnis = await modulupdates.aeltereVersionenLoeschen(sp[2], sitzung.benutzer);
+          speicherbelegung.vergessen();
+          return json(res, 200, { ...ergebnis, bericht: await speicherbelegung.bericht({ neu: true }) });
+        } catch (fehler) {
+          if (fehler instanceof BasisFehler) return json(res, 409, { fehler: fehler.message });
+          throw fehler;
+        }
+      }
       if (weg === '/api/beenden') {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
@@ -392,15 +417,26 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         if (req.method !== 'GET' || !protokoll) return json(res, 404, { fehler: 'Nicht gefunden.' });
         const stufe = ['warnung', 'fehler'].includes(url.searchParams.get('stufe')) ? url.searchParams.get('stufe') : undefined;
         const quelle = url.searchParams.get('quelle')?.slice(0, 100) || undefined;
+        // Zeitraum: von/bis als Zeitpunkt (ISO), jeweils einschließlich.
+        const zeitpunkt = (name) => {
+          const roh = url.searchParams.get(name);
+          if (!roh) return undefined;
+          const t = roh.length <= 40 ? Date.parse(roh) : NaN;
+          return Number.isFinite(t) ? t : null;
+        };
+        const von = zeitpunkt('von');
+        const bis = zeitpunkt('bis');
+        if (von === null || bis === null) return json(res, 400, { fehler: 'Ungültiger Zeitraum.' });
+        if (von !== undefined && bis !== undefined && von > bis) return json(res, 400, { fehler: '„Von“ liegt nach „Bis“.' });
         if (weg === '/api/protokoll/download') {
-          const text = protokoll.lesen({ anzahl: 10_000, stufe, quelle }).reverse()
+          const text = protokoll.suchen({ anzahl: 10_000, stufe, quelle, von, bis }).eintraege.reverse()
             .map((e) => `${e.zeit} [${e.stufe.toUpperCase()}] [${e.quelle}] ${e.meldung}${e.details ? `\n    ${e.details.replace(/\n/g, '\n    ')}` : ''}`).join('\n');
           return senden(res, 200, text + '\n', 'text/plain; charset=utf-8', { 'Content-Disposition': 'attachment; filename="fehlerprotokoll.txt"' });
         }
         const anzahl = Math.min(Math.max(Number.parseInt(url.searchParams.get('anzahl') ?? '200', 10) || 200, 1), 1000);
-        const eintraege = protokoll.lesen({ anzahl, stufe, quelle });
+        const { eintraege, gesamt, aeltester } = protokoll.suchen({ anzahl, stufe, quelle, von, bis });
         const quellen = [...new Set(protokoll.lesen({ anzahl: 2000 }).map((e) => String(e.quelle).replace(/^Modul .*/, 'Modul')))].sort();
-        return json(res, 200, { eintraege, quellen });
+        return json(res, 200, { eintraege, gesamt, aeltester, quellen });
       }
 
       if (weg === '/api/benachrichtigung' || weg === '/api/benachrichtigung/test' || weg === '/api/benachrichtigung/bericht') {

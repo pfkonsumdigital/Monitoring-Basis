@@ -281,11 +281,58 @@
           <label>Quelle
             <select id="prot-quelle"><option value="">Alle</option></select>
           </label>
+          <label>Zeitraum
+            <select id="prot-zeitraum">
+              <option value="">Alles</option>
+              <option value="1">Letzte Stunde</option>
+              <option value="24">Letzte 24 Stunden</option>
+              <option value="168">Letzte 7 Tage</option>
+              <option value="720">Letzte 30 Tage</option>
+              <option value="eigen">Eigener Zeitraum …</option>
+            </select>
+          </label>
+          <label id="prot-von-rahmen" hidden>Von
+            <input type="datetime-local" id="prot-von">
+          </label>
+          <label id="prot-bis-rahmen" hidden>Bis
+            <input type="datetime-local" id="prot-bis">
+          </label>
           <button type="button" id="prot-aktualisieren" class="zweitrangig">Aktualisieren</button>
           <a id="prot-download" class="knopf-link" href="/api/protokoll/download" download>Herunterladen</a>
         </div>
+        <p id="prot-meldung" class="upd-meldung" role="status"></p>
         <p id="prot-leer" class="leise" hidden>Keine Einträge – alles in Ordnung.</p>
+        <p id="prot-anzahl" class="leise" hidden></p>
         <ol id="prot-liste" class="protokoll-liste"></ol>
+        <p id="prot-aeltester" class="leise"></p>
+      </div>
+    </details>
+    <details id="ber-sp" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Speicher</span><span id="ber-sp-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Wie viel Platz die Monitoring-Basis und jedes Modul auf dem Worker belegen. Berechnet beim Öffnen und höchstens alle 5 Minuten; Verknüpfungen werden nicht mitgezählt.</p>
+        <div id="sp-laufwerk" class="sp-laufwerk" hidden>
+          <div class="sp-balken" aria-hidden="true"><span id="sp-balken-belegt"></span></div>
+          <p id="sp-laufwerk-text"></p>
+        </div>
+        <p id="sp-meldung" class="upd-meldung" role="status"></p>
+        <h3>Basis</h3>
+        <div class="liste-rahmen">
+          <table class="liste-tabelle sp-tabelle">
+            <thead><tr><th>Bereich</th><th class="zahl">Größe</th><th></th></tr></thead>
+            <tbody id="sp-basis"></tbody>
+          </table>
+        </div>
+        <h3>Module</h3>
+        <p id="sp-module-leer" class="leise" hidden>Keine Module im Modulordner.</p>
+        <div class="liste-rahmen">
+          <table class="liste-tabelle sp-tabelle">
+            <thead><tr><th>Modul</th><th class="zahl">Ordner</th><th class="zahl">Verlauf</th><th class="zahl">Alte Versionen</th><th class="zahl">Summe</th><th></th></tr></thead>
+            <tbody id="sp-module"></tbody>
+          </table>
+        </div>
+        <p id="sp-hinweis" class="leise"></p>
+        <div class="aktionen"><button type="button" id="sp-neu" class="zweitrangig">Neu berechnen</button></div>
       </div>
     </details>
     <details id="ber-sys" class="bereich" name="einst" hidden>
