@@ -788,3 +788,91 @@ test('Webserver: Host-Prüfung, Fehlerausgabe und Freigabe nur für Admins, manu
     await rm(wurzel, { recursive: true, force: true });
   }
 });
+
+test('Webserver: Meine Benachrichtigungen – jeder nur die eigenen, mit Schutzkopf; Admin sieht und löscht', async () => {
+  const http = await import('node:http');
+  const { Benachrichtigung } = await import('../basis/benachrichtigung.js');
+  const { Benutzerverwaltung } = await import('../basis/benutzerverwaltung.js');
+  const wurzel = await mkdtemp(path.join(tmpdir(), 'mb-webabo-'));
+  const mails = [];
+  const fetchImpl = async (url, opt) => {
+    if (url.includes('token')) return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 });
+    mails.push(JSON.parse(opt.body).message);
+    return new Response(null, { status: 202 });
+  };
+  const benachrichtigung = new Benachrichtigung({ datenOrdner: wurzel, fetchImpl });
+  await benachrichtigung.laden();
+  const benutzer = { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') }, anna: { hash: await hashPasswort('geheim-geheim') } };
+  const configDatei = path.join(wurzel, 'config.json');
+  await writeFile(configDatei, JSON.stringify({ port: 8080, tls: { modus: 'aus' }, benutzer }));
+  const anmeldung = new Anmeldung({ benutzer, sitzungMs: 60_000 });
+  const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung });
+  let internesNetz = true;
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module: testModule([], {}, {}), benachrichtigung, benutzerverwaltung, anmeldung, sitzungMs: 60_000, verschluesselt: false, adminNetz: () => internesNetz }), tls: null, host: '127.0.0.1', port: 0 });
+  const { port } = server.address();
+  const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: methode, path: weg, headers: { host: `127.0.0.1:${port}`, ...kopf } }, (res) => {
+      let daten = ''; res.on('data', (t) => { daten += t; }); res.on('end', () => resolve({ status: res.statusCode, kopf: res.headers, text: daten, json: () => JSON.parse(daten) }));
+    });
+    req.on('error', reject); if (koerper) req.write(koerper); req.end();
+  });
+  const anmelden = async (name) => {
+    const r = await new Promise((resolve) => http.request({ host: '127.0.0.1', port, method: 'POST', path: '/login', headers: { 'content-type': 'application/x-www-form-urlencoded' } }, resolve).end(`benutzer=${name}&passwort=geheim-geheim`));
+    return { cookie: r.headers['set-cookie'][0].split(';')[0] };
+  };
+  const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
+  const code = () => /Bestätigungscode: (\d{6})/.exec(mails.at(-1).body.content)[1];
+  try {
+    const chef = await anmelden('chef');
+    const gast = await anmelden('gast');
+    const anna = await anmelden('anna');
+    assert.equal((await hole('GET', '/api/meine-benachrichtigungen')).status, 401, 'nur angemeldet');
+    assert.equal((await hole('GET', '/api/meine-benachrichtigungen', gast)).json().verfuegbar, false);
+    await hole('POST', '/api/benachrichtigung', { ...chef, ...schutz }, JSON.stringify({ werte: { aktiv: true, tenant_id: 'firma.onmicrosoft.com', client_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', client_secret: 'x', absender: 'monitoring@firma.de', empfaenger: 'it@firma.de', erlaubte_domains: 'firma.de' } }));
+
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/code', gast, JSON.stringify({ adresse: 'gast@firma.de' }))).status, 403, 'ohne Schutzkopf');
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/code', { ...gast, ...schutz }, JSON.stringify({ adresse: 'gast@privat.de' }))).status, 400);
+    const r = await hole('POST', '/api/meine-benachrichtigungen/code', { ...gast, ...schutz }, JSON.stringify({ adresse: 'gast@firma.de' }));
+    assert.equal(r.status, 200);
+    assert.equal(r.json().ausstehend.adresse, 'gast@firma.de');
+    assert.doesNotMatch(r.text, new RegExp(code()), 'Code nie in der Antwort');
+    const nochmal = await hole('POST', '/api/meine-benachrichtigungen/code', { ...gast, ...schutz }, JSON.stringify({ adresse: 'gast@firma.de' }));
+    assert.equal(nochmal.status, 429);
+    assert.ok(Number(nochmal.kopf['retry-after']) > 0);
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/bestaetigen', { ...anna, ...schutz }, JSON.stringify({ code: code() }))).status, 400, 'fremder Code gilt nicht');
+    const best = await hole('POST', '/api/meine-benachrichtigungen/bestaetigen', { ...gast, ...schutz }, JSON.stringify({ code: code() }));
+    assert.equal(best.json().adresse, 'gast@firma.de');
+
+    const falsch = await hole('POST', '/api/meine-benachrichtigungen', { ...gast, ...schutz }, JSON.stringify({ bericht: 'stündlich' }));
+    assert.equal(falsch.status, 400);
+    assert.ok(falsch.json().feldfehler.bericht);
+    const gespeichert = await hole('POST', '/api/meine-benachrichtigungen', { ...gast, ...schutz }, JSON.stringify({ module: { unbekannt: 'alle' }, bericht: 'werktags', bericht_uhrzeit: '07:00' }));
+    assert.equal(gespeichert.status, 200);
+    assert.deepEqual(gespeichert.json().module, {}, 'unbekanntes Modul fällt weg');
+    assert.equal(gespeichert.json().bericht, 'werktags');
+    assert.equal((await hole('GET', '/api/meine-benachrichtigungen', anna)).json().adresse, null, 'jeder sieht nur seine eigenen');
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/bericht', { ...gast, ...schutz })).status, 200);
+    assert.deepEqual(mails.at(-1).toRecipients.map((x) => x.emailAddress.address), ['gast@firma.de']);
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/bericht', { ...anna, ...schutz })).status, 400, 'ohne Adresse');
+
+    // Admin: Übersicht in der Benutzerverwaltung, löschen nur aus dem Firmennetz.
+    assert.equal((await hole('GET', '/api/benutzer', gast)).status, 403);
+    assert.deepEqual((await hole('GET', '/api/benutzer', chef)).json().abos.gast, { adresse: 'gast@firma.de', ruht: false, module: 0, bericht: 'werktags 07:00' });
+    internesNetz = false;
+    assert.equal((await hole('POST', '/api/benutzer/gast/benachrichtigung-loeschen', { ...chef, ...schutz })).status, 403);
+    internesNetz = true;
+    const weg = await hole('POST', '/api/benutzer/gast/benachrichtigung-loeschen', { ...chef, ...schutz });
+    assert.equal(weg.status, 200);
+    assert.deepEqual(weg.json().abos, {});
+
+    // Beim Löschen eines Benutzers verschwinden seine Abos; selbst abbestellen geht auch.
+    await hole('POST', '/api/meine-benachrichtigungen/code', { ...anna, ...schutz }, JSON.stringify({ adresse: 'anna@firma.de' }));
+    await hole('POST', '/api/meine-benachrichtigungen/bestaetigen', { ...anna, ...schutz }, JSON.stringify({ code: code() }));
+    assert.ok((await hole('GET', '/api/benutzer', chef)).json().abos.anna);
+    assert.deepEqual((await hole('POST', '/api/benutzer/anna/loeschen', { ...chef, ...schutz })).json().abos, {});
+    assert.equal((await hole('POST', '/api/meine-benachrichtigungen/loeschen', { ...gast, ...schutz })).json().adresse, null);
+  } finally {
+    server.close();
+    await rm(wurzel, { recursive: true, force: true });
+  }
+});

@@ -483,7 +483,9 @@ function feldBauen(f, wert) {
   const eingabe = f.typ === 'liste' ? listeBauen(f, wert, id) : eingabeBauen(f, wert, id);
   if (f.typ !== 'liste') eingabe.dataset.schluessel = f.schluessel;
   const label = el('label', { htmlFor: id, textContent: f.bezeichnung + (f.pflicht ? ' *' : '') });
-  const standard = f.standard === undefined || f.typ === 'schalter' || f.typ === 'liste' ? '' : `Standard: ${f.standard}`;
+  // Bei Auswahlfeldern den Anzeigetext der Option nennen, nicht den gespeicherten Wert.
+  const standardText = f.typ === 'auswahl' ? f.optionen?.find((o) => o.wert === f.standard)?.text ?? f.standard : f.standard;
+  const standard = f.standard === undefined || f.typ === 'schalter' || f.typ === 'liste' ? '' : `Standard: ${standardText}`;
   const hilfe = el('small', { className: 'leise', textContent: [f.beschreibung, standard].filter(Boolean).join(' · ') });
   const fehler = el('small', { className: 'feldfehler', id: `${id}-fehler` });
   return el('div', { className: `feld ${f.typ}` }, label, eingabe, hilfe, fehler);
@@ -543,9 +545,9 @@ $('einst-formular').addEventListener('submit', async (ereignis) => {
 });
 
 // ---- Benachrichtigung (nur Admins) ----
-const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link', 'bericht', 'bericht_wochentag', 'bericht_uhrzeit'];
+const BEN_FELDER = ['tenant_id', 'client_id', 'client_secret', 'absender', 'empfaenger', 'melden_nach_laeufen', 'erinnerung_stunden', 'link', 'erlaubte_domains', 'bericht', 'bericht_wochentag', 'bericht_uhrzeit'];
 const benMeldung = (text, art = '') => { $('ben-meldung').textContent = text; $('ben-meldung').dataset.art = art; };
-const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail', sicherheit: 'Sicherheit', bericht: 'Statusbericht' };
+const BEN_ART = { fehler: 'Fehler', warnung: 'Warnung', 'keine-meldung': 'Keine Meldung', 'wieder-ok': 'Wieder OK', erinnerung: 'Erinnerung', test: 'Testmail', sicherheit: 'Sicherheit', bericht: 'Statusbericht', code: 'Bestätigungscode' };
 
 // Wochentag und Uhrzeit nur zeigen, wenn sie gebraucht werden.
 function berichtFelder() {
@@ -570,7 +572,7 @@ function benZeigen(daten) {
   $('ben-leer').hidden = daten.verlauf.length > 0;
   $('ben-verlauf').replaceChildren(...daten.verlauf.map((e) => {
     const li = el('li', {}, el('span', { className: 'punkt' }), el('span', { textContent: `${zeit(e.zeit)} – ${e.betreff}${e.ok ? '' : ` – nicht gesendet: ${e.fehler}`}` }));
-    li.dataset.status = !e.ok ? 'fehler' : e.art === 'wieder-ok' || e.art === 'test' || e.art === 'bericht' ? 'ok' : e.art === 'warnung' ? 'warnung' : 'fehler';
+    li.dataset.status = !e.ok ? 'fehler' : ['wieder-ok', 'test', 'bericht', 'code'].includes(e.art) ? 'ok' : e.art === 'warnung' ? 'warnung' : 'fehler';
     li.title = BEN_ART[e.art] ?? e.art;
     return li;
   }));
@@ -626,6 +628,13 @@ function bvZeigen(daten) {
   const ich = $('benutzer').textContent;
   $('bv-liste').replaceChildren(...daten.benutzer.map((b) => {
     const zelle = el('td', { className: 'aktionen-zelle' });
+    const abo = daten.abos?.[b.name];
+    const aboText = !abo ? '–' : `${abo.adresse ?? 'keine Adresse'}${abo.ruht ? ' (ruht: Domäne nicht erlaubt)' : ''} · ${abo.module} ${abo.module === 1 ? 'Modul' : 'Module'}${abo.bericht ? ` · Bericht ${abo.bericht}` : ''}`;
+    if (abo) {
+      const aboWeg = el('button', { type: 'button', className: 'zweitrangig', textContent: 'Benachrichtigungen löschen' });
+      nachfragen(aboWeg, `Benachrichtigungen von ${b.name} löschen?`, () => bvAktion(`/api/benutzer/${b.name}/benachrichtigung-loeschen`, {}, [aboWeg], `Benachrichtigungen von ${b.name} gelöscht.`));
+      zelle.append(aboWeg);
+    }
     if (b.name !== ich) {
       const admin = el('button', { type: 'button', className: 'zweitrangig', textContent: b.admin ? 'Admin-Recht entziehen' : 'Zum Admin machen' });
       admin.addEventListener('click', () => bvAktion(`/api/benutzer/${b.name}/admin`, { admin: !b.admin }, [admin], b.admin ? `Admin-Recht von ${b.name} entzogen.` : `${b.name} ist jetzt Admin.`));
@@ -661,7 +670,7 @@ function bvZeigen(daten) {
     }
     return el('tr', {}, el('td', { textContent: b.name }), el('td', { textContent: b.admin ? 'Admin' : 'Benutzer' }),
       el('td', { textContent: b.zweiFaktor ? 'eingerichtet' : 'beim nächsten Anmelden' }),
-      el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), zelle);
+      el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), el('td', { textContent: aboText }), zelle);
   }));
   const ohne = daten.benutzer.filter((b) => !b.zweiFaktor).length;
   bereichStatus('ber-bv', `${daten.benutzer.length} Benutzer · ${daten.sitzungen.length} ${daten.sitzungen.length === 1 ? 'Sitzung' : 'Sitzungen'}${ohne ? ` · ${ohne} ohne Zwei-Faktor` : ''}`, ohne ? 'warnung' : '');
@@ -718,6 +727,115 @@ $('bv-setzen').addEventListener('submit', async (ereignis) => {
     $('bv-setzen-passwort').value = '';
     $('bv-setzen-passwort2').value = '';
   }
+});
+
+// ---- Meine Benachrichtigungen (alle Benutzer) ----
+const meineMeldung = (text, art = '') => { $('meine-meldung').textContent = text; $('meine-meldung').dataset.art = art; };
+const MEINE_STUFEN = [['aus', 'nichts'], ['fehler', 'nur Fehler'], ['alle', 'Fehler und Warnungen']];
+const MEINE_BERICHT = ['bericht', 'bericht_wochentag', 'bericht_uhrzeit'];
+const kurzZeit = (iso) => new Date(iso).toLocaleString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function meineBerichtFelder() {
+  $('meine-bericht-tag').hidden = $('meine-bericht').value !== 'woechentlich';
+  $('meine-bericht-zeit').hidden = $('meine-bericht').value === 'aus';
+}
+$('meine-bericht').addEventListener('change', meineBerichtFelder);
+
+// Adresse und Code-Eingabe; mitAbos = auch Module und Bericht neu füllen (nicht nach dem Code, damit Eingaben bleiben).
+function meineZeigen(d, mitAbos = true) {
+  $('meine-aus').hidden = d.verfuegbar;
+  const text = $('meine-adresse-text');
+  text.textContent = d.adresse
+    ? `Mails gehen an ${d.adresse}.${d.adresseRuht ? ' Diese Domäne ist nicht mehr erlaubt – es kommen keine Mails, bis du eine erlaubte Adresse bestätigst.' : ''}`
+    : 'Noch keine Adresse bestätigt – bis dahin bekommst du keine Mails.';
+  text.dataset.art = !d.adresse || d.adresseRuht ? 'warnung' : '';
+  $('meine-domaenen').textContent = d.erlaubteDomains.length ? `Erlaubt: ${d.erlaubteDomains.map((x) => `@${x}`).join(', ')}. Du bekommst einen Code per Mail.` : 'Ein Admin hat noch keine Domänen freigegeben.';
+  $('meine-code-formular').hidden = !d.ausstehend;
+  if (d.ausstehend) $('meine-code-hinweis').textContent = `Code an ${d.ausstehend.adresse} geschickt, gültig bis ${new Date(d.ausstehend.bis).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.`;
+  $('meine-bericht-senden').disabled = !d.adresse || d.adresseRuht || !d.verfuegbar;
+  $('meine-loeschen').hidden = !d.adresse && !Object.keys(d.module).length;
+  $('meine-bericht-naechster').textContent = d.naechsterBericht ? `Nächster Bericht: ${kurzZeit(d.naechsterBericht)}` : '';
+  if (!mitAbos) return;
+  $('meine-module-leer').hidden = letzteModule.length > 0;
+  $('meine-module').replaceChildren(...[...letzteModule].sort((a, b) => a.name.localeCompare(b.name, 'de')).map((m) => {
+    const auswahl = el('select', { id: `meine-modul-${m.id}` }, ...MEINE_STUFEN.map(([wert, t]) => new Option(t, wert)));
+    auswahl.value = d.module[m.id] ?? 'aus';
+    auswahl.dataset.modul = m.id;
+    return el('tr', {}, el('td', {}, el('label', { htmlFor: auswahl.id, textContent: m.name })), el('td', {}, auswahl));
+  }));
+  $('meine-entwarnung').checked = d.entwarnung;
+  for (const k of MEINE_BERICHT) { $(`meine-${k}`).value = d[k]; $(`meine-${k}-fehler`).textContent = ''; }
+  meineBerichtFelder();
+}
+
+// Führt eine Anfrage aus; liefert { ok, daten } oder undefined bei Verbindungsfehler.
+async function meineAnfrage(weg, koerper, knoepfe) {
+  return gesperrt(knoepfe, meineMeldung, async () => {
+    const antwort = await (koerper === undefined ? api(weg) : senden(weg, koerper));
+    return { ok: antwort.ok, daten: await antwort.json().catch(() => ({})) };
+  });
+}
+
+$('meine-oeffnen').addEventListener('click', async () => {
+  meineMeldung('Wird geladen …');
+  $('meine-adresse-formular').reset();
+  $('meine-code-formular').reset();
+  $('meine').showModal();
+  const r = await meineAnfrage('/api/meine-benachrichtigungen', undefined, [$('meine-speichern')]);
+  if (!r) return;
+  if (!r.ok) { meineMeldung('Konnte nicht geladen werden.', 'fehler'); return; }
+  meineZeigen(r.daten);
+  meineMeldung('');
+});
+$('meine-schliessen').addEventListener('click', () => $('meine').close());
+$('meine-adresse-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  meineMeldung('Code wird verschickt …');
+  const r = await meineAnfrage('/api/meine-benachrichtigungen/code', { adresse: $('meine-adresse').value }, [$('meine-code-senden')]);
+  if (!r) return;
+  if (r.daten.adresse !== undefined) meineZeigen(r.daten, false);
+  if (!r.ok) { meineMeldung(r.daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  meineMeldung('Code verschickt. Bitte Posteingang prüfen und den Code unten eingeben.', 'ok');
+  $('meine-code').focus();
+});
+$('meine-code-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const r = await meineAnfrage('/api/meine-benachrichtigungen/bestaetigen', { code: $('meine-code').value }, [$('meine-bestaetigen')]);
+  if (!r) return;
+  if (r.daten.adresse !== undefined) meineZeigen(r.daten, false);
+  if (!r.ok) { meineMeldung(r.daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  $('meine-adresse-formular').reset();
+  $('meine-code-formular').reset();
+  meineMeldung('Adresse bestätigt.', 'ok');
+});
+$('meine-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const module = Object.fromEntries([...$('meine-module').querySelectorAll('select')].map((a) => [a.dataset.modul, a.value]));
+  const koerper = { module, entwarnung: $('meine-entwarnung').checked };
+  for (const k of MEINE_BERICHT) { koerper[k] = $(`meine-${k}`).value; $(`meine-${k}-fehler`).textContent = ''; }
+  meineMeldung('Wird gespeichert …');
+  const r = await meineAnfrage('/api/meine-benachrichtigungen', koerper, [$('meine-speichern')]);
+  if (!r) return;
+  if (!r.ok) {
+    for (const [k, t] of Object.entries(r.daten.feldfehler ?? {})) { const f = $(`meine-${k}-fehler`); if (f) f.textContent = t; }
+    meineMeldung(r.daten.fehler ?? 'Speichern nicht möglich.', 'fehler');
+    return;
+  }
+  meineZeigen(r.daten);
+  meineMeldung(r.daten.adresse ? 'Gespeichert.' : 'Gespeichert. Mails kommen erst, wenn deine Adresse bestätigt ist.', 'ok');
+});
+$('meine-bericht-senden').addEventListener('click', async () => {
+  meineMeldung('Bericht wird gesendet …');
+  const r = await meineAnfrage('/api/meine-benachrichtigungen/bericht', {}, [$('meine-bericht-senden')]);
+  if (!r) return;
+  meineMeldung(r.ok ? 'Bericht gesendet. Bitte Posteingang prüfen.' : r.daten.fehler ?? 'Nicht gesendet.', r.ok ? 'ok' : 'fehler');
+});
+nachfragen($('meine-loeschen'), 'Wirklich alles abbestellen?', async () => {
+  const r = await meineAnfrage('/api/meine-benachrichtigungen/loeschen', {}, [$('meine-loeschen')]);
+  if (!r) return;
+  if (!r.ok) { meineMeldung(r.daten.fehler ?? 'Nicht möglich.', 'fehler'); return; }
+  meineZeigen(r.daten);
+  meineMeldung('Alle Benachrichtigungen abbestellt und Adresse entfernt.', 'ok');
 });
 
 // ---- Eigenes Passwort (alle Benutzer) ----
@@ -1109,7 +1227,7 @@ nachfragen($('beenden-ja'), 'Wirklich beenden?', async () => {
   clearInterval(aktualisierer);
   $('einstellungen').close();
   $('details').close();
-  for (const id of ['einstellungen-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
+  for (const id of ['einstellungen-oeffnen', 'meine-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
   for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
   $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
   $('beendet-seite').hidden = false;

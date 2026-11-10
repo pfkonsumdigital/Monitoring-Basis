@@ -236,3 +236,7 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .freigabe h3 { margin: 0 0 0.4rem; font-size: 1rem; color: var(--warnung); }
 .freigabe p { margin: 0 0 0.5rem; }
 .freigabe-liste { margin: 0 0 0.75rem; padding-left: 1.2rem; max-height: 14rem; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+/* Meine Benachrichtigungen */
+.hinweis-kasten { border: 1px solid var(--warnung); background: var(--warnung-flaeche); color: var(--text); border-radius: 8px; padding: 8px 12px; margin: 0 0 8px; }
+.meine-tabelle td:first-child { padding-right: 16px; }
+#meine-adresse-text[data-art="warnung"] { color: var(--warnung); }

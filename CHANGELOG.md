@@ -1,5 +1,39 @@
 # Änderungen
 
+## 0.17.0
+
+Benutzer stellen ihre Benachrichtigungen selbst ein.
+
+### Neu
+
+- **„Meine Benachrichtigungen“** (Knopf oben rechts, für jeden angemeldeten Benutzer, auch ohne Admin-Recht):
+  - Eigene Mail-Adresse, bestätigt mit einem 6-stelligen Code per Mail (15 Minuten gültig, höchstens 5 Fehlversuche, neuer Code frühestens nach 1 Minute und höchstens 5 je Stunde). Bei einem Wechsel bleibt die alte Adresse aktiv, bis die neue bestätigt ist.
+  - Je Modul: nichts / nur Fehler (inkl. Modul fehlerhaft, Keine Meldung, Dienst gestoppt) / Fehler und Warnungen; Entwarnung („Wieder OK“) wahlweise, nur nach einem selbst gemeldeten Problem; Erinnerungen im Abstand der allgemeinen Einstellung.
+  - Eigener Statusbericht mit eigenem Rhythmus (täglich, werktags, wöchentlich, Uhrzeit), nur an den Benutzer, einmal nachgeholt bis 12 Stunden; „Bericht jetzt an mich senden“.
+  - „Alle abbestellen“.
+- **Bcc:** Abonnenten bekommen die Modul-Mails in Blindkopie derselben Mail; doppelte Adressen nur einmal.
+- **Einstellungen → Benachrichtigung:** neues Feld „Erlaubte Domänen für Benutzer-Adressen“ (Standard `konsum-weimar.de`). Abos mit nicht mehr erlaubter Domäne ruhen.
+- **Einstellungen → Benutzer:** Spalte „Benachrichtigungen“ (Adresse, Zahl der Modul-Abos, Bericht) und Knopf „Benachrichtigungen löschen“ (nur Admins aus dem Firmennetz/VPN).
+- API `/api/meine-benachrichtigungen` (lesen, speichern, `code`, `bestaetigen`, `bericht`, `loeschen`) – jeder nur die eigenen, mit Schutzkopf; `/api/benutzer/<Name>/benachrichtigung-loeschen`.
+- Speicherung in `data/benachrichtigung-abos.json`; Codes nur als Hash im Speicher.
+
+### Geändert
+
+- Sicherheitsmeldungen, „Freigabe nötig“ und „Basis beendet“ gehen weiterhin nur an die allgemeinen Empfänger.
+- Wird ein Benutzer gelöscht, werden seine Abos mit gelöscht; beim Start entfernt die Basis Abos von Benutzern, die es nicht mehr gibt.
+- Verlauf der Benachrichtigung zeigt auch verschickte Bestätigungscodes (ohne den Code).
+
+### Fehlerbehebungen
+
+- Einstellungsfelder vom Typ Auswahl zeigen als Standard den Anzeigetext der Option statt des gespeicherten Werts (z. B. „Standard: Explizites FTP über TLS (FTPES) – erforderlich“ statt „Standard: ftps“).
+- `werkzeuge\konto-einrichten.ps1`: „Basis laeuft unter“ zählt nur noch die Basis (`start.js`, `basis\main.js`), nicht die Prozesse von Modulen im Installationsordner (z. B. den FTP-Dienst unter SYSTEM).
+
+### Prüfung
+
+- `npm test`: 170 Tests (davon 4 nur unter Windows), neu u. a. Domänenprüfung, Code (Ablauf, Fehlversuche, Wartezeit, Stundenlimit, Versandfehler), Adresswechsel, Stufen und Bcc, Entwarnung nur nach gemeldetem Problem, Freigabe nicht an Benutzer, ruhende Abos, eigener Bericht (Rhythmus, kein Doppelversand, Nachholen, über 12 h nicht), Löschen und Bereinigen; Web: jeder nur die eigenen Abos, Schutzkopf, Retry-After, Admin-Löschen nur intern, Abos beim Löschen des Benutzers weg.
+- Gegenproben (Mutationen): 25 von 27 erkannt; die zwei übrigen sind gleichwertige Doppelsicherungen (Code-Eintrag nach dem 5. Fehlversuch, Benutzername im Code-Hash).
+- Browsertest (hell, dunkel, Handy) mit simuliertem Microsoft 365: Code anfordern und bestätigen, Stufen, Bericht, Admin-Ansicht und Löschen, Standardtext der FTP-Verschlüsselung; kein seitliches Scrollen.
+
 ## 0.16.0
 
 Eigenes Dienstkonto ohne Admin-Rechte statt SYSTEM.

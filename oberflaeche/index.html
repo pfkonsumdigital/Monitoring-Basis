@@ -15,6 +15,7 @@
     <button type="button" id="einstellungen-oeffnen" class="zweitrangig" hidden>Einstellungen<span id="update-hinweis" class="hinweis-punkt" hidden title="Update verfügbar"></span></button>
     <span id="admin-hinweis" class="leise" hidden title="Admin-Funktionen sind nur aus dem Firmennetz oder über VPN verfügbar.">Admin nur intern/VPN</span>
     <span id="benutzer" class="leise"></span>
+    <button type="button" id="meine-oeffnen" class="zweitrangig" title="Eigene Mail-Benachrichtigungen einstellen">Meine Benachrichtigungen</button>
     <button type="button" id="passwort-oeffnen" class="zweitrangig" title="Eigenes Passwort ändern">Passwort ändern</button>
     <form method="post" action="/logout"><button type="submit" class="zweitrangig">Abmelden</button></form>
   </div>
@@ -169,6 +170,7 @@
             <div class="feld"><label for="ben-melden_nach_laeufen">Melden nach … fehlerhaften Läufen hintereinander</label><input id="ben-melden_nach_laeufen" type="number" min="1" max="20" step="1"><small class="leise">1 = sofort beim ersten fehlerhaften Lauf. Gilt für Fehler und Warnung; „Keine Meldung“ und fehlerhafte Module werden sofort gemeldet.</small><small class="feldfehler" id="ben-melden_nach_laeufen-fehler"></small></div>
             <div class="feld"><label for="ben-erinnerung_stunden">Erinnerung alle … Stunden</label><input id="ben-erinnerung_stunden" type="number" min="0" max="168" step="any"><small class="leise">0 = keine Erinnerung.</small><small class="feldfehler" id="ben-erinnerung_stunden-fehler"></small></div>
             <div class="feld"><label for="ben-link">Adresse der Oberfläche (für den Link in der Mail)</label><input id="ben-link" autocomplete="off" placeholder="http://10.0.0.5:8080/"><small class="feldfehler" id="ben-link-fehler"></small></div>
+            <div class="feld"><label for="ben-erlaubte_domains">Erlaubte Domänen für Benutzer-Adressen</label><input id="ben-erlaubte_domains" autocomplete="off" placeholder="konsum-weimar.de"><small class="leise">Unter „Meine Benachrichtigungen“ können Benutzer nur Adressen dieser Domänen eintragen (genau diese, ohne Subdomänen). Leer = niemand. Wird eine Domäne gestrichen, ruhen die Abos mit solchen Adressen.</small><small class="feldfehler" id="ben-erlaubte_domains-fehler"></small></div>
           </div>
           <h3>Statusbericht</h3>
           <p class="leise">Regelmäßige Mail an die allgemeinen Empfänger mit dem Zustand von Basis und Modulen – auch wenn alles in Ordnung ist. Bleibt sie aus, läuft die Basis nicht. War die Basis zur Berichtszeit aus, kommt der Bericht nach dem Start nach (bis 12 Stunden später).</p>
@@ -196,7 +198,7 @@
         <p id="bv-meldung" class="upd-meldung" role="status"></p>
         <div class="liste-rahmen">
           <table class="liste-tabelle bv-tabelle">
-            <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th>Benachrichtigungen</th><th></th></tr></thead>
             <tbody id="bv-liste"></tbody>
           </table>
         </div>
@@ -322,6 +324,50 @@
     <div class="feld"><label for="pw-neu2">Neues Passwort wiederholen</label><input id="pw-neu2" type="password" autocomplete="new-password"></div>
     <p id="pw-meldung" class="upd-meldung" role="status"></p>
     <div class="aktionen"><button type="submit" id="pw-speichern">Passwort ändern</button></div>
+  </form>
+</dialog>
+<dialog id="meine" class="breit">
+  <div class="dialog-kopf">
+    <h2>Meine Benachrichtigungen</h2>
+    <button type="button" id="meine-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
+  </div>
+  <p id="meine-aus" class="hinweis-kasten" hidden>Die Mail-Benachrichtigung ist noch nicht eingerichtet oder ausgeschaltet. Bitte einen Admin fragen.</p>
+  <p class="leise">Hier legst du fest, welche Meldungen du selbst per Mail bekommst. Die Mails kommen in Blindkopie (Bcc), andere Empfänger sehen deine Adresse nicht. Sicherheitsmeldungen und „Freigabe nötig“ gehen nur an die allgemeinen Empfänger.</p>
+  <h3>Mail-Adresse</h3>
+  <p id="meine-adresse-text"></p>
+  <form id="meine-adresse-formular" class="felder" novalidate>
+    <div class="feld"><label for="meine-adresse">Neue Adresse</label><input id="meine-adresse" type="email" autocomplete="email" maxlength="254"><small class="leise" id="meine-domaenen"></small></div>
+    <div class="aktionen"><button type="submit" id="meine-code-senden">Code senden</button></div>
+  </form>
+  <form id="meine-code-formular" class="felder" novalidate hidden>
+    <div class="feld"><label for="meine-code">Bestätigungscode</label><input id="meine-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7"><small class="leise" id="meine-code-hinweis"></small></div>
+    <div class="aktionen"><button type="submit" id="meine-bestaetigen">Bestätigen</button></div>
+  </form>
+  <form id="meine-formular" novalidate>
+    <h3>Module</h3>
+    <p id="meine-module-leer" class="leise" hidden>Keine Module eingerichtet.</p>
+    <div class="liste-rahmen">
+      <table class="liste-tabelle meine-tabelle">
+        <thead><tr><th>Modul</th><th>Mail bei</th></tr></thead>
+        <tbody id="meine-module"></tbody>
+      </table>
+    </div>
+    <div class="felder">
+      <div class="feld schalter"><input type="checkbox" id="meine-entwarnung"><label for="meine-entwarnung">Entwarnung, wenn ein gemeldetes Problem behoben ist („Wieder OK“)</label></div>
+    </div>
+    <p class="leise">„Nur Fehler“ umfasst auch „Keine Meldung“ und „Dienst gestoppt“. Solange ein Problem besteht, kommt eine Erinnerung im Abstand, den der Admin eingestellt hat.</p>
+    <h3>Eigener Statusbericht</h3>
+    <div class="felder">
+      <div class="feld"><label for="meine-bericht">Statusbericht</label><select id="meine-bericht"><option value="aus">aus</option><option value="taeglich">täglich</option><option value="werktags">werktags (Montag bis Freitag)</option><option value="woechentlich">wöchentlich</option></select><small class="feldfehler" id="meine-bericht-fehler"></small></div>
+      <div class="feld" id="meine-bericht-tag"><label for="meine-bericht_wochentag">Wochentag</label><select id="meine-bericht_wochentag"><option value="1">Montag</option><option value="2">Dienstag</option><option value="3">Mittwoch</option><option value="4">Donnerstag</option><option value="5">Freitag</option><option value="6">Samstag</option><option value="7">Sonntag</option></select><small class="feldfehler" id="meine-bericht_wochentag-fehler"></small></div>
+      <div class="feld" id="meine-bericht-zeit"><label for="meine-bericht_uhrzeit">Uhrzeit</label><input id="meine-bericht_uhrzeit" type="time" step="60"><small class="leise" id="meine-bericht-naechster"></small><small class="feldfehler" id="meine-bericht_uhrzeit-fehler"></small></div>
+    </div>
+    <p id="meine-meldung" class="upd-meldung" role="status"></p>
+    <div class="aktionen">
+      <button type="submit" id="meine-speichern">Speichern</button>
+      <button type="button" id="meine-bericht-senden" class="zweitrangig">Bericht jetzt an mich senden</button>
+      <button type="button" id="meine-loeschen" class="zweitrangig gefahr">Alle abbestellen</button>
+    </div>
   </form>
 </dialog>
 <template id="kachel-vorlage">

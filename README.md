@@ -156,6 +156,11 @@ Gut zu wissen:
 - Die verschlüsselten Geheimnisse bleiben lesbar (an den Rechner und
   `data\geheimnis.schluessel` gebunden, nicht an das Konto).
 - Module, die Netzwerkfreigaben lesen, brauchen dort Rechte für das Konto.
+- Eigenständige Module mit eigenem Windows-Dienst laufen unter dem Konto ihres
+  Dienstes, nicht unter dem der Basis. Das FTP-Modul stellt man mit
+  `FTPModul.exe --installieren --konto` (als Administrator im Modulordner) auf
+  dasselbe Konto um. Die Anzeige „Basis laeuft unter“ des Skripts zählt nur
+  die Basis selbst (`start.js`, `basis\main.js`).
 - Notfallbefehle (z. B. `--benutzer-anlegen`) laufen aus `versionen\`, das
   das Konto ändern darf. Auf einem Worker, dem man misstraut, sie deshalb
   nicht als Administrator ausführen, sondern erst prüfen.
@@ -791,6 +796,50 @@ regelmäßige Mail einschalten, die auch kommt, wenn alles in Ordnung ist:
 - **„Statusbericht jetzt senden“** verschickt sofort einen Bericht, zum
   Ausprobieren auch bei ausgeschalteter Benachrichtigung.
 - Bleibt der Bericht aus, läuft die Basis (oder der Worker) nicht.
+- Jeder Benutzer kann sich zusätzlich einen **eigenen Statusbericht** mit
+  eigenem Rhythmus einstellen (siehe nächster Abschnitt).
+
+### Meine Benachrichtigungen (für alle Benutzer)
+
+Jeder angemeldete Benutzer – auch ohne Admin-Recht und auch von außen – kann
+über den Knopf **„Meine Benachrichtigungen“** oben rechts selbst festlegen,
+welche Mails er bekommt. Voraussetzung: Ein Admin hat die Benachrichtigung
+eingerichtet und eingeschaltet.
+
+1. **Adresse bestätigen:** Adresse eintragen, „Code senden“, den 6-stelligen
+   Code aus der Mail eingeben. Der Code gilt 15 Minuten, höchstens 5
+   Fehlversuche; ein neuer Code frühestens nach 1 Minute, höchstens 5 je
+   Stunde. Erst nach der Bestätigung kommen Mails. Bei einem Wechsel bleibt
+   die alte Adresse aktiv, bis die neue bestätigt ist.
+   Erlaubt sind nur Adressen der Domänen, die ein Admin unter **Einstellungen →
+   Benachrichtigung → Erlaubte Domänen für Benutzer-Adressen** einträgt
+   (Standard `konsum-weimar.de`, genau diese Domäne, keine Subdomänen). Streicht
+   der Admin eine Domäne, ruhen die Abos mit solchen Adressen.
+2. **Je Modul:** *nichts*, *nur Fehler* (Fehler, Modul fehlerhaft, Keine
+   Meldung, Dienst gestoppt) oder *Fehler und Warnungen*. Erinnerungen kommen im
+   Abstand der allgemeinen Einstellung.
+3. **Entwarnung** („Wieder OK“), falls angehakt – nur, wenn der Benutzer das
+   Problem vorher auch gemeldet bekommen hat.
+4. **Eigener Statusbericht:** aus, täglich, werktags oder wöchentlich zu einer
+   Uhrzeit; Inhalt wie beim allgemeinen Bericht, als eigene Mail nur an den
+   Benutzer. Nachholen wie oben (einmal, bis 12 Stunden). „Bericht jetzt an
+   mich senden“ zum Ausprobieren.
+5. **„Alle abbestellen“** löscht Abos und Adresse.
+
+- Abonnenten stehen in **Bcc** derselben Mail; die allgemeinen und die
+  Modul-Empfänger stehen wie bisher in „An“. Doppelte Adressen gehen nur einmal
+  raus. Die Mail nennt am Ende, dass einige Empfänger das Modul selbst
+  abonniert haben.
+- **Nur an die allgemeinen Empfänger:** Sicherheitsmeldungen, „Freigabe nötig“
+  und „Basis beendet“.
+- **Admins** sehen unter **Einstellungen → Benutzer** je Benutzer Adresse, Zahl
+  der Modul-Abos und Bericht und können die Benachrichtigungen eines Benutzers
+  löschen. Wird ein Benutzer gelöscht, sind seine Abos weg (auch bei Löschung
+  per Kommandozeile – beim nächsten Start). Jede Änderung steht im Protokoll.
+- Heute sieht jeder Benutzer alle Module und kann deshalb alle abonnieren.
+- Gespeichert in `data/benachrichtigung-abos.json`; Codes nur als Hash im
+  Speicher (nach einem Neustart einfach einen neuen anfordern). Kein Neustart
+  nötig.
 
 ### Einrichten
 
@@ -818,8 +867,8 @@ regelmäßige Mail einschalten, die auch kommt, wenn alles in Ordnung ist:
    Änderungen brauchen bis zu 2 Stunden, bis sie greifen.
 4. **In der Basis eintragen:** Als Admin **Einstellungen → Benachrichtigung**:
    Mandanten-ID, Anwendungs-ID, Schlüssel, Absenderpostfach, Empfänger, ggf.
-   Adresse der Oberfläche (für den Link in der Mail), „aktiv“ anhaken,
-   speichern und **„Testmail senden“**.
+   Adresse der Oberfläche (für den Link in der Mail), erlaubte Domänen für
+   Benutzer-Adressen, „aktiv“ anhaken, speichern und **„Testmail senden“**.
 
 Die Einstellungen liegen in `data/benachrichtigung.json`. Der Schlüssel wird in
 der Oberfläche nie angezeigt, aus Protokollen gefiltert und in der Datei

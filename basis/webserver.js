@@ -288,12 +288,40 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
         catch (fehler) { if (fehler instanceof Benutzerfehler) return json(res, 400, { fehler: fehler.message }); throw fehler; }
         return json(res, 200, { geaendert: true });
       }
-      // Benutzerverwaltung (nur Admins): Liste und Sitzungen, anlegen, Passwort setzen, Admin-Recht, löschen.
-      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen|zweifaktor-zuruecksetzen))?$/.exec(weg);
+      // Meine Benachrichtigungen (jeder angemeldete Benutzer, nur die eigenen Abos).
+      const meine = /^\/api\/meine-benachrichtigungen(?:\/(code|bestaetigen|bericht|loeschen))?$/.exec(weg);
+      if (meine) {
+        if (!benachrichtigung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        const name = sitzung.benutzer;
+        if (!meine[1] && req.method === 'GET') return json(res, 200, benachrichtigung.meineAnsicht(name));
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        let r;
+        if (!meine[1]) {
+          r = await benachrichtigung.meineSpeichern(name, eingabe, module.ansichten().map((m) => m.id));
+          if (r.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: r.feldfehler });
+          return json(res, 200, r.ansicht);
+        }
+        if (meine[1] === 'loeschen') { await benachrichtigung.aboLoeschen(name, name); return json(res, 200, benachrichtigung.meineAnsicht(name)); }
+        if (meine[1] === 'code') r = await benachrichtigung.codeAnfordern(name, eingabe?.adresse);
+        else if (meine[1] === 'bestaetigen') r = await benachrichtigung.codeBestaetigen(name, eingabe?.code);
+        else r = await benachrichtigung.meinBerichtSenden(name, module.ansichten());
+        if (r.fehler) {
+          if (r.wartenS) res.setHeader('retry-after', String(r.wartenS));
+          return json(res, r.status ?? 400, { fehler: r.fehler, ...benachrichtigung.meineAnsicht(name) });
+        }
+        return json(res, 200, benachrichtigung.meineAnsicht(name));
+      }
+      // Benutzerverwaltung (nur Admins): Liste und Sitzungen, anlegen, Passwort setzen, Admin-Recht, löschen,
+      // Benachrichtigungen eines Benutzers löschen.
+      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen|zweifaktor-zuruecksetzen|benachrichtigung-loeschen))?$/.exec(weg);
       if (ben) {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!benutzerverwaltung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
-        if (!ben[1] && req.method === 'GET') return json(res, 200, benutzerverwaltung.ansicht(token));
+        const benAnsicht = () => ({ ...benutzerverwaltung.ansicht(token), abos: benachrichtigung?.aboUebersicht() ?? {} });
+        if (!ben[1] && req.method === 'GET') return json(res, 200, benAnsicht());
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         let eingabe;
@@ -304,12 +332,16 @@ export function erstelleAnwendung({ module, modulupdates = null, benachrichtigun
           else if (ben[2] === 'passwort') await benutzerverwaltung.passwortSetzen(name, eingabe?.passwort, sitzung.benutzer, token);
           else if (ben[2] === 'admin') await benutzerverwaltung.adminSetzen(name, eingabe?.admin, sitzung.benutzer);
           else if (ben[2] === 'zweifaktor-zuruecksetzen') await benutzerverwaltung.zweiFaktorZuruecksetzen(name, sitzung.benutzer);
-          else await benutzerverwaltung.loeschen(name, sitzung.benutzer);
+          else if (ben[2] === 'benachrichtigung-loeschen') await benachrichtigung?.aboLoeschen(name, sitzung.benutzer);
+          else {
+            await benutzerverwaltung.loeschen(name, sitzung.benutzer);
+            await benachrichtigung?.aboLoeschen(name, sitzung.benutzer);
+          }
         } catch (fehler) {
-          if (fehler instanceof Benutzerfehler) return json(res, fehler instanceof BenutzerUnbekannt ? 404 : 400, { fehler: fehler.message, ...benutzerverwaltung.ansicht(token) });
+          if (fehler instanceof Benutzerfehler) return json(res, fehler instanceof BenutzerUnbekannt ? 404 : 400, { fehler: fehler.message, ...benAnsicht() });
           throw fehler;
         }
-        return json(res, 200, benutzerverwaltung.ansicht(token));
+        return json(res, 200, benAnsicht());
       }
       // HTTPS & Domain (nur Admins aus dem Firmennetz/VPN).
       const tlsWeg = /^\/api\/tls(?:\/(einstellungen|pruefen|anfragen|umschalten|http))?$/.exec(weg);

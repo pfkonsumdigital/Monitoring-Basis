@@ -146,6 +146,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
     codeVerbraucht: (name, hash) => benutzerverwaltung.codeVerbrauchen(name, hash),
   });
   const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, tresor, log });
+  await benachrichtigung.abosBereinigen(Object.keys(anmeldung.benutzer));
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
   let server;

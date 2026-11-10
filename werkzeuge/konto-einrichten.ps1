@@ -196,7 +196,11 @@ function Basis-Pruefen([string]$root, [int]$port, [string]$erwartet) {
     try { if ($client.ConnectAsync('127.0.0.1', $port).Wait(1000) -and $client.Connected) { break } } catch { } finally { $client.Dispose() }
     Start-Sleep -Seconds 2
   }
-  $prozesse = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -like "*start.js*" -or $_.CommandLine -like "*$root*" })
+  # Nur die Basis selbst (start.js und basis\main.js), nicht die Prozesse von Modulen im Installationsordner.
+  $prozesse = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+    $c = [string]$_.CommandLine
+    ($c -match '(?i)(^|[\\/"\s])start\.js("|\s|$)' -or ($c -like "*$root*" -and $c -match '(?i)[\\/]basis[\\/]main\.js')) -and $c -notmatch '(?i)[\\/]modules[\\/]'
+  })
   $konten = @($prozesse | ForEach-Object { $o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner; "$($o.Domain)\$($o.User)" } | Sort-Object -Unique)
   if (-not $prozesse) { Warnung "Die Basis laeuft nach $WartenSekunden s nicht. Bitte logs\fehler.log und logs\starter-ausgabe.log pruefen." ; return }
   Hinweis "Basis laeuft unter: $($konten -join ', ')"
