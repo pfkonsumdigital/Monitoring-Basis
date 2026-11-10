@@ -25,14 +25,23 @@
     <h2>Die Monitoring-Basis ist beendet</h2>
     <p id="beendet-text"></p>
     <p>Bis zum nächsten Start werden keine Module überwacht und keine Benachrichtigungen verschickt.</p>
-    <p>Neu starten auf dem Worker: <strong>Start.exe</strong> doppelklicken oder im Aufgabenplaner die Aufgabe <strong>„Monitoring-Basis“</strong> starten (läuft dann wieder unter SYSTEM). Ein Neustart des Rechners startet sie per Autostart ebenfalls.</p>
+    <p>Neu starten auf dem Worker: <strong>Start.exe</strong> doppelklicken oder im Aufgabenplaner die Aufgabe <strong>„Monitoring-Basis“</strong> starten (läuft dann wieder unter dem dort eingetragenen Konto, z. B. dem Dienstkonto). Ein Neustart des Rechners startet sie per Autostart ebenfalls.</p>
   </section>
-  <section class="uebersicht" aria-label="Zusammenfassung">
-    <div class="zaehler" data-status="ok"><span id="anzahl-ok">–</span>OK</div>
-    <div class="zaehler" data-status="warnung"><span id="anzahl-warnung">–</span>Warnung</div>
-    <div class="zaehler" data-status="fehler"><span id="anzahl-fehler">–</span>Fehler</div>
-    <div class="zaehler" data-status="keine-meldung"><span id="anzahl-keine-meldung">–</span>Keine Meldung</div>
-    <p id="stand" class="leise"></p>
+  <section class="uebersicht" aria-labelledby="uebersicht-titel">
+    <div class="uebersicht-kopf">
+      <div>
+        <h2 id="uebersicht-titel">Status der Module <span id="uebersicht-anzahl" class="leise"></span></h2>
+        <p class="leise">Zeigt, wie viele deiner Module beim letzten Lauf OK waren, eine Warnung oder einen Fehler gemeldet haben oder sich nicht gemeldet haben.</p>
+      </div>
+      <p id="stand" class="leise"></p>
+    </div>
+    <div class="zaehler-reihe">
+      <div class="zaehler" data-status="ok" title="OK: Die letzte Prüfung hat nichts gefunden."><span class="zahl" id="anzahl-ok">–</span><span class="zaehler-text"><strong>OK</strong><small>Prüfung ohne Befund</small></span></div>
+      <div class="zaehler" data-status="warnung" title="Warnung: Etwas ist auffällig, aber noch kein Ausfall. Zählt auch Module, die eine Freigabe brauchen."><span class="zahl" id="anzahl-warnung">–</span><span class="zaehler-text"><strong>Warnung</strong><small>Auffällig, noch kein Ausfall</small></span></div>
+      <div class="zaehler" data-status="fehler" title="Fehler: Die Prüfung ist fehlgeschlagen, das Modul ist defekt oder sein Dienst ist gestoppt."><span class="zahl" id="anzahl-fehler">–</span><span class="zaehler-text"><strong>Fehler</strong><small>Prüfung fehlgeschlagen oder Modul defekt</small></span></div>
+      <div class="zaehler" data-status="keine-meldung" title="Keine Meldung: Das Modul hat sich nicht in der erwarteten Zeit gemeldet."><span class="zahl" id="anzahl-keine-meldung">–</span><span class="zaehler-text"><strong>Keine Meldung</strong><small>Hat sich nicht rechtzeitig gemeldet</small></span></div>
+    </div>
+    <p id="uebersicht-weitere" class="leise" hidden></p>
   </section>
   <p id="verbindung" class="meldung" role="alert" hidden></p>
   <section id="kacheln" class="kacheln" aria-live="polite"></section>

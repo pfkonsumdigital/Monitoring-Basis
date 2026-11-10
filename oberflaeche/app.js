@@ -76,8 +76,18 @@ function textZuModul(m) {
 }
 
 function leisteFuellen(container, verlauf) {
-  container.replaceChildren(...verlauf.map((v) => el('span', { title: `${zeit(v.zeit)} – ${STATUS_TEXT[v.status] ?? v.status}`, className: `segment ${v.status}` })));
+  const erklaerung = verlauf.length === 1 ? 'Leiste: letzter Lauf' : `Leiste: letzte ${verlauf.length} Läufe, ältester links`;
+  container.replaceChildren(...verlauf.map((v) => el('span', { title: `${zeit(v.zeit)} – ${STATUS_TEXT[v.status] ?? v.status}\n${erklaerung}`, className: `segment ${v.status}` })));
+  container.title = erklaerung;
   container.hidden = !verlauf.length;
+}
+
+// Module, die in den vier Zählern fehlen (pausiert, beendet, prüft gerade, noch ohne Ergebnis), z. B. „1 pausiert, 2 noch nicht geprüft“.
+const NICHT_GEZAEHLT = { inaktiv: 'pausiert', beendet: 'beendet', laeuft: 'prüft gerade', unbekannt: 'noch nicht geprüft' };
+function nichtGezaehlt(module) {
+  const anzahl = {};
+  for (const m of module) if (m.anzeige in NICHT_GEZAEHLT) anzahl[m.anzeige] = (anzahl[m.anzeige] ?? 0) + 1;
+  return Object.keys(NICHT_GEZAEHLT).filter((s) => anzahl[s]).map((s) => `${anzahl[s]} ${NICHT_GEZAEHLT[s]}`).join(', ');
 }
 
 function zeitenText(m) {
@@ -136,12 +146,19 @@ async function aktualisieren() {
       const s = ['modulfehler', 'dienst-gestoppt'].includes(m.anzeige) ? 'fehler' : m.anzeige === 'freigabe' ? 'warnung' : m.anzeige;
       if (s in zaehler) zaehler[s]++;
     }
-    for (const [s, n] of Object.entries(zaehler)) $(`anzahl-${s}`).textContent = n;
+    for (const [s, n] of Object.entries(zaehler)) {
+      $(`anzahl-${s}`).textContent = n;
+      $(`anzahl-${s}`).parentElement.toggleAttribute('data-leer', n === 0);
+    }
+    $('uebersicht-anzahl').textContent = `· ${daten.module.length} ${daten.module.length === 1 ? 'Modul' : 'Module'}`;
+    const weitere = nichtGezaehlt(daten.module);
+    $('uebersicht-weitere').textContent = weitere ? `Nicht gezählt: ${weitere}.` : '';
+    $('uebersicht-weitere').hidden = !weitere;
     $('kacheln').replaceChildren(...daten.module.map(kachelBauen));
     $('leer').hidden = daten.module.length > 0;
     $('leer-text').hidden = !daten.admin;
     $('leer-rechte').hidden = daten.admin;
-    $('stand').textContent = `${daten.module.length} ${daten.module.length === 1 ? 'Modul' : 'Module'} · Stand ${new Date().toLocaleTimeString('de-DE')}`;
+    $('stand').textContent = `Stand ${new Date().toLocaleTimeString('de-DE')}`;
     const probleme = zaehler.fehler + zaehler['keine-meldung'];
     document.title = probleme ? `(${probleme}) Monitoring` : 'Monitoring';
     if (offenesModul) {

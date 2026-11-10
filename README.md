@@ -10,7 +10,7 @@ Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
 5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor oder Microsoft) und Rechten je Modul anzeigen
 6. Bei Problemen per Mail benachrichtigen (Microsoft 365)
 
-Dieser Stand beschreibt **Version 0.19.0**. Was sich je Version geändert hat,
+Dieser Stand beschreibt **Version 0.19.1**. Was sich je Version geändert hat,
 steht in `CHANGELOG.md`.
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
@@ -727,9 +727,24 @@ von Texten (höchstens 100), `messwerte` enthält nur Zahlen (höchstens 50). Di
 je Modul die letzten `verlauf_anzahl` Läufe (Standard 1000), Details nur bei
 den neuesten 50.
 
-Die Übersicht zeigt je Modul den Status (OK, Warnung, Fehler, Keine Meldung,
+Oben steht **„Status der Module“**: vier Zähler, wie viele der eigenen
+(sichtbaren) Module beim letzten Lauf in welchem Zustand waren, jeweils mit
+kurzer Erklärung (auch als Tooltip):
+
+| Zähler | Bedeutung | zählt auch |
+|---|---|---|
+| OK | Prüfung ohne Befund | |
+| Warnung | auffällig, noch kein Ausfall | Freigabe nötig |
+| Fehler | Prüfung fehlgeschlagen | Modul fehlerhaft, Dienst gestoppt |
+| Keine Meldung | Modul hat sich nicht in der erwarteten Zeit gemeldet | |
+
+Zähler mit 0 sind blasser. Module, die in keinem Zähler stecken, nennt eine
+Zeile darunter, z. B. „Nicht gezählt: 1 pausiert, 2 noch nicht geprüft“
+(außerdem „beendet“ und „prüft gerade“).
+
+Darunter zeigt die Übersicht je Modul eine Kachel mit dem Status (OK, Warnung, Fehler, Keine Meldung,
 Pausiert, Modul fehlerhaft, Freigabe nötig), die letzte Meldung, den nächsten Lauf, seit wann
-ein Problem besteht, die letzten 30 Läufe als Farbleiste und in den Details
+ein Problem besteht, die letzten 30 Läufe als Farbleiste (ältester Lauf links) und in den Details
 Verfügbarkeit (24 h / 7 Tage), Kennzahlen, Details und Verlauf. Module mit
 Problemen stehen oben. Die Fehlerausgabe eines Moduls (stderr) sehen nur
 Admins – sie kann interne Pfade oder Server nennen.

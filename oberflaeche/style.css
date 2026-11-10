@@ -60,14 +60,31 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--akzent); ou
 .kopf-rechts { display: flex; align-items: center; gap: 12px; }
 .kopf form { margin: 0; }
 
-.uebersicht { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
-.zaehler { display: flex; align-items: baseline; gap: 6px; padding: 8px 14px; border-radius: 8px; background: var(--flaeche); border: 1px solid var(--rand); }
-.zaehler span { font-size: 1.4rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.zaehler[data-status="ok"] span { color: var(--ok); }
-.zaehler[data-status="warnung"] span { color: var(--warnung); }
-.zaehler[data-status="fehler"] span { color: var(--fehler); }
-.zaehler[data-status="keine-meldung"] span { color: var(--stumm); }
-#stand { margin: 0 0 0 auto; }
+/* Übersicht „Status der Module“: Überschrift, eine Zeile Erklärung, vier Zähler */
+.uebersicht { display: grid; gap: 10px; margin-bottom: 16px; }
+.uebersicht p { margin: 0; }
+.uebersicht-kopf { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 4px 16px; }
+.uebersicht-kopf h2 { font-size: 1.05rem; margin: 0 0 2px; }
+.uebersicht-kopf h2 .leise { font-weight: 400; }
+.zaehler-reihe { display: flex; flex-wrap: wrap; gap: 10px; }
+.zaehler { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 8px; background: var(--flaeche); border: 1px solid var(--rand); border-left: 5px solid var(--neutral); }
+.zaehler .zahl { font-size: 1.4rem; font-weight: 600; font-variant-numeric: tabular-nums; min-width: 1ch; }
+.zaehler-text { display: grid; line-height: 1.25; }
+.zaehler-text small { color: var(--leise); font-size: 0.8em; }
+.zaehler[data-status="ok"] { border-left-color: var(--ok); }
+.zaehler[data-status="warnung"] { border-left-color: var(--warnung); }
+.zaehler[data-status="fehler"] { border-left-color: var(--fehler); }
+.zaehler[data-status="keine-meldung"] { border-left-color: var(--stumm); }
+.zaehler[data-status="ok"] .zahl { color: var(--ok); }
+.zaehler[data-status="warnung"] .zahl { color: var(--warnung); }
+.zaehler[data-status="fehler"] .zahl { color: var(--fehler); }
+.zaehler[data-status="keine-meldung"] .zahl { color: var(--stumm); }
+.zaehler[data-leer] { opacity: 0.55; }
+.zaehler { flex: 1 1 200px; }
+@media (max-width: 600px) {
+  .zaehler { flex-basis: calc(50% - 5px); gap: 8px; padding: 6px 10px; }
+  .zaehler .zahl { font-size: 1.2rem; }
+}
 
 .kacheln { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .kachel { display: flex; flex-direction: column; gap: 8px; padding: 14px; background: var(--flaeche); border: 1px solid var(--rand); border-left: 5px solid var(--neutral); border-radius: 8px; }

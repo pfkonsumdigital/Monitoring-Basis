@@ -1,5 +1,26 @@
 # Änderungen
 
+## 0.19.1
+
+Übersicht verständlicher: Die Zähler oben zeigen erkennbar den Status der Module.
+
+### Geändert
+
+- Die Zählerleiste oben heißt jetzt **„Status der Module“** (mit Anzahl der sichtbaren Module) und hat eine Zeile Erklärung.
+- Jeder Zähler (OK, Warnung, Fehler, Keine Meldung) hat eine kurze Beschreibung und einen Tooltip, was er zählt (z. B. Warnung inkl. „Freigabe nötig“, Fehler inkl. „Modul fehlerhaft“ und „Dienst gestoppt“). Zähler mit 0 sind blasser.
+- Neue Zeile „Nicht gezählt: …“, wenn Module pausiert, beendet, gerade in Prüfung oder noch nicht geprüft sind – die Summe der Zähler passt damit nachvollziehbar zur Zahl der Kacheln.
+- Farbleiste auf Kachel und in den Details: Tooltip nennt „Leiste: letzte N Läufe, ältester links“.
+- Handy: Zähler zwei nebeneinander.
+
+### Behoben
+
+- Seite „Die Monitoring-Basis ist beendet“: Hinweis „läuft dann wieder unter SYSTEM“ war seit dem Dienstkonto veraltet; jetzt „unter dem dort eingetragenen Konto, z. B. dem Dienstkonto“.
+
+### Prüfung
+
+- `npm test`: 192 Tests (davon 5 nur unter Windows), neu: Oberflächentests (Überschrift, Erklärung, Zähler mit Beschreibung und Tooltip, jeder Status gezählt oder als „nicht gezählt“ genannt).
+- Browsertest (PC und Handy, hell und dunkel): Überschrift und Anzahl, Zähler passend zu den Kacheln, blasse Nullen, „Nicht gezählt: 1 pausiert“ nach dem Pausieren, Tooltip der Farbleiste, Handy zwei Zähler je Zeile ohne Querscrollen, keine Skriptfehler; 19 von 19 Prüfpunkten OK.
+
 ## 0.19.0
 
 Anmeldung mit Microsoft (Entra ID) und Rechte je Modul.

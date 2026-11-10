@@ -34,3 +34,29 @@ test('Oberfläche: ein Knopf „Einstellungen“ statt sechs, Bereiche aufklappb
   // Moduleinstellungen sind kein eigener Dialog mehr.
   assert.ok(!/<dialog id="einstellungen" class="breit">\s*<div class="dialog-kopf">\s*<h2 id="einst-titel"/.test(html));
 });
+
+test('Oberfläche: Übersicht „Status der Module“ mit Erklärung je Zähler', () => {
+  const ue = /<section class="uebersicht" aria-labelledby="uebersicht-titel">([\s\S]*?)<\/section>/.exec(html)?.[1];
+  assert.ok(ue, 'Übersicht fehlt');
+  assert.match(ue, /<h2 id="uebersicht-titel">Status der Module <span id="uebersicht-anzahl"/);
+  assert.match(ue, /<p class="leise">Zeigt, wie viele deiner Module beim letzten Lauf OK waren/);
+  const zaehler = [...ue.matchAll(/<div class="zaehler" data-status="([a-z-]+)" title="([^"]+)"><span class="zahl" id="anzahl-([a-z-]+)">–<\/span><span class="zaehler-text"><strong>([^<]+)<\/strong><small>([^<]+)<\/small><\/span><\/div>/g)];
+  assert.deepEqual(zaehler.map((z) => z[1]), ['ok', 'warnung', 'fehler', 'keine-meldung']);
+  for (const z of zaehler) {
+    assert.equal(z[3], z[1]);
+    assert.ok(z[2].startsWith(`${z[4]}: `), z[2]);
+  }
+  assert.match(ue, /<p id="uebersicht-weitere" class="leise" hidden><\/p>/);
+  assert.ok(!html.includes('unter SYSTEM)'), 'veralteter Hinweis auf SYSTEM');
+});
+
+test('Oberfläche: jeder Status ist gezählt oder als „nicht gezählt“ genannt', () => {
+  const statusText = Function(`return ${/const STATUS_TEXT = (\{[^}]+\});/.exec(js)[1]}`)();
+  const quelle = /(const NICHT_GEZAEHLT = [\s\S]*?\nfunction nichtGezaehlt\(module\) \{[\s\S]*?\n\})/.exec(js)[1];
+  const { NICHT_GEZAEHLT, nichtGezaehlt } = Function(`${quelle}\nreturn { NICHT_GEZAEHLT, nichtGezaehlt };`)();
+  const gezaehlt = ['ok', 'warnung', 'fehler', 'keine-meldung', 'modulfehler', 'dienst-gestoppt', 'freigabe'];
+  assert.deepEqual(Object.keys(statusText).filter((s) => !gezaehlt.includes(s)).sort(), Object.keys(NICHT_GEZAEHLT).sort());
+  const m = (...a) => a.map((anzeige) => ({ anzeige }));
+  assert.equal(nichtGezaehlt(m('ok', 'fehler', 'freigabe')), '');
+  assert.equal(nichtGezaehlt(m('unbekannt', 'inaktiv', 'ok', 'unbekannt', 'laeuft', 'beendet')), '1 pausiert, 1 beendet, 1 prüft gerade, 2 noch nicht geprüft');
+});
