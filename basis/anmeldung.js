@@ -112,7 +112,8 @@ export class Anmeldung {
   async pruefen(name, passwort, adresse) {
     if (this.gesperrt(adresse) || this.benutzerGesperrt(name)) return 'gesperrt';
     const eintrag = Object.hasOwn(this.benutzer, name) ? this.benutzer[name] : null;
-    const r = await this.begrenzer.mit(async () => await passwortStimmt(passwort, eintrag ? eintrag.hash : await this.platzhalter) && Boolean(eintrag));
+    // Microsoft-Benutzer haben nur einen zufälligen Platzhalter-Hash und melden sich nie mit Passwort an.
+    const r = await this.begrenzer.mit(async () => await passwortStimmt(passwort, eintrag ? eintrag.hash : await this.platzhalter) && Boolean(eintrag) && !eintrag.microsoft);
     if (r.ueberlastet) return 'ueberlastet';
     if (!r.wert) {
       if (this.#zaehlen(this.fehlversuche, adresse, this.maxFehlversuche)) this.melden({ art: 'gesperrt-adresse', adresse, benutzer: name });
@@ -150,6 +151,14 @@ export class Anmeldung {
     const token = randomBytes(32).toString('base64url');
     this.schritte.set(token, { benutzer: name, adresse: String(adresse ?? ''), bis: jetzt + (einrichten ? this.einrichtenMs : this.schrittMs), geheimnis: einrichten ? neuesGeheimnis() : null });
     return { zweiterSchritt: token, art: einrichten ? 'einrichten' : 'code' };
+  }
+
+  // Anmeldung mit Microsoft (Entra ID): Die Identität hat microsoft.js geprüft, die Zwei-Faktor-Anmeldung macht Microsoft.
+  // Nur für Benutzer mit „microsoft“-Eintrag. Liefert das Sitzungstoken oder null.
+  microsoftSitzung(name, adresse) {
+    if (!Object.hasOwn(this.benutzer, name) || !this.benutzer[name].microsoft) return null;
+    this.fehlversuche.delete(adresse);
+    return this.#sitzungAnlegen(name, adresse, { microsoft: true });
   }
 
   // Vorläufiger Schritt zum Token (für die Anzeige beim Einrichten), oder null.

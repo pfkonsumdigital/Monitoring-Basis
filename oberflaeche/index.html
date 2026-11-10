@@ -36,7 +36,7 @@
   </section>
   <p id="verbindung" class="meldung" role="alert" hidden></p>
   <section id="kacheln" class="kacheln" aria-live="polite"></section>
-  <p id="leer" class="leer" hidden>Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an – das Modul erscheint nach spätestens einer Minute, ohne Neustart.</p>
+  <p id="leer" class="leer" hidden><span id="leer-text">Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an – das Modul erscheint nach spätestens einer Minute, ohne Neustart.</span><span id="leer-rechte" hidden>Dir sind noch keine Module freigegeben. Bitte einen Admin fragen.</span></p>
 </main>
 <dialog id="details" class="breit">
   <div class="dialog-kopf">
@@ -198,15 +198,39 @@
         <p id="bv-meldung" class="upd-meldung" role="status"></p>
         <div class="liste-rahmen">
           <table class="liste-tabelle bv-tabelle">
-            <thead><tr><th>Name</th><th>Rolle</th><th>Zwei-Faktor</th><th>Angemeldet</th><th>Benachrichtigungen</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Rolle</th><th>Anmeldung</th><th>Rechte</th><th>Angemeldet</th><th>Benachrichtigungen</th><th></th></tr></thead>
             <tbody id="bv-liste"></tbody>
           </table>
         </div>
+        <section id="bv-rechte" class="bv-rechte" hidden>
+          <h3 id="bv-rechte-titel">Rechte</h3>
+          <p class="leise">Grundrecht gilt für alle Module, auch für künftige. Je Modul lässt es sich abweichend setzen. <strong>sehen</strong>: Kachel, Details, Verlauf, eigene Benachrichtigungen · <strong>bedienen</strong>: zusätzlich „Jetzt prüfen“ und Pausieren. Admins sehen und bedienen immer alles.</p>
+          <div class="felder">
+            <div class="feld"><label for="bv-rechte-grund">Grundrecht</label><select id="bv-rechte-grund"><option value="kein">kein Zugriff</option><option value="sehen">sehen</option><option value="bedienen">bedienen</option></select></div>
+          </div>
+          <div class="liste-rahmen">
+            <table class="liste-tabelle meine-tabelle">
+              <thead><tr><th>Modul</th><th>Recht</th></tr></thead>
+              <tbody id="bv-rechte-module"></tbody>
+            </table>
+          </div>
+          <div id="bv-ms-rahmen" class="felder" hidden>
+            <div class="feld"><label for="bv-ms-adresse">Microsoft-Adresse</label><input id="bv-ms-adresse" type="email" autocomplete="off" maxlength="254"><small class="leise" id="bv-ms-status"></small></div>
+          </div>
+          <div class="aktionen">
+            <button type="button" id="bv-rechte-speichern">Rechte speichern</button>
+            <button type="button" id="bv-ms-speichern" class="zweitrangig" hidden>Adresse neu setzen</button>
+            <button type="button" id="bv-rechte-schliessen" class="zweitrangig">Schließen</button>
+          </div>
+        </section>
         <h3>Neuen Benutzer anlegen</h3>
         <form id="bv-anlegen" class="felder" novalidate>
+          <div class="feld"><label for="bv-art">Anmeldung</label><select id="bv-art"><option value="lokal">Lokal (Passwort und Authenticator-App der Basis)</option><option value="microsoft">Mit Microsoft (Entra ID)</option></select><small class="leise" id="bv-art-hinweis"></small></div>
           <div class="feld"><label for="bv-name">Benutzername</label><input id="bv-name" autocomplete="off" maxlength="64"><small class="leise">Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich.</small></div>
-          <div class="feld"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter.</small></div>
-          <div class="feld"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
+          <div class="feld" id="bv-adresse-rahmen" hidden><label for="bv-adresse">Microsoft-Adresse</label><input id="bv-adresse" type="email" autocomplete="off" maxlength="254" placeholder="vorname.nachname@konsum-weimar.de"><small class="leise">Die Adresse, mit der sich die Person bei Microsoft anmeldet. Beim ersten Anmelden merkt sich die Basis das Microsoft-Konto fest.</small></div>
+          <div class="feld" id="bv-passwort-rahmen"><label for="bv-passwort">Passwort</label><input id="bv-passwort" type="password" autocomplete="new-password"><small class="leise">Mindestens 12 Zeichen, keine Allerweltswörter wie „Passwort“ oder „Sommer2026“ – am besten ein Satz oder mehrere zufällige Wörter.</small></div>
+          <div class="feld" id="bv-passwort2-rahmen"><label for="bv-passwort2">Passwort wiederholen</label><input id="bv-passwort2" type="password" autocomplete="new-password"></div>
+          <div class="feld"><label for="bv-grund">Grundrecht für alle Module</label><select id="bv-grund"><option value="kein">kein Zugriff (Rechte danach je Modul vergeben)</option><option value="sehen">sehen</option><option value="bedienen">bedienen</option></select></div>
           <div class="feld schalter"><input type="checkbox" id="bv-admin"><label for="bv-admin">Admin (darf Einstellungen, Updates, Benutzer usw. ändern)</label></div>
           <div class="aktionen"><button type="submit" id="bv-anlegen-knopf">Benutzer anlegen</button></div>
         </form>
@@ -226,6 +250,24 @@
           </table>
         </div>
         <p class="leise">„Zuletzt aktiv“ ist die letzte Aktion (Klick, Speichern …); das automatische Nachladen zählt nicht. Ohne Aktion endet eine Sitzung nach der Leerlaufzeit (Standard 30 Minuten), spätestens nach der Höchstdauer (Standard 8 Stunden). Nach einem Neustart der Basis müssen sich alle neu anmelden.</p>
+      </div>
+    </details>
+    <details id="ber-ms" class="bereich" name="einst">
+      <summary><span class="bereich-titel">Microsoft-Anmeldung</span><span id="ber-ms-status" class="bereich-status"></span></summary>
+      <div class="bereich-inhalt">
+        <p class="leise">Anmeldung mit Microsoft (Entra ID) für Benutzer, die unter „Benutzer“ als Microsoft-Benutzer angelegt sind. Die Zwei-Faktor-Anmeldung übernimmt Microsoft. Eigene App-Registrierung in Entra nötig – Schritte siehe README, Abschnitt „Anmeldung mit Microsoft“.</p>
+        <p id="ms-ohne-https" class="hinweis-kasten" hidden>Die Anmeldung mit Microsoft braucht HTTPS unter dem eingerichteten Namen (Bereich „HTTPS &amp; Domain“).</p>
+        <form id="ms-formular" novalidate>
+          <div class="felder">
+            <div class="feld schalter"><input type="checkbox" id="ms-aktiv"><label for="ms-aktiv">Anmeldung mit Microsoft aktiv</label></div>
+            <div class="feld"><label for="ms-tenant_id">Mandanten-ID (Verzeichnis-ID)</label><input id="ms-tenant_id" autocomplete="off" placeholder="11111111-2222-3333-4444-555555555555"><small class="feldfehler" id="ms-tenant_id-fehler"></small></div>
+            <div class="feld"><label for="ms-client_id">Anwendungs-ID (Client)</label><input id="ms-client_id" autocomplete="off"><small class="feldfehler" id="ms-client_id-fehler"></small></div>
+            <div class="feld"><label for="ms-client_secret">Geheimer Clientschlüssel</label><input id="ms-client_secret" type="password" autocomplete="new-password"><small class="leise">Wird nie angezeigt. Leer lassen, um den gespeicherten zu behalten.</small><small class="feldfehler" id="ms-client_secret-fehler"></small></div>
+            <div class="feld"><label for="ms-rueck">Umleitungs-URI für Entra (Plattform „Web“)</label><input id="ms-rueck" readonly><small class="leise">Genau so in der App-Registrierung unter „Authentifizierung“ eintragen.</small></div>
+          </div>
+          <p id="ms-meldung" class="upd-meldung" role="status"></p>
+          <div class="aktionen"><button type="submit" id="ms-speichern">Speichern</button></div>
+        </form>
       </div>
     </details>
     <details id="ber-upd" class="bereich" name="einst">

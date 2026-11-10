@@ -1,5 +1,34 @@
 # Änderungen
 
+## 0.19.0
+
+Anmeldung mit Microsoft (Entra ID) und Rechte je Modul.
+
+### Neu
+
+- **Anmeldung mit Microsoft** (Knopf auf der Anmeldeseite, nur mit HTTPS und wenn eingerichtet):
+  - Nur für Benutzer, die ein Admin als **Microsoft-Benutzer** angelegt hat (Microsoft-Adresse). Andere bekommen keinen Zugang (Protokoll).
+  - Beim ersten Anmelden merkt sich die Basis die feste Microsoft-Konto-ID; danach zählt nur sie (Adressänderung in Entra unschädlich, fremdes Konto mit gleicher Adresse abgewiesen). Admin kann die Adresse neu setzen (löst die Verknüpfung, beendet Sitzungen).
+  - Zwei-Faktor übernimmt Microsoft; lokale Konten behalten die Authenticator-App der Basis.
+  - OpenID Connect mit Autorisierungscode und PKCE; ID-Token vollständig geprüft (Signatur mit den Mandanten-Schlüsseln, Aussteller, Empfänger-App, Mandant, Gültigkeit, Einmalwert); Vorgang einmalig und höchstens 10 Minuten (eigenes Cookie mit SameSite=Lax).
+  - **Einstellungen → Microsoft-Anmeldung**: Mandanten-ID, Anwendungs-ID, geheimer Schlüssel (unter Windows verschlüsselt in `data/microsoft.json`), Umleitungs-URI zum Eintragen in Entra. Ohne Neustart.
+- **Rechte je Modul**: Grundrecht je Benutzer (kein Zugriff / sehen / bedienen) plus Abweichungen je Modul. Gefiltert werden Übersicht, Details, Verlauf, „Jetzt prüfen“, Pausieren, „Meine Benachrichtigungen“, Benutzer-Mails und der eigene Statusbericht. Admins sehen und bedienen alles.
+- **Einstellungen → Benutzer**: Anmeldeart beim Anlegen (Lokal / Mit Microsoft), Grundrecht beim Anlegen, Knopf „Rechte“ mit Editor je Modul, Spalten „Anmeldung“ und „Rechte“.
+- API: `/login/microsoft`, `/login/microsoft/rueckruf`, `/api/microsoft`, `/api/benutzer/<Name>/rechte`, `/api/benutzer/<Name>/microsoft`; `/api/status` mit `recht` je Modul und `anmeldeart`.
+
+### Geändert
+
+- **Pausieren/Fortsetzen** dürfen jetzt auch Benutzer mit Recht „bedienen“ (bisher nur Admins). Beenden und Dienst starten bleiben Admin-Funktionen.
+- Benutzer ohne gespeicherte Rechte (angelegt vor 0.19.0) behalten, was sie bisher konnten: alles sehen und bedienen. Neue Benutzer starten mit dem gewählten Grundrecht (Standard: kein Zugriff).
+- Microsoft-Benutzer haben einen zufälligen Platzhalter-Hash in `config.json` (ältere Versionen lesen die Datei weiter); Passwort-Anmeldung, Passwort setzen und „Passwort ändern“ sind für sie gesperrt.
+- Module ohne Leserecht antworten wie unbekannte Module (404).
+
+### Prüfung
+
+- `npm test`: 190 Tests (davon 5 nur unter Windows), neu u. a. simuliertes Entra mit eigenen Schlüsseln: erfolgreicher Ablauf mit PKCE, falsche Signatur/Aussteller/App/Mandant, abgelaufen, noch nicht gültig, falscher Einmalwert, alg „none“, fehlende Konto-ID, Code-Einlösung fehlgeschlagen, Schlüsselwechsel, Vorgang einmalig/abgelaufen/falscher state; Webserver: nur angelegte Benutzer, Verknüpfung über Konto-ID, fremdes Konto, Adresse neu setzen, kein Passwort-Login, Umleitung auf den eingerichteten Namen; Rechte in Übersicht, Details, Verlauf, Prüfen, Pause, Abos, Mails und Bericht; Benutzer vor 0.19.0; Admin von außen.
+- Gegenproben (Mutationen): 35 von 35 erkannt (nach Ergänzung eines Tests).
+- Browsertest (hell, dunkel, Handy) mit simulierter Microsoft-Anmeldung: Einrichtung, Benutzer anlegen, Anmeldung, ohne Rechte, Rechte vergeben (sofort wirksam), „Jetzt prüfen“ und Pause je Recht, Abos nur sichtbarer Module, fremdes Konto; 31 von 31 Prüfpunkten OK.
+
 ## 0.18.0
 
 Speicherbelegung mit Aufräumen und Zeitraum-Filter im Fehlerprotokoll.

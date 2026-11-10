@@ -417,7 +417,8 @@ test('Webserver: Moduleinstellungen und Pause nur für Admins, Passwörter verbo
   const module = new Modulverwaltung({ moduleOrdner: path.join(wurzel, 'modules'), datenOrdner: path.join(wurzel, 'data'), speicher, planer, uebernehmen: (id, e) => speicher.hinzufuegen(id, e) });
   await module.start();
   module.stop();
-  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim') } }, sitzungMs: 60_000 });
+  // gast darf das Modul nur sehen (Rechte seit 0.19.0); Pause und „Jetzt prüfen“ brauchen „bedienen“.
+  const anmeldung = new Anmeldung({ benutzer: { chef: { hash: await hashPasswort('geheim-geheim'), admin: true }, gast: { hash: await hashPasswort('geheim-geheim'), rechte: { grund: 'sehen', module: {} } } }, sitzungMs: 60_000 });
   const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false }), tls: null, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const hole = (methode, weg, kopf = {}, koerper) => new Promise((resolve, reject) => {
@@ -442,7 +443,8 @@ test('Webserver: Moduleinstellungen und Pause nur für Admins, Passwörter verbo
     assert.equal((await hole('GET', '/api/module/ftp/einstellungen', gast)).status, 403);
     assert.equal((await hole('POST', '/api/module/ftp/aktiv', { ...gast, ...schutz }, '{"aktiv":false}')).status, 403);
     assert.equal((await hole('POST', '/api/module/ftp/einstellungen', chef, '{"werte":{}}')).status, 403, 'ohne Schutzkopf');
-    assert.equal((await hole('POST', '/api/module/ftp/pruefen', { ...gast, ...schutz })).status, 409, 'eigenständig');
+    assert.equal((await hole('POST', '/api/module/ftp/pruefen', { ...gast, ...schutz })).status, 403, 'nur sehen');
+    assert.equal((await hole('POST', '/api/module/ftp/pruefen', { ...chef, ...schutz })).status, 409, 'eigenständig');
 
     const fehlt = await hole('POST', '/api/module/ftp/einstellungen', { ...chef, ...schutz }, '{"werte":{"passwort":"Ganz-Geheim-9"}}');
     assert.equal(fehlt.status, 400);
@@ -653,8 +655,8 @@ test('Webserver: Modul-Updates nur für Admins mit Schutzkopf', async () => {
     const chef = await anmelden('chef');
     const gast = await anmelden('gast');
     const schutz = { 'x-monitor-anfrage': '1', 'content-type': 'application/json' };
-    assert.deepEqual((await hole('GET', '/api/status', chef)).json().module, [{ id: 'ftp', repo: 'a/b', updateVerfuegbar: true }, { id: 'ohne', repo: null }]);
-    assert.deepEqual((await hole('GET', '/api/status', gast)).json().module, [{ id: 'ftp', repo: 'a/b' }, { id: 'ohne', repo: null }], 'Nicht-Admins sehen keinen Update-Hinweis');
+    assert.deepEqual((await hole('GET', '/api/status', chef)).json().module, [{ id: 'ftp', repo: 'a/b', recht: 'bedienen', updateVerfuegbar: true }, { id: 'ohne', repo: null, recht: 'bedienen' }]);
+    assert.deepEqual((await hole('GET', '/api/status', gast)).json().module, [{ id: 'ftp', repo: 'a/b', recht: 'bedienen' }, { id: 'ohne', repo: null, recht: 'bedienen' }], 'Nicht-Admins sehen keinen Update-Hinweis');
     assert.equal((await hole('GET', '/api/module/ftp/update', gast)).status, 403);
     assert.equal((await hole('POST', '/api/module/ftp/update/suchen', { ...gast, ...schutz })).status, 403);
     assert.equal((await hole('POST', '/api/module/ftp/update/suchen', chef)).status, 403, 'ohne Schutzkopf');

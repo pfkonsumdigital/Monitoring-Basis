@@ -259,3 +259,8 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
   .sp-tabelle td.zahl::before { content: attr(data-label); color: var(--leise); }
   .sp-tabelle td.aktionen-zelle:empty { display: none; }
 }
+/* Anmeldung mit Microsoft */
+.login-oder { text-align: center; color: var(--leise); font-size: 0.85em; margin: 14px 0 8px; }
+.login-microsoft { display: block; text-align: center; padding: 9px; }
+.bv-rechte { border: 1px solid var(--rand); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.bv-rechte h3 { margin-top: 4px; }

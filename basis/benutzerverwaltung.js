@@ -1,7 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { copyFile, readFile, rename, writeFile } from 'node:fs/promises';
 import { hashPasswort } from './anmeldung.js';
 import { konfigSchuetzen } from './geheimnis.js';
+import { pruefeRechte, rechteText, STUFEN } from './rechte.js';
 
 // Benutzer in der Oberfläche verwalten: anlegen, Passwort setzen, Admin-Recht ändern, löschen, eigenes Passwort ändern.
 // Gespeichert wird wie bei „--benutzer-anlegen“ in config.json (nur scrypt-Hashes), vorher eine Sicherungskopie
@@ -11,6 +12,8 @@ export class Benutzerfehler extends Error {}
 export class BenutzerUnbekannt extends Benutzerfehler {}
 
 const NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const MAIL = /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/;
+const gleicheAdresse = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 const MIN_PASSWORT = 12;
 const MAX_PASSWORT = 200;
 // Häufige Passwörter und Bestandteile, die Angreifer zuerst probieren (Auszug; reicht gegen das grobe Raten).
@@ -59,10 +62,13 @@ export class Benutzerverwaltung {
   }
 
   // Für die Oberfläche: Benutzer (ohne Hashes) mit Anzahl Sitzungen und alle angemeldeten Sitzungen.
-  ansicht(eigenesToken = null) {
+  // modulNamen: { id: Name } für den Rechte-Text.
+  ansicht(eigenesToken = null, modulNamen = {}) {
     const sitzungen = this.anmeldung.liste(eigenesToken);
     const benutzer = Object.entries(this.anmeldung.benutzer).sort(([a], [b]) => a.localeCompare(b, 'de'))
-      .map(([name, e]) => ({ name, admin: e.admin === true, zweiFaktor: Boolean(e.zwei_faktor), sitzungen: sitzungen.filter((s) => s.benutzer === name).length }));
+      .map(([name, e]) => ({ name, admin: e.admin === true, zweiFaktor: Boolean(e.zwei_faktor), sitzungen: sitzungen.filter((s) => s.benutzer === name).length,
+        art: e.microsoft ? 'microsoft' : 'lokal', ...(e.microsoft ? { microsoft: { adresse: e.microsoft.adresse, verknuepft: Boolean(e.microsoft.oid) } } : {}),
+        rechte: e.rechte ? { grund: e.rechte.grund, module: { ...(e.rechte.module ?? {}) } } : null, rechteText: rechteText(e, modulNamen) }));
     return { benutzer, sitzungen };
   }
 
@@ -118,18 +124,68 @@ export class Benutzerverwaltung {
     return lauf;
   }
 
-  async anlegen({ name, passwort, admin }, durch) {
+  // art 'lokal' (Passwort) oder 'microsoft' (Anmeldung mit Microsoft, adresse = Microsoft-Adresse). Neue Benutzer
+  // bekommen das Grundrecht „grund“ (Standard: kein Zugriff), Admins sehen ohnehin alles.
+  // Microsoft-Benutzer erhalten einen zufälligen Platzhalter-Hash: Ältere Versionen der Basis lesen config.json dann
+  // weiter, und eine Anmeldung mit Passwort ist nicht möglich (das Passwort kennt niemand).
+  async anlegen({ name, passwort, admin, art = 'lokal', adresse, grund = 'kein' }, durch) {
     if (typeof name !== 'string' || !NAME.test(name) || name === '__proto__') throw new Benutzerfehler('Benutzername: nur Buchstaben, Ziffern, Punkt, Bindestrich, Unterstrich (1 bis 64 Zeichen).');
-    const hash = await hashFuer(name, passwort);
+    if (!['lokal', 'microsoft'].includes(art)) throw new Benutzerfehler('Anmeldeart muss „lokal“ oder „microsoft“ sein.');
+    if (!STUFEN.includes(grund)) throw new Benutzerfehler('Grundrecht muss „kein“, „sehen“ oder „bedienen“ sein.');
+    const ms = art === 'microsoft';
+    const mail = ms && typeof adresse === 'string' ? adresse.trim() : '';
+    if (ms && (!MAIL.test(mail) || mail.length > 254)) throw new Benutzerfehler('Bitte die Microsoft-Adresse angeben, z. B. anna.schmidt@konsum-weimar.de.');
+    const hash = ms ? await hashPasswort(randomBytes(32).toString('base64')) : await hashFuer(name, passwort);
     await this.aendern((benutzer) => {
       if (Object.hasOwn(benutzer, name)) throw new Benutzerfehler(`Den Benutzer „${name}“ gibt es schon.`);
-      benutzer[name] = { hash, ...(admin === true ? { admin: true } : {}) };
+      if (ms) {
+        const doppelt = Object.keys(benutzer).find((n) => gleicheAdresse(benutzer[n].microsoft?.adresse, mail));
+        if (doppelt) throw new Benutzerfehler(`Die Microsoft-Adresse ist schon dem Benutzer „${doppelt}“ zugeordnet.`);
+      }
+      benutzer[name] = { hash, ...(admin === true ? { admin: true } : {}), ...(ms ? { microsoft: { adresse: mail } } : {}), rechte: { grund, module: {} } };
     });
-    this.log(`Benutzer ${name}${admin === true ? ' (Admin)' : ''} angelegt durch ${durch}.`);
+    this.log(`Benutzer ${name}${ms ? ` (Microsoft: ${mail})` : ''}${admin === true ? ' (Admin)' : ''} angelegt durch ${durch}, Grundrecht ${grund}.`);
+  }
+
+  // Rechte je Modul setzen (Admin). Gilt sofort, auch in laufenden Sitzungen.
+  async rechteSetzen(name, eingabe, durch) {
+    const { werte, fehler } = pruefeRechte(eingabe);
+    if (fehler) throw new Benutzerfehler(fehler);
+    await this.aendern((benutzer) => {
+      if (!Object.hasOwn(benutzer, name)) throw new BenutzerUnbekannt(`Den Benutzer „${name}“ gibt es nicht.`);
+      benutzer[name] = { ...benutzer[name], rechte: werte };
+    });
+    const abw = Object.entries(werte.module).map(([id, s]) => `${id}: ${s}`);
+    this.log(`Rechte von ${name} geändert durch ${durch}: Grundrecht ${werte.grund}${abw.length ? `; ${abw.join(', ')}` : ''}.`);
+  }
+
+  // Nach der ersten Anmeldung mit Microsoft: die feste Konto-ID merken. Danach zählt nur noch sie.
+  async microsoftVerknuepfen(name, oid, tid) {
+    await this.aendern((benutzer) => {
+      if (!benutzer[name]?.microsoft || benutzer[name].microsoft.oid) return;
+      benutzer[name] = { ...benutzer[name], microsoft: { ...benutzer[name].microsoft, oid, tid } };
+    });
+    this.log(`Microsoft-Konto von ${name} verknüpft (Konto-ID ${oid}).`);
+  }
+
+  // Admin ändert die Microsoft-Adresse; die Verknüpfung wird gelöst (beim nächsten Anmelden neu über die Adresse).
+  async microsoftAdresseSetzen(name, adresse, durch) {
+    const mail = typeof adresse === 'string' ? adresse.trim() : '';
+    if (!MAIL.test(mail) || mail.length > 254) throw new Benutzerfehler('Bitte eine gültige Microsoft-Adresse angeben.');
+    await this.aendern((benutzer) => {
+      if (!Object.hasOwn(benutzer, name)) throw new BenutzerUnbekannt(`Den Benutzer „${name}“ gibt es nicht.`);
+      if (!benutzer[name].microsoft) throw new Benutzerfehler(`„${name}“ ist kein Microsoft-Benutzer.`);
+      const doppelt = Object.keys(benutzer).find((n) => n !== name && gleicheAdresse(benutzer[n].microsoft?.adresse, mail));
+      if (doppelt) throw new Benutzerfehler(`Die Microsoft-Adresse ist schon dem Benutzer „${doppelt}“ zugeordnet.`);
+      benutzer[name] = { ...benutzer[name], microsoft: { adresse: mail } };
+    });
+    const beendet = this.anmeldung.sitzungenBeenden(name);
+    this.log(`Microsoft-Adresse von ${name} auf ${mail} gesetzt durch ${durch}, Verknüpfung gelöst${beendet ? ` (${beendet} Sitzung(en) beendet)` : ''}.`);
   }
 
   // Passwort neu setzen (Admin). Alle Sitzungen dieses Benutzers enden – außer der eigenen, wenn es das eigene Konto ist.
   async passwortSetzen(name, passwort, durch, eigenesToken = null) {
+    if (this.anmeldung.benutzer[name]?.microsoft) throw new Benutzerfehler(`„${name}“ meldet sich mit Microsoft an und hat kein Passwort der Basis.`);
     const hash = await hashFuer(name, passwort);
     await this.aendern((benutzer) => {
       if (!Object.hasOwn(benutzer, name)) throw new BenutzerUnbekannt(`Den Benutzer „${name}“ gibt es nicht.`);
@@ -141,6 +197,7 @@ export class Benutzerverwaltung {
 
   // Eigenes Passwort ändern: bisheriges Passwort nötig (mit Sperre nach Fehlversuchen wie bei der Anmeldung).
   async eigenesPasswort(name, alt, neu, eigenesToken, adresse) {
+    if (this.anmeldung.benutzer[name]?.microsoft) throw new Benutzerfehler('Du meldest dich mit Microsoft an – das Passwort änderst du bei Microsoft.');
     const ok = await this.anmeldung.pruefen(name, typeof alt === 'string' ? alt : '', adresse);
     if (ok === 'gesperrt') throw new Benutzerfehler('Zu viele Fehlversuche. Bitte 15 Minuten warten.');
     if (ok === 'ueberlastet') throw new Benutzerfehler('Gerade laufen zu viele Anmeldeversuche. Bitte gleich noch einmal versuchen.');

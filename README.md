@@ -7,10 +7,10 @@ Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
 2. Meldungen eigenständiger Module einsammeln oder einfache Module selbst nach Zeitplan starten
 3. Ergebnisse speichern und auswerten (Status, „keine Meldung“, Fehler seit, Verfügbarkeit)
 4. Module über ein Formular einstellen, pausieren, beenden und aktualisieren
-5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor) anzeigen
+5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor oder Microsoft) und Rechten je Modul anzeigen
 6. Bei Problemen per Mail benachrichtigen (Microsoft 365)
 
-Dieser Stand beschreibt **Version 0.14.0**. Was sich je Version geändert hat,
+Dieser Stand beschreibt **Version 0.19.0**. Was sich je Version geändert hat,
 steht in `CHANGELOG.md`.
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
@@ -751,7 +751,7 @@ nur Admins.
 
 Alle Einstellungen der Basis liegen für Admins hinter dem Knopf
 **„Einstellungen“** oben rechts: HTTPS & Domain, Benachrichtigung, Benutzer,
-Updates, Fehlerprotokoll, Speicher und System (Neu starten, Beenden). Jeder Bereich zeigt
+Microsoft-Anmeldung, Updates, Fehlerprotokoll, Speicher und System (Neu starten, Beenden). Jeder Bereich zeigt
 zugeklappt eine Statuszeile (z. B. „Aktiv · 2 Empfänger“ oder „Update auf v…
 verfügbar“); es ist immer nur ein Bereich aufgeklappt.
 
@@ -1061,7 +1061,11 @@ Den ersten Admin legt `--benutzer-anlegen <Name> --admin` an (siehe „Einrichte
 unter Windows“). Danach geht alles in der Oberfläche:
 
 - **Einstellungen → Benutzer** (nur Admins):
-  - Benutzer mit Passwort anlegen, optional als Admin.
+  - Benutzer anlegen: **Lokal** (Passwort und Authenticator-App der Basis) oder
+    **Mit Microsoft** (Microsoft-Adresse, siehe „Anmeldung mit Microsoft“), mit
+    Grundrecht für alle Module, optional als Admin.
+  - **Rechte** je Benutzer und Modul (siehe „Rechte je Modul“), bei
+    Microsoft-Benutzern auch die Microsoft-Adresse.
   - Passwort eines Benutzers neu setzen. Alle Sitzungen dieses Benutzers enden
     dabei sofort; beim eigenen Konto bleibt die aktuelle Sitzung bestehen.
   - Admin-Recht vergeben oder entziehen.
@@ -1081,7 +1085,84 @@ Zeichen, ohne den Benutzernamen und nicht überwiegend aus Allerweltswörtern
 mehrere zufällige Wörter. Bestehende Passwörter gelten weiter. Gespeichert wird in
 `config.json` (nur scrypt-Hashes), ohne Neustart. Vorher legt die Basis eine
 Sicherung `config.json.vor-benutzeraenderung.json` an. Jede Änderung steht im
-Protokoll („Benutzer bob angelegt durch anna.“), Passwörter nie.
+Protokoll („Benutzer bob angelegt durch anna, Grundrecht kein.“), Passwörter nie.
+
+### Rechte je Modul
+
+Jeder Benutzer hat ein **Grundrecht** für alle Module (auch künftige) und
+darf je Modul abweichen:
+
+| Stufe | Darf |
+| --- | --- |
+| kein Zugriff | Modul ist unsichtbar (Übersicht, Details, Verlauf, Benachrichtigungen) |
+| sehen | Kachel, Details, Verlauf, eigene Benachrichtigungen und Statusbericht |
+| bedienen | zusätzlich „Jetzt prüfen“ und Pausieren/Fortsetzen |
+
+- **Admins** sehen und bedienen immer alles. Einstellungen, Updates, Freigaben,
+  Empfänger und Dienste beenden/starten bleiben Admin-Funktionen (nur aus dem
+  Firmennetz oder über VPN).
+- **Neue Benutzer** haben das Grundrecht, das beim Anlegen gewählt wurde
+  (Standard: kein Zugriff). Sie sehen dann „Dir sind noch keine Module
+  freigegeben“.
+- **Benutzer aus der Zeit vor 0.19.0** (ohne gespeicherte Rechte) behalten,
+  was sie bisher konnten: alles sehen und bedienen. Sobald ein Admin ihre
+  Rechte speichert, gelten diese.
+- Änderungen gelten sofort, auch in laufenden Sitzungen. Wird ein Recht
+  entzogen, kommen für dieses Modul auch keine selbst abonnierten Mails mehr.
+- Gespeichert in `config.json` unter `benutzer.<Name>.rechte`
+  (`{ "grund": "sehen", "module": { "ftp-dateialter": "bedienen" } }`).
+
+### Anmeldung mit Microsoft
+
+Benutzer, die ein Admin als **Microsoft-Benutzer** angelegt hat, melden sich
+auf der Anmeldeseite mit **„Mit Microsoft anmelden“** an. Wer nicht angelegt
+ist, bekommt keinen Zugang („bitte einen Admin fragen“, steht im Protokoll).
+
+- **Zwei-Faktor:** übernimmt Microsoft. Damit das sicher ist, in Entra für diese
+  App eine Mehrstufige Authentifizierung verlangen (Bedingter Zugriff bzw.
+  Sicherheitsstandards). Lokale Konten behalten die Authenticator-App der Basis.
+- **Zuordnung:** Beim ersten Anmelden vergleicht die Basis die Microsoft-Adresse
+  (ohne Groß-/Kleinschreibung) und merkt sich dann die **feste Konto-ID** von
+  Microsoft. Danach zählt nur noch diese: Ändert sich die Adresse in Entra, geht
+  es weiter; ein anderes Konto mit derselben Adresse kommt nicht hinein. Soll
+  ein anderes Konto zugeordnet werden, unter „Benutzer → Rechte“ die Adresse
+  neu setzen (löst die Verknüpfung, beendet die Sitzungen).
+- Microsoft-Benutzer haben kein Passwort der Basis („Passwort ändern“ fehlt für
+  sie). In `config.json` steht für sie ein zufälliger Platzhalter-Hash, damit
+  ältere Versionen der Basis die Datei weiter lesen.
+- Sitzungsdauer, „Admin nur aus dem Firmennetz/VPN“ und die
+  Sicherheitsmails gelten wie bei lokalen Konten.
+- **Voraussetzung:** HTTPS unter dem eingerichteten Namen (Bereich „HTTPS &
+  Domain“). Wird die Oberfläche über einen anderen Namen aufgerufen, leitet
+  „Mit Microsoft anmelden“ zuerst auf den eingerichteten Namen um.
+
+**Einrichten in Entra** (einmalig, eigene App – nicht die App für den
+Mailversand):
+
+1. Entra Admin Center → *App-Registrierungen* → *Neue Registrierung*, z. B.
+   „Monitoring-Basis Anmeldung“, nur Konten dieses Verzeichnisses.
+   **Umleitungs-URI**: Plattform *Web*, die Adresse aus **Einstellungen →
+   Microsoft-Anmeldung** (z. B.
+   `https://monitoring.konsum-weimar.de:8443/login/microsoft/rueckruf`).
+2. Mandanten-ID (Verzeichnis-ID) und Anwendungs-ID notieren.
+3. *Zertifikate & Geheimnisse* → *Neuer geheimer Clientschlüssel*, den
+   **Wert** sofort kopieren; Ablaufdatum notieren und rechtzeitig erneuern.
+4. *API-Berechtigungen*: delegiert `openid`, `profile`, `email` (meist schon
+   vorhanden über `User.Read`); ggf. Administratorzustimmung erteilen.
+5. Optional: unter *Unternehmensanwendungen* → App → *Eigenschaften*
+   „Zuweisung erforderlich“ = Ja und nur die gewünschten Personen/Gruppen
+   zuweisen – dann lässt Microsoft niemand anderen überhaupt bis zur Basis.
+6. In der Basis **Einstellungen → Microsoft-Anmeldung**: Mandanten-ID,
+   Anwendungs-ID, geheimen Schlüssel eintragen, „aktiv“ anhaken, speichern.
+   Gilt sofort, ohne Neustart. Der Schlüssel liegt verschlüsselt in
+   `data/microsoft.json` und wird nie angezeigt.
+7. Unter **Einstellungen → Benutzer** die Personen als „Mit Microsoft“ anlegen
+   und ihnen Rechte geben.
+
+Die Basis prüft das Anmeldetoken von Microsoft vollständig (Signatur mit den
+Schlüsseln des Mandanten, Aussteller, Empfänger-App, Mandant, Gültigkeit,
+Einmalwert); jeder Anmeldevorgang gilt nur einmal und höchstens 10 Minuten
+(Verfahren: Autorisierungscode mit PKCE).
 
 ### Zwei-Faktor-Anmeldung (Pflicht für alle)
 

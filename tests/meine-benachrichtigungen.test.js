@@ -289,3 +289,31 @@ test('Ohne eingerichtete Benachrichtigung: kein Code, Hinweis in der Ansicht', a
     assert.match(r.fehler, /Admin fragen/);
   } finally { await u.aufraeumen(); }
 });
+
+test('Rechte: ohne Leserecht keine Mails und kein Eintrag im eigenen Bericht', async () => {
+  const u = await aufbau();
+  try {
+    await u.bestaetigen(u.b, 'anna', 'anna@konsum-weimar.de');
+    await u.b.meineSpeichern('anna', { module: { ftp: 'alle', speicher: 'alle' }, entwarnung: true, bericht: 'taeglich', bericht_uhrzeit: '11:00' }, ['ftp', 'speicher']);
+    let erlaubt = new Set(['ftp', 'speicher']);
+    u.b.darfSehen = (name, id) => name === 'anna' && erlaubt.has(id);
+    await u.b.pruefen([modul('fehler'), modul('fehler', 'speicher')]);
+    const start = u.ms.mails().length;
+    erlaubt = new Set(['ftp']); // Recht für „speicher“ entzogen
+    u.vor(4 * 60);
+    await u.b.pruefen([modul('fehler'), modul('fehler', 'speicher')]);
+    const neu = u.ms.mails().slice(start);
+    const bcc = (betreff) => neu.find((m) => m.betreff.includes(betreff))?.bcc;
+    assert.deepEqual(bcc('FTP-Dateialter'), ['anna@konsum-weimar.de']);
+    assert.deepEqual(bcc('Speicher'), [], 'Erinnerung ohne Recht nicht an anna');
+    await u.b.pruefen([modul('ok'), modul('ok', 'speicher')]);
+    assert.deepEqual(u.ms.mails().find((m) => /WIEDER OK: Speicher/.test(m.betreff)).bcc, [], 'keine Entwarnung ohne Recht');
+    // Eigener Bericht nur mit sichtbaren Modulen.
+    u.vor(24 * 60);
+    await u.b.pruefen([modul('ok'), modul('fehler', 'speicher')]);
+    const bericht = u.ms.mails().filter((m) => /Statusbericht/.test(m.betreff)).at(-1);
+    assert.match(bericht.text, /- FTP-Dateialter: OK/);
+    assert.doesNotMatch(bericht.text, /Speicher/);
+    assert.match(bericht.betreff, /alles OK/);
+  } finally { await u.aufraeumen(); }
+});

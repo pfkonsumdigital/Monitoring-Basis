@@ -16,6 +16,8 @@ import { Modulverwaltung } from './modulverwaltung.js';
 import { Freigaben } from './freigabe.js';
 import { Benachrichtigung } from './benachrichtigung.js';
 import { Speicherbelegung } from './speicherbelegung.js';
+import { MicrosoftAnmeldung } from './microsoft.js';
+import { darf } from './rechte.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
 import { Benutzerverwaltung, passwortRegelFehler } from './benutzerverwaltung.js';
@@ -148,6 +150,9 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   });
   const benutzerverwaltung = new Benutzerverwaltung({ configDatei, anmeldung, tresor, log });
   await benachrichtigung.abosBereinigen(Object.keys(anmeldung.benutzer));
+  benachrichtigung.darfSehen = (name, modulId) => darf(anmeldung.benutzer[name], modulId, 'sehen');
+  const microsoft = new MicrosoftAnmeldung({ datenOrdner: konfig.datenOrdner, tresor, geheimnisse: protokoll.geheimnisse, log });
+  await microsoft.laden();
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
   let server;
@@ -178,7 +183,9 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const speicherbelegung = new Speicherbelegung({ installOrdner, datenOrdner: konfig.datenOrdner, moduleOrdner: konfig.moduleOrdner,
     logOrdner: path.join(path.dirname(configDatei), 'logs'), module: () => module.module.map((m) => ({ id: m.id, name: m.name })), log });
   const intern = konfig.tls.modus === 'aus';
-  const anwendung = erstelleAnwendung({ module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
+  // Anmeldung mit Microsoft braucht HTTPS unter dem eingerichteten Namen (Rückkehr-Adresse in Entra).
+  const microsoftAdresse = !intern && konfig.hostname ? `https://${konfig.hostname}${konfig.port === 443 ? '' : `:${konfig.port}`}` : null;
+  const anwendung = erstelleAnwendung({ microsoft, microsoftAdresse, module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

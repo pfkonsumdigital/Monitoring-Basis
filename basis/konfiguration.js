@@ -2,6 +2,9 @@ import { readFile } from 'node:fs/promises';
 import { BlockList, isIP } from 'node:net';
 import path from 'node:path';
 import { BasisFehler } from './fehler.js';
+import { rechteFehler } from './rechte.js';
+
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const istText = (wert) => typeof wert === 'string' && wert.trim() !== '' && !/[\r\n\0]/.test(wert);
 
@@ -81,6 +84,13 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   for (const [name, eintrag] of Object.entries(benutzer)) {
     if (!/^[A-Za-z0-9._-]{1,64}$/.test(name) || !istText(eintrag?.hash)) throw new BasisFehler(`Ungültiger Benutzereintrag: ${name}.`);
     if (eintrag.admin !== undefined && typeof eintrag.admin !== 'boolean') throw new BasisFehler(`benutzer.${name}.admin muss true oder false sein.`);
+    const rf = rechteFehler(eintrag.rechte);
+    if (rf) throw new BasisFehler(`benutzer.${name}.rechte: ${rf}.`);
+    const ms = eintrag.microsoft;
+    if (ms !== undefined && (!ms || typeof ms !== 'object' || !/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/.test(ms.adresse ?? '')
+      || (ms.oid !== undefined && !GUID.test(ms.oid)) || (ms.tid !== undefined && !GUID.test(ms.tid)))) {
+      throw new BasisFehler(`benutzer.${name}.microsoft ist ungültig (adresse, oid, tid).`);
+    }
     const zf = eintrag.zwei_faktor;
     if (zf !== undefined && (!zf || typeof zf !== 'object' || !/^(?:[A-Z2-7]{16,128}|dpapi:v1:[A-Za-z0-9+/]+={0,2})$/.test(zf.geheimnis ?? '') || !Array.isArray(zf.codes) || zf.codes.some((c) => !/^[0-9a-f]{64}$/.test(c)))) {
       throw new BasisFehler(`benutzer.${name}.zwei_faktor ist beschädigt. Zurücksetzen mit: node basis/main.js --zwei-faktor-zuruecksetzen ${name}`);

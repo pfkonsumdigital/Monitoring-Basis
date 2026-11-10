@@ -102,7 +102,7 @@ function kachelBauen(m) {
   leisteFuellen(kachel.querySelector('.leiste'), m.verlaufKurz ?? []);
   kachel.querySelector('.zeiten').textContent = zeitenText(m);
   const knopf = kachel.querySelector('.pruefen');
-  knopf.hidden = !m.kannPruefen;
+  knopf.hidden = !m.kannPruefen || m.recht !== 'bedienen';
   knopf.disabled = m.laeuft;
   knopf.addEventListener('click', () => pruefen(m.id, knopf));
   kachel.querySelector('.mehr').addEventListener('click', () => detailsOeffnen(m.id));
@@ -117,6 +117,8 @@ async function aktualisieren() {
     $('benutzer').textContent = daten.benutzer;
     $('version').textContent = daten.version ? `v${daten.version}` : '';
     $('einstellungen-oeffnen').hidden = !daten.admin;
+    // Microsoft-Benutzer ändern ihr Passwort bei Microsoft.
+    $('passwort-oeffnen').hidden = daten.anmeldeart === 'microsoft';
     $('admin-hinweis').hidden = !daten.adminNurIntern;
     $('update-hinweis').hidden = !daten.updateVerfuegbar;
     $('sys-neustart').hidden = !daten.neustartMoeglich;
@@ -137,6 +139,8 @@ async function aktualisieren() {
     for (const [s, n] of Object.entries(zaehler)) $(`anzahl-${s}`).textContent = n;
     $('kacheln').replaceChildren(...daten.module.map(kachelBauen));
     $('leer').hidden = daten.module.length > 0;
+    $('leer-text').hidden = !daten.admin;
+    $('leer-rechte').hidden = daten.admin;
     $('stand').textContent = `${daten.module.length} ${daten.module.length === 1 ? 'Modul' : 'Module'} · Stand ${new Date().toLocaleTimeString('de-DE')}`;
     const probleme = zaehler.fehler + zaehler['keine-meldung'];
     document.title = probleme ? `(${probleme}) Monitoring` : 'Monitoring';
@@ -192,7 +196,8 @@ async function detailsFuellen(m, hintergrund = false) {
     ...fakt('Verfügbarkeit 7 Tage', m.fehler ? null : prozent(m.verfuegbarkeit?.d7)),
   );
   leisteFuellen($('details-leiste'), m.verlaufKurz ?? []);
-  $('details-admin').hidden = !istAdmin || Boolean(m.fehler);
+  // Pausieren/Fortsetzen mit Recht „bedienen“; Beenden und Dienst starten nur für Admins.
+  $('details-admin').hidden = (!istAdmin && m.recht !== 'bedienen') || Boolean(m.fehler);
   $('details-pause').textContent = m.aktiv ? 'Pausieren' : 'Fortsetzen';
   $('details-pause').onclick = () => gesperrt([$('details-pause')], aktionMeldung, async () => {
     await senden(`/api/module/${encodeURIComponent(m.id)}/aktiv`, { aktiv: !m.aktiv });
@@ -201,7 +206,7 @@ async function detailsFuellen(m, hintergrund = false) {
   // Beenden mit Rückfrage auf demselben Knopf (zweiter Klick innerhalb von 5 s).
   const beendenKnopf = $('details-beenden');
   if (beendenKnopf.dataset.modul !== m.id) { beendenKnopf.dataset.modul = m.id; beendenKnopf.dataset.bestaetigen = ''; }
-  beendenKnopf.hidden = !m.kannBeenden;
+  beendenKnopf.hidden = !istAdmin || !m.kannBeenden;
   beendenKnopf.title = m.betriebsart === 'eigenstaendig' ? (m.dienst ? `Stoppt den Windows-Dienst ${m.dienst.name}` : 'Bittet das Modul über befehl.json, sich zu beenden') : 'Bricht die laufende Prüfung ab und pausiert das Modul';
   if (!beendenKnopf.dataset.bestaetigen) beendenKnopf.textContent = m.betriebsart === 'eigenstaendig' ? 'Beenden' : 'Prüfung abbrechen';
   beendenKnopf.onclick = () => {
@@ -217,7 +222,7 @@ async function detailsFuellen(m, hintergrund = false) {
   freigabeFuellen(m);
   $('md-upd').hidden = !istAdmin || !m.repo || Boolean(m.fehler);
   if (!$('md-upd').hidden) modulUpdateLaden(m.id, false, hintergrund);
-  $('details-starten').hidden = !m.kannStarten;
+  $('details-starten').hidden = !istAdmin || !m.kannStarten;
   $('details-starten').onclick = () => modulAktion(m, 'starten', $('details-starten'));
   const messwerte = Object.entries(l?.messwerte ?? {});
   const hinweise = l?.details ?? [];
@@ -620,14 +625,67 @@ $('ben-test').addEventListener('click', async () => {
   benMeldung(daten.ok ? 'Testmail gesendet. Bitte Posteingang prüfen.' : `Nicht gesendet: ${daten.fehler ?? 'unbekannter Fehler'}`, daten.ok ? 'ok' : 'fehler');
 });
 
+// ---- Microsoft-Anmeldung (nur Admins) ----
+const MS_FELDER = ['tenant_id', 'client_id', 'client_secret'];
+const msMeldung = (text, art = '') => { $('ms-meldung').textContent = text; $('ms-meldung').dataset.art = art; };
+function msZeigen(d) {
+  $('ms-aktiv').checked = d.werte.aktiv;
+  for (const k of MS_FELDER) {
+    $(`ms-${k}-fehler`).textContent = '';
+    if (k === 'client_secret') { $('ms-client_secret').value = ''; $('ms-client_secret').placeholder = d.werte.client_secret.gesetzt ? 'gesetzt' : 'nicht gesetzt'; }
+    else $(`ms-${k}`).value = d.werte[k] ?? '';
+  }
+  $('ms-rueck').value = d.rueckAdresse ?? 'erst mit HTTPS verfügbar';
+  $('ms-ohne-https').hidden = d.https;
+  bereichStatus('ber-ms', !d.https ? 'Braucht HTTPS' : d.eingerichtet ? 'Aktiv' : d.werte.aktiv ? 'Unvollständig' : 'Aus', !d.https ? 'warnung' : d.eingerichtet ? '' : d.werte.aktiv ? 'warnung' : '');
+}
+async function msLaden() {
+  const antwort = await api('/api/microsoft');
+  if (!antwort.ok) { bereichStatus('ber-ms', 'Konnte nicht geladen werden', 'fehler'); return; }
+  msZeigen(await antwort.json());
+  msMeldung('');
+}
+$('ms-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const werte = { aktiv: $('ms-aktiv').checked };
+  for (const k of MS_FELDER) werte[k] = $(`ms-${k}`).value;
+  msMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt([$('ms-speichern')], msMeldung, async () => {
+    const antwort = await senden('/api/microsoft', { werte });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
+  if (!antwort.ok) {
+    for (const k of MS_FELDER) $(`ms-${k}-fehler`).textContent = daten.feldfehler?.[k] ?? '';
+    msMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler');
+    return;
+  }
+  msZeigen(daten);
+  msMeldung(daten.geaendert.length ? 'Gespeichert – gilt sofort.' : 'Keine Änderungen.', 'ok');
+});
+
 // ---- Benutzer (nur Admins) ----
 const bvMeldung = (text, art = '') => { $('bv-meldung').textContent = text; $('bv-meldung').dataset.art = art; };
 const uhrzeit = (iso) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
 
+let bvDaten = null;
+let bvRechteName = null;
 function bvZeigen(daten) {
+  bvDaten = daten;
   const ich = $('benutzer').textContent;
+  $('bv-art-hinweis').textContent = daten.microsoftAktiv ? '' : 'Die Microsoft-Anmeldung ist noch nicht eingerichtet (Bereich „Microsoft-Anmeldung“). Microsoft-Benutzer lassen sich trotzdem schon anlegen.';
   $('bv-liste').replaceChildren(...daten.benutzer.map((b) => {
     const zelle = el('td', { className: 'aktionen-zelle' });
+    if (!b.admin) {
+      const rechte = el('button', { type: 'button', className: 'zweitrangig', textContent: 'Rechte' });
+      rechte.addEventListener('click', () => bvRechteOeffnen(b.name));
+      zelle.append(rechte);
+    } else if (b.art === 'microsoft') {
+      const adr = el('button', { type: 'button', className: 'zweitrangig', textContent: 'Microsoft-Adresse' });
+      adr.addEventListener('click', () => bvRechteOeffnen(b.name));
+      zelle.append(adr);
+    }
     const abo = daten.abos?.[b.name];
     const aboText = !abo ? '–' : `${abo.adresse ?? 'keine Adresse'}${abo.ruht ? ' (ruht: Domäne nicht erlaubt)' : ''} · ${abo.module} ${abo.module === 1 ? 'Modul' : 'Module'}${abo.bericht ? ` · Bericht ${abo.bericht}` : ''}`;
     if (abo) {
@@ -650,7 +708,7 @@ function bvZeigen(daten) {
         bvAktion(`/api/benutzer/${b.name}/loeschen`, {}, [loeschen], `Benutzer ${b.name} gelöscht.`);
       });
       zelle.append(admin);
-      if (b.zweiFaktor) {
+      if (b.zweiFaktor && b.art !== 'microsoft') {
         // Zweimal klicken wie beim Löschen; der Benutzer richtet die App beim nächsten Anmelden neu ein.
         const zf = el('button', { type: 'button', className: 'zweitrangig', textContent: '2FA zurücksetzen' });
         zf.addEventListener('click', () => {
@@ -668,16 +726,19 @@ function bvZeigen(daten) {
     } else {
       zelle.append(el('span', { className: 'leise', textContent: 'eigenes Konto' }));
     }
+    const anmeldung = b.art === 'microsoft' ? `Microsoft: ${b.microsoft.adresse}${b.microsoft.verknuepft ? '' : ' (noch nie angemeldet)'}` : `Lokal · Zwei-Faktor ${b.zweiFaktor ? 'eingerichtet' : 'beim nächsten Anmelden'}`;
     return el('tr', {}, el('td', { textContent: b.name }), el('td', { textContent: b.admin ? 'Admin' : 'Benutzer' }),
-      el('td', { textContent: b.zweiFaktor ? 'eingerichtet' : 'beim nächsten Anmelden' }),
+      el('td', { textContent: anmeldung }), el('td', { textContent: b.rechteText }),
       el('td', { textContent: b.sitzungen ? `ja (${b.sitzungen} ${b.sitzungen === 1 ? 'Sitzung' : 'Sitzungen'})` : 'nein' }), el('td', { textContent: aboText }), zelle);
   }));
-  const ohne = daten.benutzer.filter((b) => !b.zweiFaktor).length;
+  const ohne = daten.benutzer.filter((b) => !b.zweiFaktor && b.art !== 'microsoft').length;
   bereichStatus('ber-bv', `${daten.benutzer.length} Benutzer · ${daten.sitzungen.length} ${daten.sitzungen.length === 1 ? 'Sitzung' : 'Sitzungen'}${ohne ? ` · ${ohne} ohne Zwei-Faktor` : ''}`, ohne ? 'warnung' : '');
   const auswahl = $('bv-setzen-name');
   const vorher = auswahl.value;
-  auswahl.replaceChildren(...daten.benutzer.map((b) => new Option(b.name, b.name)));
-  if (daten.benutzer.some((b) => b.name === vorher)) auswahl.value = vorher;
+  const lokale = daten.benutzer.filter((b) => b.art !== 'microsoft');
+  auswahl.replaceChildren(...lokale.map((b) => new Option(b.name, b.name)));
+  if (lokale.some((b) => b.name === vorher)) auswahl.value = vorher;
+  if (bvRechteName && !daten.benutzer.some((b) => b.name === bvRechteName)) $('bv-rechte').hidden = true;
   $('bv-sitzungen-leer').hidden = daten.sitzungen.length > 0;
   $('bv-sitzungen').replaceChildren(...daten.sitzungen.map((s) => el('tr', {},
     el('td', { textContent: `${s.benutzer}${s.admin ? ' (Admin)' : ''}${s.eigene ? ' – diese Sitzung' : ''}` }),
@@ -706,17 +767,68 @@ async function bvAktion(weg, koerper, knoepfe, erfolg) {
   return true;
 }
 
+// Rechte (und bei Microsoft-Benutzern die Adresse) eines Benutzers bearbeiten.
+const RECHT_TEXT = { kein: 'kein Zugriff', sehen: 'sehen', bedienen: 'bedienen' };
+function bvRechteOeffnen(name) {
+  const b = bvDaten.benutzer.find((x) => x.name === name);
+  if (!b) return;
+  bvRechteName = name;
+  $('bv-rechte-titel').textContent = b.admin ? `Microsoft-Adresse von ${name}` : `Rechte von ${name}`;
+  $('bv-rechte-grund').value = b.rechte?.grund ?? 'bedienen';
+  $('bv-rechte-grund').closest('.felder').hidden = b.admin;
+  $('bv-rechte-module').closest('.liste-rahmen').hidden = b.admin;
+  $('bv-rechte-speichern').hidden = b.admin;
+  $('bv-rechte-module').replaceChildren(...bvDaten.module.map((m) => {
+    const auswahl = el('select', { id: `bv-recht-${m.id}` }, new Option('wie Grundrecht', ''), ...['kein', 'sehen', 'bedienen'].map((k) => new Option(RECHT_TEXT[k], k)));
+    auswahl.value = b.rechte?.module?.[m.id] ?? '';
+    auswahl.dataset.modul = m.id;
+    return el('tr', {}, el('td', {}, el('label', { htmlFor: auswahl.id, textContent: m.name })), el('td', {}, auswahl));
+  }));
+  const ms = b.art === 'microsoft';
+  $('bv-ms-rahmen').hidden = !ms;
+  $('bv-ms-speichern').hidden = !ms;
+  if (ms) {
+    $('bv-ms-adresse').value = b.microsoft.adresse;
+    $('bv-ms-status').textContent = b.microsoft.verknuepft ? 'Mit einem Microsoft-Konto verknüpft. Eine neue Adresse löst die Verknüpfung; beim nächsten Anmelden wird das Konto mit der neuen Adresse verknüpft.' : 'Noch nie angemeldet – die Verknüpfung entsteht bei der ersten Anmeldung.';
+  }
+  $('bv-rechte').hidden = false;
+  $('bv-rechte').scrollIntoView({ block: 'nearest' });
+}
+$('bv-rechte-schliessen').addEventListener('click', () => { $('bv-rechte').hidden = true; bvRechteName = null; });
+$('bv-rechte-speichern').addEventListener('click', async () => {
+  const name = bvRechteName;
+  const module = Object.fromEntries([...$('bv-rechte-module').querySelectorAll('select')].filter((a) => a.value).map((a) => [a.dataset.modul, a.value]));
+  if (await bvAktion(`/api/benutzer/${name}/rechte`, { grund: $('bv-rechte-grund').value, module }, [$('bv-rechte-speichern')], `Rechte von ${name} gespeichert – gilt sofort.`)) bvRechteOeffnen(name);
+});
+$('bv-ms-speichern').addEventListener('click', async () => {
+  const name = bvRechteName;
+  if (await bvAktion(`/api/benutzer/${name}/microsoft`, { adresse: $('bv-ms-adresse').value }, [$('bv-ms-speichern')], `Microsoft-Adresse von ${name} gesetzt. Die Verknüpfung entsteht beim nächsten Anmelden.`)) bvRechteOeffnen(name);
+});
+function bvArtZeigen() {
+  const ms = $('bv-art').value === 'microsoft';
+  $('bv-adresse-rahmen').hidden = !ms;
+  $('bv-passwort-rahmen').hidden = ms;
+  $('bv-passwort2-rahmen').hidden = ms;
+}
+$('bv-art').addEventListener('change', bvArtZeigen);
+
 async function bvOeffnen() {
   bvMeldung('');
   $('bv-anlegen').reset();
+  bvArtZeigen();
+  $('bv-rechte').hidden = true;
+  bvRechteName = null;
   $('bv-setzen').reset();
   await bvLaden();
 }
 $('bv-anlegen').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
   const name = $('bv-name').value.trim();
-  if ($('bv-passwort').value !== $('bv-passwort2').value) { bvMeldung('Die Passwörter stimmen nicht überein.', 'fehler'); return; }
-  if (await bvAktion('/api/benutzer', { name, passwort: $('bv-passwort').value, admin: $('bv-admin').checked }, [$('bv-anlegen-knopf')], `Benutzer ${name} angelegt.`)) $('bv-anlegen').reset();
+  const art = $('bv-art').value;
+  if (art === 'lokal' && $('bv-passwort').value !== $('bv-passwort2').value) { bvMeldung('Die Passwörter stimmen nicht überein.', 'fehler'); return; }
+  const koerper = art === 'microsoft' ? { name, art, adresse: $('bv-adresse').value, grund: $('bv-grund').value, admin: $('bv-admin').checked }
+    : { name, art, passwort: $('bv-passwort').value, grund: $('bv-grund').value, admin: $('bv-admin').checked };
+  if (await bvAktion('/api/benutzer', koerper, [$('bv-anlegen-knopf')], `Benutzer ${name} angelegt.`)) { $('bv-anlegen').reset(); bvArtZeigen(); }
 });
 $('bv-setzen').addEventListener('submit', async (ereignis) => {
   ereignis.preventDefault();
@@ -1352,7 +1464,7 @@ function sysOeffnen() {
   $('beenden-ja').disabled = false;
   return Promise.resolve();
 }
-const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sp': () => spLaden(), 'ber-sys': sysOeffnen };
+const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-ms': msLaden, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sp': () => spLaden(), 'ber-sys': sysOeffnen };
 const bereichLaden = (id) => BEREICHE[id]().catch((fehler) => { if (fehler.message !== 'abgemeldet') bereichStatus(id, KEINE_VERBINDUNG, 'fehler'); });
 
 for (const d of document.querySelectorAll('details.bereich')) {

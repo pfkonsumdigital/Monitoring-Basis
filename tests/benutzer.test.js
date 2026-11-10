@@ -77,7 +77,7 @@ test('Benutzerverwaltung: anlegen, Passwort setzen, Admin-Recht, löschen – ge
     await assert.rejects(bv.loeschen('chef', 'anna'), /letzte Admin/);
     await assert.rejects(bv.loeschen('niemand', 'chef'), /gibt es nicht/);
 
-    assert.ok(log.includes('Benutzer bob angelegt durch anna.'));
+    assert.ok(log.includes('Benutzer bob angelegt durch anna, Grundrecht kein.'));
     assert.ok(log.some((z) => /^Passwort von bob geändert durch anna \(2 Sitzung\(en\) beendet\)\.$/.test(z)));
     assert.ok(log.includes('Admin-Recht von bob vergeben durch anna.'));
     assert.ok(log.some((z) => z.startsWith('Benutzer bob gelöscht durch anna')));
@@ -161,7 +161,7 @@ test('Webserver: Benutzer-API nur für Admins, eigenes Passwort für alle, Schut
     assert.ok(anna);
     let r = await anfrage(port, ca, 'GET', '/api/benutzer', { kopf: { cookie: anna } });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json().benutzer, [{ name: 'anna', admin: true, zweiFaktor: false, sitzungen: 1 }]);
+    assert.deepEqual(r.json().benutzer, [{ name: 'anna', admin: true, zweiFaktor: false, sitzungen: 1, art: 'lokal', rechte: null, rechteText: 'alle (Admin)' }]);
     assert.equal(r.json().sitzungen[0].eigene, true);
     assert.equal(r.json().sitzungen[0].adresse.replace(/^::ffff:/, ''), '127.0.0.1');
 

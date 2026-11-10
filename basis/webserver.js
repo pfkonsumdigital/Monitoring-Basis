@@ -8,6 +8,8 @@ import { BasisFehler } from './fehler.js';
 import { melde } from './protokoll.js';
 import { Benutzerfehler, BenutzerUnbekannt } from './benutzerverwaltung.js';
 import { otpauthUri, qrBild } from './zweifaktor.js';
+import { MicrosoftFehler } from './microsoft.js';
+import { darf, stufe } from './rechte.js';
 
 const OEFFENTLICH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'oberflaeche');
 const DATEIEN = {
@@ -25,6 +27,7 @@ const SICHERHEIT = {
 };
 const COOKIE = 'mb_sitzung';
 const COOKIE_2FA = 'mb_2fa';
+const COOKIE_MS = 'mb_ms';
 const html = (t) => String(t).replace(/[&<>"']/g, (z) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[z]);
 const LOGIN_MELDUNGEN = {
   '1': 'Benutzername oder Passwort falsch.',
@@ -34,6 +37,9 @@ const LOGIN_MELDUNGEN = {
   abgelaufen: 'Die Sitzung ist abgelaufen. Bitte erneut anmelden.',
   'zf-abgelaufen': 'Die Zeit für den Bestätigungscode ist abgelaufen. Bitte erneut anmelden.',
   'einrichten-extern': 'Die Zwei-Faktor-Anmeldung muss einmalig im Firmennetz oder über VPN eingerichtet werden. Danach geht die Anmeldung auch von außen.',
+  'ms-unbekannt': 'Mit diesem Microsoft-Konto gibt es keinen Zugang zur Monitoring-Basis. Bitte einen Admin fragen.',
+  'ms-fehler': 'Die Anmeldung mit Microsoft hat nicht geklappt. Bitte erneut versuchen.',
+  'ms-aus': 'Die Anmeldung mit Microsoft ist nicht eingerichtet.',
 };
 
 function senden(res, status, inhalt, typ = 'text/plain; charset=utf-8', kopf = {}) {
@@ -129,7 +135,8 @@ function ohneFehlerausgabe(e) {
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
-export function erstelleAnwendung({ module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, log = () => {} }) {
+// microsoft: MicrosoftAnmeldung (oder null); microsoftAdresse: öffentliche Adresse der Oberfläche (https://name:port), nur bei HTTPS.
+export function erstelleAnwendung({ microsoft = null, microsoftAdresse = null, module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -173,7 +180,8 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
 
       if (weg === '/login' && req.method === 'GET') {
         const meldung = LOGIN_MELDUNGEN[url.searchParams.get('fehler')] ?? '';
-        const seiteHtml = (await seite('login.html')).replace('{{meldung}}', meldung);
+        const msKnopf = microsoft?.eingerichtet() && microsoftAdresse ? '<p class="login-oder">oder</p><a class="knopf-link login-microsoft" href="/login/microsoft">Mit Microsoft anmelden</a>' : '';
+        const seiteHtml = (await seite('login.html')).replace('{{meldung}}', meldung).replace('{{microsoft}}', () => msKnopf);
         return senden(res, 200, seiteHtml, 'text/html; charset=utf-8');
       }
       const sitzungCookie = (wert) => `${COOKIE}=${wert}; Path=/; HttpOnly;${sicher} SameSite=Strict; Max-Age=${Math.floor(sitzungMs / 1000)}`;
@@ -192,6 +200,53 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
         }
         log(`Anmeldung: ${name} von ${req.socket.remoteAddress}.`);
         return weiter(res, '/', { 'Set-Cookie': sitzungCookie(ergebnis) });
+      }
+
+      // Anmeldung mit Microsoft (Entra ID). Der Vorgang steckt in einem eigenen Cookie (SameSite=Lax, damit er die
+      // Rückkehr von Microsoft übersteht); die Sitzung entsteht erst nach vollständiger Prüfung des ID-Tokens.
+      const msCookie = (wert, sekunden) => `${COOKIE_MS}=${wert}; Path=/login/microsoft; HttpOnly;${sicher} SameSite=Lax; Max-Age=${sekunden}`;
+      if (weg === '/login/microsoft' && req.method === 'GET') {
+        if (!microsoft?.eingerichtet() || !microsoftAdresse) return weiter(res, '/login?fehler=ms-aus');
+        // Immer über die eingerichtete Adresse (sie ist in Entra als Rückkehr-Adresse eingetragen).
+        if (hostname && (req.headers.host ?? '').toLowerCase() !== new URL(microsoftAdresse).host) return weiter(res, `${microsoftAdresse}/login/microsoft`);
+        const { url: ziel, vorgang } = microsoft.starten(`${microsoftAdresse}/login/microsoft/rueckruf`);
+        return weiter(res, ziel, { 'Set-Cookie': msCookie(vorgang, 600) });
+      }
+      if (weg === '/login/microsoft/rueckruf' && req.method === 'GET') {
+        const loeschen = msCookie('', 0);
+        if (!microsoft) return weiter(res, '/login?fehler=ms-aus', { 'Set-Cookie': loeschen });
+        let anspruch;
+        try {
+          anspruch = await microsoft.abschliessen({ vorgang: cookieLesen(req, COOKIE_MS), state: url.searchParams.get('state'), code: url.searchParams.get('code'),
+            fehler: url.searchParams.get('error'), fehlerText: url.searchParams.get('error_description') });
+        } catch (fehler) {
+          if (!(fehler instanceof MicrosoftFehler)) throw fehler;
+          melde(log, 'warnung', 'Anmeldung', `Anmeldung mit Microsoft von ${req.socket.remoteAddress} fehlgeschlagen: ${fehler.message}`);
+          return weiter(res, '/login?fehler=ms-fehler', { 'Set-Cookie': loeschen });
+        }
+        // Nur vom Admin angelegte Microsoft-Benutzer: zuerst über die feste Konto-ID, sonst (erste Anmeldung) über die Adresse.
+        const alle = anmeldung.benutzer;
+        let name = Object.keys(alle).find((n) => alle[n].microsoft?.oid === anspruch.oid && alle[n].microsoft?.tid === anspruch.tid);
+        if (!name && anspruch.adresse) {
+          const kandidat = Object.keys(alle).find((n) => alle[n].microsoft && alle[n].microsoft.adresse.toLowerCase() === anspruch.adresse.toLowerCase());
+          if (kandidat && !alle[kandidat].microsoft.oid) {
+            name = kandidat;
+            await benutzerverwaltung?.microsoftVerknuepfen(name, anspruch.oid, anspruch.tid);
+          } else if (kandidat) {
+            melde(log, 'warnung', 'Anmeldung', `Microsoft-Anmeldung als ${anspruch.adresse} abgewiesen: Die Adresse gehört zu ${kandidat}, ist aber mit einem anderen Microsoft-Konto verknüpft (Konto-ID ${anspruch.oid}). Ist das richtig, die Adresse von ${kandidat} in der Benutzerverwaltung neu setzen.`);
+          }
+        }
+        if (!name) {
+          melde(log, 'warnung', 'Anmeldung', `Microsoft-Anmeldung abgewiesen: ${anspruch.adresse ?? 'ohne Adresse'} (Konto-ID ${anspruch.oid}) ist kein Benutzer der Basis (Adresse ${req.socket.remoteAddress}).`);
+          return weiter(res, '/login?fehler=ms-unbekannt', { 'Set-Cookie': loeschen });
+        }
+        const neu = anmeldung.microsoftSitzung(name, req.socket.remoteAddress);
+        if (!neu) return weiter(res, '/login?fehler=ms-unbekannt', { 'Set-Cookie': loeschen });
+        log(`Anmeldung: ${name} von ${req.socket.remoteAddress} (Microsoft ${anspruch.adresse ?? anspruch.oid}).`);
+        // Weiter per Seite statt Umleitung: Nach der Rückkehr von einer fremden Seite würde der Browser das
+        // SameSite=Strict-Cookie bei einer direkten Umleitung noch nicht mitschicken.
+        return senden(res, 200, '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>Angemeldet</title></head><body><p>Angemeldet. <a href="/">Weiter zur Übersicht</a></p></body></html>',
+          'text/html; charset=utf-8', { 'Set-Cookie': [sitzungCookie(neu), loeschen] });
       }
 
       // Zweiter Schritt der Anmeldung: Code aus der App eingeben bzw. die App einrichten.
@@ -268,14 +323,17 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
       }
       if (weg === '/' && req.method === 'GET') return senden(res, 200, await seite('index.html'), 'text/html; charset=utf-8');
 
+      // Rechte je Modul: Eintrag des angemeldeten Benutzers (immer aktuell aus config.json).
+      const eintrag = anmeldung.benutzer[sitzung.benutzer];
+      const sichtbar = (m) => darf(eintrag, m.id, 'sehen');
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, adminNurIntern, neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, anmeldeart: eintrag?.microsoft ? 'microsoft' : 'lokal', adminNurIntern, neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
           // Konto der Basis (nur Admins): Name, SYSTEM/Admin, fehlende Schreibrechte.
           ...(istAdmin && konto ? { konto } : {}),
-          module: module.ansichten().map((m) => {
-            if (istAdmin) return modulupdates && m.repo ? { ...m, updateVerfuegbar: modulupdates.verfuegbar(m.id) } : m;
+          module: module.ansichten().filter(sichtbar).map((m) => {
+            if (istAdmin) return { ...m, recht: 'bedienen', ...(modulupdates && m.repo ? { updateVerfuegbar: modulupdates.verfuegbar(m.id) } : {}) };
             // Für Nicht-Admins: keine Fehlerausgabe, bei Freigaben nur, dass eine nötig ist.
-            return { ...m, letztes: ohneFehlerausgabe(m.letztes), ...(m.freigabe ? { freigabe: { neu: m.freigabe.neu, wert: null, aenderungen: [], fehler: null } } : {}) };
+            return { ...m, recht: stufe(eintrag, m.id), letztes: ohneFehlerausgabe(m.letztes), ...(m.freigabe ? { freigabe: { neu: m.freigabe.neu, wert: null, aenderungen: [], fehler: null } } : {}) };
           }) });
       }
       // Eigenes Passwort ändern (jeder angemeldete Benutzer, bisheriges Passwort nötig).
@@ -300,14 +358,14 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
         try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
         let r;
         if (!meine[1]) {
-          r = await benachrichtigung.meineSpeichern(name, eingabe, module.ansichten().map((m) => m.id));
+          r = await benachrichtigung.meineSpeichern(name, eingabe, module.ansichten().filter(sichtbar).map((m) => m.id));
           if (r.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: r.feldfehler });
           return json(res, 200, r.ansicht);
         }
         if (meine[1] === 'loeschen') { await benachrichtigung.aboLoeschen(name, name); return json(res, 200, benachrichtigung.meineAnsicht(name)); }
         if (meine[1] === 'code') r = await benachrichtigung.codeAnfordern(name, eingabe?.adresse);
         else if (meine[1] === 'bestaetigen') r = await benachrichtigung.codeBestaetigen(name, eingabe?.code);
-        else r = await benachrichtigung.meinBerichtSenden(name, module.ansichten());
+        else r = await benachrichtigung.meinBerichtSenden(name, module.ansichten().filter(sichtbar));
         if (r.fehler) {
           if (r.wartenS) res.setHeader('retry-after', String(r.wartenS));
           return json(res, r.status ?? 400, { fehler: r.fehler, ...benachrichtigung.meineAnsicht(name) });
@@ -316,11 +374,12 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
       }
       // Benutzerverwaltung (nur Admins): Liste und Sitzungen, anlegen, Passwort setzen, Admin-Recht, löschen,
       // Benachrichtigungen eines Benutzers löschen.
-      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen|zweifaktor-zuruecksetzen|benachrichtigung-loeschen))?$/.exec(weg);
+      const ben = /^\/api\/benutzer(?:\/([A-Za-z0-9._-]{1,64})\/(passwort|admin|loeschen|zweifaktor-zuruecksetzen|benachrichtigung-loeschen|rechte|microsoft))?$/.exec(weg);
       if (ben) {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (!benutzerverwaltung) return json(res, 404, { fehler: 'Nicht verfügbar.' });
-        const benAnsicht = () => ({ ...benutzerverwaltung.ansicht(token), abos: benachrichtigung?.aboUebersicht() ?? {} });
+        const benAnsicht = () => ({ ...benutzerverwaltung.ansicht(token, Object.fromEntries(module.ansichten().map((m) => [m.id, m.name]))), abos: benachrichtigung?.aboUebersicht() ?? {},
+          module: module.ansichten().map((m) => ({ id: m.id, name: m.name })), microsoftAktiv: Boolean(microsoft?.eingerichtet() && microsoftAdresse) });
         if (!ben[1] && req.method === 'GET') return json(res, 200, benAnsicht());
         if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
@@ -328,7 +387,9 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
         try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
         const name = ben[1];
         try {
-          if (!ben[2]) await benutzerverwaltung.anlegen({ name: eingabe?.name, passwort: eingabe?.passwort, admin: eingabe?.admin === true }, sitzung.benutzer);
+          if (!ben[2]) await benutzerverwaltung.anlegen({ name: eingabe?.name, passwort: eingabe?.passwort, admin: eingabe?.admin === true, art: eingabe?.art ?? 'lokal', adresse: eingabe?.adresse, grund: eingabe?.grund ?? 'kein' }, sitzung.benutzer);
+          else if (ben[2] === 'rechte') await benutzerverwaltung.rechteSetzen(name, eingabe, sitzung.benutzer);
+          else if (ben[2] === 'microsoft') await benutzerverwaltung.microsoftAdresseSetzen(name, eingabe?.adresse, sitzung.benutzer);
           else if (ben[2] === 'passwort') await benutzerverwaltung.passwortSetzen(name, eingabe?.passwort, sitzung.benutzer, token);
           else if (ben[2] === 'admin') await benutzerverwaltung.adminSetzen(name, eingabe?.admin, sitzung.benutzer);
           else if (ben[2] === 'zweifaktor-zuruecksetzen') await benutzerverwaltung.zweiFaktorZuruecksetzen(name, sitzung.benutzer);
@@ -366,6 +427,20 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
           if (fehler instanceof BasisFehler) return json(res, 400, { fehler: fehler.message, status: await domain.status().catch(() => null) });
           throw fehler;
         }
+      }
+      // Einstellungen der Microsoft-Anmeldung (nur Admins aus dem Firmennetz/VPN).
+      if (weg === '/api/microsoft') {
+        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
+        if (!microsoft) return json(res, 404, { fehler: 'Nicht verfügbar.' });
+        const info = () => ({ ...microsoft.ansicht(), rueckAdresse: microsoftAdresse ? `${microsoftAdresse}/login/microsoft/rueckruf` : null, https: Boolean(microsoftAdresse) });
+        if (req.method === 'GET') return json(res, 200, info());
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req, 20_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        const r = await microsoft.speichern(eingabe?.werte, sitzung.benutzer);
+        if (r.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: r.feldfehler });
+        return json(res, 200, { geaendert: r.geaendert, ...info() });
       }
       // Speicherbelegung (nur Admins aus dem Firmennetz/VPN): anzeigen, Protokoll-Archiv und alte Modulversionen löschen.
       const sp = /^\/api\/speicher(?:\/(archiv-loeschen)|\/modul\/([a-z0-9-]+)\/versionen-loeschen)?$/.exec(weg);
@@ -514,7 +589,9 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
 
       const treffer = /^\/api\/module\/([a-z0-9-]+)\/(verlauf|pruefen|einstellungen|aktiv|beenden|starten|empfaenger|freigeben)$/.exec(weg);
       const modul = treffer && module.finde(treffer[1]);
-      if (treffer && !modul) return json(res, 404, { fehler: 'Modul unbekannt.' });
+      // Module ohne Leserecht gibt es für diesen Benutzer nicht.
+      if (treffer && (!modul || !darf(eintrag, modul.id, 'sehen'))) return json(res, 404, { fehler: 'Modul unbekannt.' });
+      const bedienen = Boolean(modul) && darf(eintrag, modul.id, 'bedienen');
       if (treffer?.[2] === 'verlauf' && req.method === 'GET') {
         const anzahl = Math.min(Math.max(Number.parseInt(url.searchParams.get('anzahl') ?? '50', 10) || 50, 1), 1000);
         const verlauf = module.verlauf(modul.id, anzahl);
@@ -523,6 +600,7 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
       if (treffer?.[2] === 'pruefen' && req.method === 'POST') {
         // Eigener Kopf erzwingt eine Same-Origin-Anfrage per fetch; einfache Formulare fremder Seiten scheitern.
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        if (!bedienen) return json(res, 403, { fehler: 'Für dieses Modul darfst du nur ansehen, nicht prüfen. Bitte einen Admin fragen.' });
         const ergebnis = module.jetztPruefen(modul.id);
         if (ergebnis.code === 'warten') return senden(res, 429, JSON.stringify({ fehler: PRUEFEN_TEXT.warten(ergebnis) }), 'application/json; charset=utf-8', { 'Retry-After': String(ergebnis.sekunden) });
         if (ergebnis.code === 'unbekannt') return json(res, 404, { fehler: 'Modul unbekannt.' });
@@ -563,7 +641,19 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
         const ergebnis = await benachrichtigung.modulEmpfaengerSpeichern(modul.id, eingabe?.empfaenger ?? '', sitzung.benutzer);
         return json(res, ergebnis.fehler ? 400 : 200, ergebnis);
       }
-      if (treffer?.[2] === 'einstellungen' || treffer?.[2] === 'aktiv') {
+      // Pause/Fortsetzen: Benutzer mit Recht „bedienen“ (Admins immer).
+      if (treffer?.[2] === 'aktiv') {
+        if (!bedienen) return json(res, 403, { fehler: 'Für dieses Modul darfst du nur ansehen. Bitte einen Admin fragen.' });
+        if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
+        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
+        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
+        let eingabe;
+        try { eingabe = JSON.parse(await koerperLesen(req, 100_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
+        if (typeof eingabe?.aktiv !== 'boolean') return json(res, 400, { fehler: 'aktiv muss true oder false sein.' });
+        await module.setzeAktiv(modul.id, eingabe.aktiv, sitzung.benutzer);
+        return json(res, 200, { aktiv: eingabe.aktiv });
+      }
+      if (treffer?.[2] === 'einstellungen') {
         if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
         if (modul.fehler) return json(res, 409, { fehler: 'Das Modul ist fehlerhaft konfiguriert.' });
         if (treffer[2] === 'einstellungen' && req.method === 'GET') return json(res, 200, await module.einstellungen(modul.id));
@@ -571,11 +661,6 @@ export function erstelleAnwendung({ module, modulupdates = null, speicherbelegun
         if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
         let eingabe;
         try { eingabe = JSON.parse(await koerperLesen(req, 100_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
-        if (treffer[2] === 'aktiv') {
-          if (typeof eingabe?.aktiv !== 'boolean') return json(res, 400, { fehler: 'aktiv muss true oder false sein.' });
-          await module.setzeAktiv(modul.id, eingabe.aktiv, sitzung.benutzer);
-          return json(res, 200, { aktiv: eingabe.aktiv });
-        }
         const ergebnis = await module.einstellungenAendern(modul.id, eingabe?.werte, sitzung.benutzer);
         if (ergebnis.feldfehler) return json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: ergebnis.feldfehler });
         return json(res, 200, { geaendert: ergebnis.geaendert, ...(await module.einstellungen(modul.id)) });

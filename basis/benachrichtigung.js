@@ -242,6 +242,8 @@ export class Benachrichtigung {
     Object.assign(this, { log, geheimnisse, fetchImpl, jetzt, tresor });
     // Für den Statusbericht: { version, seit (ms), update (Version oder null) } – setzt main.js.
     this.basisInfo = () => ({});
+    // Rechte je Modul (setzt main.js): darf der Benutzer das Modul sehen? Ohne Recht keine Mails und kein Eintrag im Bericht.
+    this.darfSehen = () => true;
     this.datei = path.join(datenOrdner, 'benachrichtigung.json');
     this.zustandDatei = path.join(datenOrdner, 'benachrichtigung-zustand.json');
     this.aboDatei = path.join(datenOrdner, 'benachrichtigung-abos.json');
@@ -354,7 +356,7 @@ export class Benachrichtigung {
   }
   // Benutzer, deren Abo für dieses Modul die Kategorie umfasst.
   abonnenten(modulId, k) {
-    return Object.keys(this.abos).filter((n) => STUFE_UMFASST[this.abos[n].module?.[modulId]]?.includes(k) && this.aboAdresse(n));
+    return Object.keys(this.abos).filter((n) => STUFE_UMFASST[this.abos[n].module?.[modulId]]?.includes(k) && this.aboAdresse(n) && this.darfSehen(n, modulId));
   }
 
   async abosSpeichern() { await schreibeAtomar(this.aboDatei, { benutzer: this.abos }); }
@@ -590,7 +592,7 @@ export class Benachrichtigung {
       if (!letzter || letzter <= (z.termin ?? 0) || (z.naechsterVersuch && jetzt < z.naechsterVersuch)) continue;
       geaendert = true;
       if (jetzt - letzter > NACHHOLEN_MS) { alle[name] = { termin: letzter }; continue; }
-      const { betreff, text } = this.berichtMail(ansichten, jetzt, jetzt - letzter > 15 * 60_000 ? letzter : null, name);
+      const { betreff, text } = this.berichtMail(ansichten.filter((m) => this.darfSehen(name, m.id)), jetzt, jetzt - letzter > 15 * 60_000 ? letzter : null, name);
       const eintrag = await this.versenden('bericht', betreff, text, null, { an: [adresse], benutzer: name });
       alle[name] = eintrag.ok ? { termin: letzter } : { ...z, naechsterVersuch: jetzt + WIEDERHOLEN_MS };
     }
@@ -635,7 +637,7 @@ export class Benachrichtigung {
         // Abonnenten: bei Problemen je nach Stufe; Entwarnung nur an die, die das Problem gemeldet bekommen haben.
         const bisher = z.gemeldet && z.gemeldet !== 'ok' ? z.benutzer ?? [] : [];
         const nutzer = art === 'wieder-ok'
-          ? bisher.filter((n) => this.abos[n]?.entwarnung === true && this.abos[n].module?.[m.id] && this.aboAdresse(n))
+          ? bisher.filter((n) => this.abos[n]?.entwarnung === true && this.abos[n].module?.[m.id] && this.aboAdresse(n) && this.darfSehen(n, m.id))
           : this.abonnenten(m.id, k);
         const eintrag = await this.versenden(art, `[Monitoring] ${titel}`, this.mailText(m, art, jetzt, seit, nutzer.length > 0), m.id, { bcc: nutzer.map((n) => this.aboAdresse(n)) });
         geaendert = true;
