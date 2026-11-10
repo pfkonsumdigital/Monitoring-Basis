@@ -152,6 +152,27 @@ SYSTEM), nach einer Kennwortänderung und wenn ein Modul mit `dienst`
 dazukommt (erst in der Oberfläche freigeben). Zurück auf SYSTEM:
 `… konto-einrichten.ps1 -Konto 'KONSUM-WEIMAR\svc-monitoring' -Zurueck`.
 
+> **Achtung bei einer Kennwortänderung des Dienstkontos:** Das Kennwort ist an
+> jeder Stelle gespeichert, an der das Konto eingetragen wurde, und muss dort
+> neu eingetragen werden:
+>
+> 1. **Basis** (Aufgabe „Monitoring-Basis“): `konto-einrichten.ps1` erneut
+>    ausführen (wie oben, als Administrator).
+> 2. **Jedes Modul mit eigenem Windows-Dienst unter diesem Konto**, z. B. das
+>    FTP-Modul: als Administrator im Modulordner
+>    `FTPModul.exe --installieren --konto` und das neue Kennwort eingeben
+>    (oder `services.msc` → Dienst → Anmelden).
+>
+> Anzeichen, wenn eine Stelle vergessen wurde: Die Basis startet nach einem
+> Neustart des Workers nicht (Aufgabenplaner meldet einen Anmeldefehler), ein
+> Modul-Dienst startet nicht (Fehler 1069 „Anmeldung fehlgeschlagen“, in der
+> Basis „Dienst gestoppt“). Prüfen, unter welchem Konto alles läuft
+> (PowerShell als Administrator):
+>
+> ```powershell
+> Get-CimInstance Win32_Process | Where-Object Name -eq 'node.exe' | ForEach-Object { $o = Invoke-CimMethod -InputObject $_ -MethodName GetOwner; '{0}  {1}\{2}  {3}' -f $_.ProcessId, $o.Domain, $o.User, $_.CommandLine }
+> ```
+
 Gut zu wissen:
 - Die verschlüsselten Geheimnisse bleiben lesbar (an den Rechner und
   `data\geheimnis.schluessel` gebunden, nicht an das Konto).
