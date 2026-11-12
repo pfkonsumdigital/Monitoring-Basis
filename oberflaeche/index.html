@@ -24,7 +24,7 @@
 <nav class="seitenleiste" aria-label="Hauptmenü" hidden>
   <p class="nav-gruppe">Menü</p>
   <a href="#uebersicht" id="nav-uebersicht" class="nav-punkt" aria-current="page">Übersicht</a>
-  <a href="#tickets" id="nav-tickets" class="nav-punkt" hidden>Tickets <span id="nav-tickets-zahl" class="nav-zahl" title="nicht erledigte Tickets"></span></a>
+  <div id="nav-module"></div>
 </nav>
 <main>
   <section id="beendet-seite" class="beendet-seite" hidden>
@@ -54,31 +54,8 @@
   <section id="kacheln" class="kacheln" aria-live="polite"></section>
   <p id="leer" class="leer" hidden><span id="leer-text">Noch keine Module. Lege im Ordner <code>modules</code> einen Unterordner mit einer <code>module.json</code> an – das Modul erscheint nach spätestens einer Minute, ohne Neustart.</span><span id="leer-rechte" hidden>Dir sind noch keine Module freigegeben. Bitte einen Admin fragen.</span></p>
   </div>
-  <section id="ansicht-tickets" class="tickets" aria-labelledby="tickets-titel" hidden>
-    <div class="tickets-kopf">
-      <div>
-        <h2 id="tickets-titel">Tickets <span id="tickets-anzahl" class="leise"></span></h2>
-        <p class="leise">Sortiert nach der jüngsten Aktivität – Änderung am Ticket oder eingegangene E-Mail. Änderungen aus anderen Sitzungen und neue E-Mails erscheinen automatisch.</p>
-      </div>
-      <div class="tickets-werkzeuge">
-        <label for="tickets-filter" class="leise">Status</label>
-        <select id="tickets-filter">
-          <option value="">Alle</option>
-          <option value="nicht-erledigt">Nicht erledigt</option>
-          <option value="Offen">Offen</option>
-          <option value="In Bearbeitung">In Bearbeitung</option>
-          <option value="Erledigt">Erledigt</option>
-        </select>
-        <button type="button" id="ticket-neu" hidden>Neues Ticket</button>
-      </div>
-    </div>
-    <div class="tabelle-rahmen">
-      <table class="tickets-tabelle">
-        <thead><tr><th scope="col">Nr.</th><th scope="col">Betreff</th><th scope="col">Status</th><th scope="col">Letzte Änderung</th><th scope="col">E-Mails</th></tr></thead>
-        <tbody id="tickets-liste"></tbody>
-      </table>
-    </div>
-    <p id="tickets-leer" class="leer" hidden></p>
+  <section id="ansicht-modul" class="modulseite" hidden>
+    <iframe id="modul-rahmen" title=""></iframe>
   </section>
 </main>
 </div>
@@ -251,7 +228,6 @@
           <p class="leise">Grundrecht gilt für alle Module, auch für künftige. Je Modul lässt es sich abweichend setzen. <strong>sehen</strong>: Kachel, Details, Verlauf, eigene Benachrichtigungen · <strong>bedienen</strong>: zusätzlich „Jetzt prüfen“ und Pausieren. Admins sehen und bedienen immer alles.</p>
           <div class="felder">
             <div class="feld"><label for="bv-rechte-grund">Grundrecht</label><select id="bv-rechte-grund"><option value="kein">kein Zugriff</option><option value="sehen">sehen</option><option value="bedienen">bedienen</option></select></div>
-            <div class="feld"><label for="bv-rechte-tickets">Tickets</label><select id="bv-rechte-tickets"><option value="kein">kein Zugriff</option><option value="sehen">lesen</option><option value="bedienen">lesen, anlegen und bearbeiten</option></select><small class="leise">Unabhängig vom Grundrecht – Tickets sieht nur, wem sie hier freigegeben sind.</small></div>
           </div>
           <div class="liste-rahmen">
             <table class="liste-tabelle meine-tabelle">
@@ -312,25 +288,6 @@
           </div>
           <p id="ms-meldung" class="upd-meldung" role="status"></p>
           <div class="aktionen"><button type="submit" id="ms-speichern">Speichern</button></div>
-        </form>
-      </div>
-    </details>
-    <details id="ber-tk" class="bereich" name="einst">
-      <summary><span class="bereich-titel">Tickets</span><span id="ber-tk-status" class="bereich-status"></span></summary>
-      <div class="bereich-inhalt">
-        <p class="leise">E-Mails aus diesem Postfach werden über die Ticketnummer im Betreff (z. B. <code>IT-2026-055</code>) dem Ticket zugeordnet und erscheinen in dessen Verlauf. Die Basis liest nur – sie markiert nichts als gelesen und verschiebt nichts. Zugang über eine <strong>eigene App-Registrierung</strong> mit der Anwendungsberechtigung <strong>Mail.Read</strong>, getrennt von der App für die Warnmails (README, Abschnitt „Tickets“). Wer Tickets sehen oder bearbeiten darf, steht unter „Benutzer“ → „Rechte“.</p>
-        <form id="tk-formular" novalidate>
-          <div class="felder">
-            <div class="feld schalter"><input type="checkbox" id="tk-aktiv"><label for="tk-aktiv">E-Mails alle 2 Minuten abrufen</label></div>
-            <div class="feld"><label for="tk-tenant_id">Mandanten-ID (Verzeichnis-ID)</label><input id="tk-tenant_id" autocomplete="off" placeholder="11111111-2222-3333-4444-555555555555"><small class="feldfehler" id="tk-tenant_id-fehler"></small></div>
-            <div class="feld"><label for="tk-client_id">Anwendungs-ID (Client) der App für die Tickets</label><input id="tk-client_id" autocomplete="off"><small class="feldfehler" id="tk-client_id-fehler"></small></div>
-            <div class="feld"><label for="tk-client_secret">Geheimer Clientschlüssel</label><input id="tk-client_secret" type="password" autocomplete="new-password"><small class="leise">Wird nie angezeigt und verschlüsselt gespeichert. Leer lassen, um den gespeicherten zu behalten. Ablaufdatum in Entra notieren.</small><small class="feldfehler" id="tk-client_secret-fehler"></small></div>
-            <div class="feld"><label for="tk-postfach">Postfach</label><input id="tk-postfach" type="email" autocomplete="off" placeholder="it@firma.de"><small class="feldfehler" id="tk-postfach-fehler"></small></div>
-            <div class="feld"><label for="tk-rueckblick_tage">Beim ersten Abruf zurück (Tage)</label><input id="tk-rueckblick_tage" type="number" min="0" max="365" step="1"><small class="leise">Ältere Mails zu vorhandenen Tickets werden einmalig nachgetragen. Jede Mail erscheint nur einmal.</small><small class="feldfehler" id="tk-rueckblick_tage-fehler"></small></div>
-          </div>
-          <dl class="messwerte"><dt>Letzter Abruf</dt><dd id="tk-letzter">–</dd><dt>Zugeordnet</dt><dd id="tk-zugeordnet">–</dd></dl>
-          <p id="tk-meldung" class="upd-meldung" role="status"></p>
-          <div class="aktionen"><button type="submit" id="tk-speichern">Speichern</button><button type="button" id="tk-abrufen" class="zweitrangig">Jetzt abrufen</button></div>
         </form>
       </div>
     </details>
@@ -522,27 +479,6 @@
       <button type="button" id="meine-loeschen" class="zweitrangig gefahr">Alle abbestellen</button>
     </div>
   </form>
-</dialog>
-<dialog id="ticket" class="breit" aria-labelledby="ticket-titel">
-  <div class="dialog-kopf">
-    <h2 id="ticket-titel"></h2>
-    <button type="button" id="ticket-schliessen" class="zweitrangig" aria-label="Schließen">✕</button>
-  </div>
-  <p id="ticket-info" class="leise"></p>
-  <p id="ticket-hinweis" class="hinweis-kasten" role="status" hidden></p>
-  <form id="ticket-formular" novalidate>
-    <div class="felder">
-      <div class="feld"><label for="ticket-betreff">Betreff</label><input id="ticket-betreff" maxlength="200" autocomplete="off" required><small class="feldfehler" id="ticket-betreff-fehler"></small></div>
-      <div class="feld"><label for="ticket-status">Status</label><select id="ticket-status"><option>Offen</option><option>In Bearbeitung</option><option>Erledigt</option></select><small class="feldfehler" id="ticket-status-fehler"></small></div>
-      <div class="feld"><label for="ticket-beschreibung">Beschreibung</label><textarea id="ticket-beschreibung" rows="6" maxlength="20000"></textarea><small class="feldfehler" id="ticket-beschreibung-fehler"></small></div>
-    </div>
-    <p id="ticket-meldung" class="upd-meldung" role="status"></p>
-    <div class="aktionen"><button type="submit" id="ticket-speichern">Speichern</button></div>
-  </form>
-  <section id="ticket-verlauf-rahmen">
-    <h3>Verlauf</h3>
-    <ol id="ticket-verlauf" class="ticket-verlauf"></ol>
-  </section>
 </dialog>
 <template id="kachel-vorlage">
   <article class="kachel">

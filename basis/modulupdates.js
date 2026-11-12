@@ -18,6 +18,8 @@ import { prozess, tarProgramm, vergleicheVersionen, zerlegeVersion } from './upd
 const MAX_PAKET = 300 * 1024 * 1024;
 const BEHALTEN = 2;
 const BLEIBT = ['einstellungen.json', 'status.json'];
+// Ordner mit den Daten des Moduls (seit 0.21.0): wandert beim Update und bei „Zurück“ in die eingesetzte Version.
+const DATEN_ORDNER = 'daten';
 // Dienstzustände, nach denen ein Update den Dienst nicht von sich aus startet.
 const DIENST_GESTOPPT = ['gestoppt', 'fehlt', 'pausiert'];
 const TAG = 86_400_000;
@@ -186,6 +188,7 @@ export class Modulupdates {
       await this.inhaltPruefen(neu, m, ziel.version);
       // Daten des Moduls kommen nie aus dem Paket.
       for (const datei of [...BLEIBT, BEFEHL_DATEI]) await rm(path.join(neu, datei), { force: true });
+      await rm(path.join(neu, DATEN_ORDNER), { recursive: true, force: true });
       return neu;
     } catch (fehler) {
       await rm(neu, { recursive: true, force: true }).catch(() => {});
@@ -259,6 +262,15 @@ export class Modulupdates {
         throw new BasisFehler(zurueck
           ? `${datei} konnte nicht in die neue Version übernommen werden (${fehler.code ?? fehler.message}). Der Austausch wurde rückgängig gemacht; die bisherige Version bleibt.`
           : `${datei} konnte nicht übernommen werden (${fehler.code ?? fehler.message}), und die bisherige Version ließ sich nicht automatisch zurückholen. Sie liegt unverändert in ${sicherung}.`);
+      }
+    }
+    try { await rename(path.join(sicherung, DATEN_ORDNER), path.join(m.ordner, DATEN_ORDNER)); }
+    catch (fehler) {
+      if (fehler.code !== 'ENOENT') {
+        const zurueck = await rename(m.ordner, neu).then(() => rename(sicherung, m.ordner)).then(() => true, () => false);
+        throw new BasisFehler(zurueck
+          ? `Der Datenordner „${DATEN_ORDNER}“ konnte nicht in die neue Version übernommen werden (${fehler.code ?? fehler.message}). Der Austausch wurde rückgängig gemacht; die bisherige Version bleibt.`
+          : `Der Datenordner „${DATEN_ORDNER}“ konnte nicht übernommen werden (${fehler.code ?? fehler.message}), und die bisherige Version ließ sich nicht automatisch zurückholen. Sie liegt unverändert in ${sicherung}.`);
       }
     }
     await this.verwaltung.einlesen({ freigeben });

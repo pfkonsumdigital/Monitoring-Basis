@@ -9,8 +9,8 @@ import { melde } from './protokoll.js';
 import { Benutzerfehler, BenutzerUnbekannt } from './benutzerverwaltung.js';
 import { otpauthUri, qrBild } from './zweifaktor.js';
 import { MicrosoftFehler } from './microsoft.js';
-import { darf, darfTickets, stufe, ticketStufe } from './rechte.js';
-import { NUMMER, TicketFehler } from './tickets.js';
+import { darf, stufe } from './rechte.js';
+import { istProgrammAnfrage, Modulseiten, modulWeg } from './modulseiten.js';
 
 const OEFFENTLICH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'oberflaeche');
 const DATEIEN = {
@@ -26,6 +26,8 @@ const SICHERHEIT = {
   'Referrer-Policy': 'same-origin',
   'Cache-Control': 'no-store',
 };
+// Seiten der Module (/m/<id>/…) erscheinen in einem Rahmen der Oberfläche: nur dafür Einbetten von hier erlauben.
+const SEITE_SICHERHEIT = { ...SICHERHEIT, 'Content-Security-Policy': SICHERHEIT['Content-Security-Policy'].replace("frame-ancestors 'none'", "frame-ancestors 'self'") };
 const COOKIE = 'mb_sitzung';
 const COOKIE_2FA = 'mb_2fa';
 const COOKIE_MS = 'mb_ms';
@@ -137,7 +139,7 @@ function ohneFehlerausgabe(e) {
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
 // microsoft: MicrosoftAnmeldung (oder null); microsoftAdresse: öffentliche Adresse der Oberfläche (https://name:port), nur bei HTTPS.
-export function erstelleAnwendung({ tickets = null, ticketPostfach = null, microsoft = null, microsoftAdresse = null, module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, log = () => {} }) {
+export function erstelleAnwendung({ microsoft = null, microsoftAdresse = null, module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, modulseiten = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -146,6 +148,7 @@ export function erstelleAnwendung({ tickets = null, ticketPostfach = null, micro
   const hostErlaubt = hostPruefer({ hostname, weitere: weitereHosts, adressen });
   const fremdeHosts = new Set();
   const seiteCache = new Map();
+  const seiten = modulseiten ?? new Modulseiten({ module, log });
   const seite = async (name) => {
     if (!seiteCache.has(name)) seiteCache.set(name, await readFile(path.join(OEFFENTLICH, name), 'utf8'));
     return seiteCache.get(name);
@@ -304,12 +307,22 @@ export function erstelleAnwendung({ tickets = null, ticketPostfach = null, micro
   ${formular('6-stelliger Code aus der Authenticator-App (oder ein Wiederherstellungscode)')}`);
       }
 
+      // Programm-Zugang zu einer Modulseite (/m/<id>/api/… mit Bearer-Schlüssel): ohne Sitzung, das Modul prüft den Schlüssel.
+      const mw = modulWeg(weg);
+      if (mw?.rest === false) return senden(res, 400, 'Ungültiger Pfad.');
+      if (istProgrammAnfrage(req, mw)) {
+        const m = seiten.modul(mw.id);
+        if (!m?.api) return json(res, 404, { fehler: 'Unbekannt.' });
+        if (seiten.gesperrt(req.socket.remoteAddress)) return json(res, 429, { fehler: 'Zu viele abgewiesene Schlüssel. Bitte 15 Minuten warten.' });
+        return seiten.weiterleiten(req, res, m, { rest: mw.rest, suche: url.search, sicherheit: SEITE_SICHERHEIT });
+      }
+
       const token = cookieLesen(req);
       // Automatische Anfragen der Oberfläche (Kopf X-Monitor-Hintergrund) zählen nicht als Aktivität – sonst liefe
       // die Leerlauf-Abmeldung bei offener Seite nie ab.
       const sitzung = anmeldung.sitzung(token, { aktiv: req.headers['x-monitor-hintergrund'] !== '1' });
       if (!sitzung) {
-        if (weg.startsWith('/api/')) return json(res, 401, { fehler: 'Nicht angemeldet.' });
+        if (weg.startsWith('/api/') || mw?.rest?.startsWith('/api/')) return json(res, 401, { fehler: 'Nicht angemeldet.' });
         return weiter(res, '/login');
       }
 
@@ -327,8 +340,20 @@ export function erstelleAnwendung({ tickets = null, ticketPostfach = null, micro
       // Rechte je Modul: Eintrag des angemeldeten Benutzers (immer aktuell aus config.json).
       const eintrag = anmeldung.benutzer[sitzung.benutzer];
       const sichtbar = (m) => darf(eintrag, m.id, 'sehen');
+      // Seite eines Moduls: angemeldet, mindestens „sehen“; Ändern (alles außer GET/HEAD) nur mit „bedienen“.
+      if (mw) {
+        const m = seiten.modul(mw.id);
+        if (!m || !sichtbar(m)) return senden(res, 404, 'Diese Seite gibt es nicht oder sie ist für dich nicht freigegeben.');
+        if (mw.rest === null) return weiter(res, `/m/${m.id}/`);
+        if (!['GET', 'HEAD'].includes(req.method)) {
+          if (!herkunftOk(req)) return senden(res, 403, 'Anfrage abgelehnt.');
+          if (!darf(eintrag, m.id, 'bedienen')) return json(res, 403, { fehler: `Für ${m.seite.titel} darfst du nur ansehen. Bitte einen Admin fragen.` });
+        }
+        return seiten.weiterleiten(req, res, m, { rest: mw.rest, suche: url.search, sicherheit: SEITE_SICHERHEIT,
+          benutzer: { name: sitzung.benutzer, recht: istAdmin ? 'bedienen' : stufe(eintrag, m.id), admin: istAdmin } });
+      }
       if (weg === '/api/status' && req.method === 'GET') {
-        return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, anmeldeart: eintrag?.microsoft ? 'microsoft' : 'lokal', adminNurIntern, tickets: tickets ? ticketStufe(eintrag) : 'kein', neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
+        return json(res, 200, { benutzer: sitzung.benutzer, admin: istAdmin, anmeldeart: eintrag?.microsoft ? 'microsoft' : 'lokal', adminNurIntern, neustartMoeglich: Boolean(istAdmin && neustart), beendenMoeglich: Boolean(istAdmin && beenden), version: updates?.installiert ?? null, updateVerfuegbar: Boolean(istAdmin && updates?.status().updateMoeglich), serverZeit: new Date().toISOString(),
           // Konto der Basis (nur Admins): Name, SYSTEM/Admin, fehlende Schreibrechte.
           ...(istAdmin && konto ? { konto } : {}),
           module: module.ansichten().filter(sichtbar).map((m) => {
@@ -336,50 +361,6 @@ export function erstelleAnwendung({ tickets = null, ticketPostfach = null, micro
             // Für Nicht-Admins: keine Fehlerausgabe, bei Freigaben nur, dass eine nötig ist.
             return { ...m, recht: stufe(eintrag, m.id), letztes: ohneFehlerausgabe(m.letztes), ...(m.freigabe ? { freigabe: { neu: m.freigabe.neu, wert: null, aenderungen: [], fehler: null } } : {}) };
           }) });
-      }
-      // Tickets: lesen mit Recht „sehen“, anlegen und bearbeiten mit „bedienen“ (Admins immer).
-      // GET /api/tickets?stand=N antwortet nur mit { stand, unveraendert: true }, solange sich nichts geändert hat.
-      const ticketWeg = /^\/api\/tickets(?:\/([A-Za-z0-9-]{1,20}))?$/.exec(weg);
-      if (ticketWeg) {
-        if (!tickets || !darfTickets(eintrag, 'sehen')) return json(res, 404, { fehler: 'Nicht gefunden.' });
-        const nummer = ticketWeg[1];
-        if (nummer && !NUMMER.test(nummer)) return json(res, 404, { fehler: 'Ticket nicht gefunden.' });
-        try {
-          if (req.method === 'GET') {
-            if (nummer) return json(res, 200, { stand: tickets.stand, ticket: tickets.ansicht(nummer) });
-            if (url.searchParams.get('stand') === String(tickets.stand)) return json(res, 200, { stand: tickets.stand, unveraendert: true });
-            return json(res, 200, { stand: tickets.stand, recht: ticketStufe(eintrag), tickets: tickets.liste() });
-          }
-          if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
-          if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
-          if (!darfTickets(eintrag, 'bedienen')) return json(res, 403, { fehler: 'Keine Berechtigung zum Bearbeiten von Tickets.' });
-          let eingabe;
-          try { eingabe = JSON.parse(await koerperLesen(req, 100_000)); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
-          const ticket = nummer ? await tickets.aendern(nummer, eingabe, sitzung.benutzer) : await tickets.anlegen(eingabe, sitzung.benutzer);
-          return json(res, nummer ? 200 : 201, { stand: tickets.stand, ticket });
-        } catch (fehler) {
-          if (!(fehler instanceof TicketFehler)) throw fehler;
-          return json(res, fehler.status, { fehler: fehler.message, ...(fehler.feldfehler ? { feldfehler: fehler.feldfehler } : {}), ...(fehler.ticket ? { ticket: fehler.ticket, stand: tickets.stand } : {}) });
-        }
-      }
-      // Postfach für die Zuordnung von E-Mails zu Tickets (nur Admins aus dem Firmennetz/VPN).
-      const tpWeg = /^\/api\/tickets-postfach(?:\/(abrufen))?$/.exec(weg);
-      if (tpWeg) {
-        if (!istAdmin) return json(res, 403, { fehler: adminNurIntern ? 'Admin-Funktionen nur aus dem Firmennetz oder über VPN.' : 'Nur für Admins.' });
-        if (!ticketPostfach) return json(res, 404, { fehler: 'Nicht verfügbar.' });
-        if (!tpWeg[1] && req.method === 'GET') return json(res, 200, ticketPostfach.ansicht());
-        if (req.method !== 'POST') return json(res, 404, { fehler: 'Nicht gefunden.' });
-        if (!herkunftOk(req) || req.headers['x-monitor-anfrage'] !== '1') return json(res, 403, { fehler: 'Anfrage abgelehnt.' });
-        if (tpWeg[1]) {
-          try {
-            const r = await ticketPostfach.abrufen();
-            return json(res, 200, { ...ticketPostfach.ansicht(), ergebnis: r });
-          } catch (fehler) { return json(res, 502, { fehler: fehler.message, ...ticketPostfach.ansicht() }); }
-        }
-        let eingabe;
-        try { eingabe = JSON.parse((await koerperLesen(req)) || '{}'); } catch { return json(res, 400, { fehler: 'Ungültige Eingabe.' }); }
-        const r = await ticketPostfach.speichern(eingabe, sitzung.benutzer);
-        return r.feldfehler ? json(res, 400, { fehler: 'Bitte die markierten Felder prüfen.', feldfehler: r.feldfehler }) : json(res, 200, r.ansicht);
       }
       // Eigenes Passwort ändern (jeder angemeldete Benutzer, bisheriges Passwort nötig).
       if (weg === '/api/passwort') {

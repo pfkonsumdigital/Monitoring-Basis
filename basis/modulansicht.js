@@ -132,6 +132,8 @@ export function berechneAnsicht(modul, { verlauf = [], aktiv = modul.aktiv, laeu
     typ: modul.typ ?? null,
     version: modul.version ?? letztes?.version ?? null,
     repo: modul.repo ?? null,
+    // Titel der eigenen Seite (Menüpunkt links) – erst nach der Freigabe.
+    seite: modul.seite && !modul.fehler && !freigabe ? modul.seite.titel : null,
     aktiv,
     intervallMinuten: modul.intervallMinuten ?? null,
     fehler: modul.fehler ?? null,

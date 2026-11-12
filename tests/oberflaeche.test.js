@@ -25,7 +25,7 @@ test('Oberfläche: ein Knopf „Einstellungen“ statt sechs, Bereiche aufklappb
   assert.match(html, /id="einstellungen-oeffnen"[^>]*>Einstellungen<span id="update-hinweis"/);
   const bereiche = [...html.matchAll(/<details id="([a-z-]+)" class="bereich"([^>]*)>\s*<summary><span class="bereich-titel">([^<]+)<\/span><span id="([a-z-]+)" class="bereich-status">/g)];
   const einst = bereiche.filter((b) => b[1].startsWith('ber-'));
-  assert.deepEqual(einst.map((b) => b[3]), ['HTTPS &amp; Domain', 'Benachrichtigung', 'Benutzer', 'Microsoft-Anmeldung', 'Tickets', 'Updates', 'Fehlerprotokoll', 'Speicher', 'System']);
+  assert.deepEqual(einst.map((b) => b[3]), ['HTTPS &amp; Domain', 'Benachrichtigung', 'Benutzer', 'Microsoft-Anmeldung', 'Updates', 'Fehlerprotokoll', 'Speicher', 'System']);
   for (const b of einst) assert.match(b[2], /name="einst"/); // immer nur einer offen
   assert.deepEqual(bereiche.filter((b) => b[1].startsWith('md-')).map((b) => b[3]), ['Einstellungen', 'Benachrichtigung', 'Updates', 'Kennzahlen', 'Verlauf']);
   for (const b of bereiche) assert.equal(b[4], `${b[1]}-status`);
@@ -59,4 +59,13 @@ test('Oberfläche: jeder Status ist gezählt oder als „nicht gezählt“ genan
   const m = (...a) => a.map((anzeige) => ({ anzeige }));
   assert.equal(nichtGezaehlt(m('ok', 'fehler', 'freigabe')), '');
   assert.equal(nichtGezaehlt(m('unbekannt', 'inaktiv', 'ok', 'unbekannt', 'laeuft', 'beendet')), '1 pausiert, 1 beendet, 1 prüft gerade, 2 noch nicht geprüft');
+});
+
+test('Oberfläche: Menü links nur mit Modulseiten, Seite im Rahmen', () => {
+  assert.match(html, /<nav class="seitenleiste" aria-label="Hauptmenü" hidden>/);
+  assert.match(html, /<iframe id="modul-rahmen"/);
+  // Leiste nur, wenn mindestens ein Modul eine Seite hat; Rahmen lädt /m/<id>/ über die Basis.
+  assert.match(js, /\.seitenleiste'\)\.hidden = !neu\.length/);
+  assert.match(js, /\$\('modul-rahmen'\)\.src = `\/m\/\$\{seite\.id\}\/`/);
+  assert.match(js, /\^#m\\\/\(\[a-z0-9-\]\{1,64\}\)\$/);
 });

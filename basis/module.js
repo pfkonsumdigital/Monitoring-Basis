@@ -12,7 +12,6 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
   const fehler = (text) => ({ fehler: `module.json: ${text}` });
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) return fehler('muss ein JSON-Objekt sein');
   if (!ID_MUSTER.test(ordnerName)) return fehler('Ordnername darf nur Kleinbuchstaben, Ziffern und Bindestriche enthalten');
-  if (ordnerName === 'basis-tickets') return fehler('Der Ordnername „basis-tickets“ ist für die Tickets der Basis reserviert');
   if (roh.id !== ordnerName) return fehler(`id muss dem Ordnernamen „${ordnerName}“ entsprechen`);
   if (!istText(roh.name) || roh.name.length > 100) return fehler('name fehlt oder ist länger als 100 Zeichen');
   if (roh.aktiv !== undefined && typeof roh.aktiv !== 'boolean') return fehler('aktiv muss true oder false sein');
@@ -48,8 +47,21 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
     if (roh.befehlsdatei !== undefined && typeof roh.befehlsdatei !== 'boolean') return fehler('befehlsdatei muss true oder false sein');
     modul.dienst = roh.dienst ?? null;
     modul.befehlsdatei = roh.befehlsdatei === true;
-  } else if (['programm', 'plugin'].includes(roh.typ) && (roh.dienst !== undefined || roh.befehlsdatei !== undefined)) {
-    return fehler('dienst und befehlsdatei gibt es nur bei typ "eigenstaendig"');
+    // Eigene Seite (seit 0.21.0): Das Modul betreibt einen Webserver auf 127.0.0.1:<port>. Die Basis zeigt ihn als
+    // Menüpunkt und leitet /m/<id>/… nach Anmeldung und Rechteprüfung dorthin weiter. „api“: Programme dürfen
+    // /m/<id>/api/… mit einem Schlüssel des Moduls (Authorization: Bearer …) ohne Anmeldung aufrufen.
+    if (roh.seite !== undefined) {
+      const s = roh.seite;
+      const ok = s && typeof s === 'object' && !Array.isArray(s) && istText(s.titel) && s.titel.trim().length <= 40
+        && Number.isInteger(s.port) && s.port >= 1024 && s.port <= 65535;
+      if (!ok) return fehler('seite muss die Form { "titel": "…" (bis 40 Zeichen), "port": 1024–65535 } haben');
+      modul.seite = { titel: s.titel.trim(), port: s.port };
+    }
+    if (roh.api !== undefined && typeof roh.api !== 'boolean') return fehler('api muss true oder false sein');
+    if (roh.api === true && !modul.seite) return fehler('api gibt es nur zusammen mit seite');
+    if (modul.seite) modul.api = roh.api === true;
+  } else if (['programm', 'plugin'].includes(roh.typ) && ['dienst', 'befehlsdatei', 'seite', 'api'].some((k) => roh[k] !== undefined)) {
+    return fehler('dienst, befehlsdatei, seite und api gibt es nur bei typ "eigenstaendig"');
   } else if (roh.typ === 'programm') {
     if (!istText(roh.befehl)) return fehler('befehl fehlt');
     const argumente = roh.argumente ?? [];

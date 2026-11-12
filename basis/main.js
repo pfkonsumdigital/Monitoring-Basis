@@ -17,8 +17,6 @@ import { Freigaben } from './freigabe.js';
 import { Benachrichtigung } from './benachrichtigung.js';
 import { Speicherbelegung } from './speicherbelegung.js';
 import { MicrosoftAnmeldung } from './microsoft.js';
-import { importDateiUebernehmen, Tickets } from './tickets.js';
-import { TicketPostfach } from './ticketpostfach.js';
 import { darf } from './rechte.js';
 import { Modulupdates } from './modulupdates.js';
 import { Anmeldung, hashPasswort } from './anmeldung.js';
@@ -155,15 +153,6 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   benachrichtigung.darfSehen = (name, modulId) => darf(anmeldung.benutzer[name], modulId, 'sehen');
   const microsoft = new MicrosoftAnmeldung({ datenOrdner: konfig.datenOrdner, tresor, geheimnisse: protokoll.geheimnisse, log });
   await microsoft.laden();
-  // Tickets (data/tickets.json) und Abruf der zugehörigen E-Mails. Eine data/tickets-import.json wird beim Start übernommen.
-  const tickets = new Tickets({ datenOrdner: konfig.datenOrdner, log });
-  await tickets.laden();
-  // Eigene App-Registrierung für das Ticket-Postfach (getrennt von der App für die Warnmails).
-  const ticketPostfach = new TicketPostfach({ datenOrdner: konfig.datenOrdner, tickets, tresor, geheimnisse: protokoll.geheimnisse, log });
-  await ticketPostfach.laden();
-  const importiert = await importDateiUebernehmen(tickets, konfig.datenOrdner, log, rename);
-  // Neu übernommene Tickets: Mails des Rückblicks noch einmal zuordnen.
-  if (importiert?.neu) { ticketPostfach.zustand.seit = null; await ticketPostfach.speichernDatei(); }
   const zertifikate = new Zertifikatsverwaltung({ konfig, log });
   const tls = await zertifikate.laden();
   let server;
@@ -196,7 +185,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const intern = konfig.tls.modus === 'aus';
   // Anmeldung mit Microsoft braucht HTTPS unter dem eingerichteten Namen (Rückkehr-Adresse in Entra).
   const microsoftAdresse = !intern && konfig.hostname ? `https://${konfig.hostname}${konfig.port === 443 ? '' : `:${konfig.port}`}` : null;
-  const anwendung = erstelleAnwendung({ tickets, ticketPostfach, microsoft, microsoftAdresse, module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
+  const anwendung = erstelleAnwendung({ microsoft, microsoftAdresse, module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);
@@ -204,7 +193,6 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   domain.server = server;
   zertifikate.automatischErneuern(server);
   planer.start();
-  ticketPostfach.start();
   updates.taeglichPruefen();
   modulupdates.taeglichPruefen();
   process.send?.({ typ: 'bereit', version: updates.installiert });

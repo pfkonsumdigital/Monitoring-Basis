@@ -32,12 +32,12 @@
 
 - Die Basis (`basis/`, `oberflaeche/`) enthält keine Fachlogik. Fachliche
   Prüfungen gehören in eigenständige Module.
-  Ausnahme auf Wunsch des Nutzers (12.11.2026): die Tickets der IT
-  (`basis/tickets.js`, `basis/ticketpostfach.js`, Menüpunkt „Tickets“).
 - Module kennen nur den Andockvertrag: `module.json` (vom Modul),
   `einstellungen.json` (schreibt die Basis), `status.json` (schreibt ein
   eigenständiges Modul), `befehl.json` (Befehl der Basis zum Beenden, nur bei
-  `"befehlsdatei": true`) und das Ergebnis mit `status` (`ok`/`warnung`/`fehler`),
+  `"befehlsdatei": true`), `seite.schluessel` und die Weiterleitung `/m/<id>/…`
+  (nur bei `"seite"`, siehe README „Eigene Seite eines Moduls“), der Ordner `daten`
+  (bleibt bei Updates) und das Ergebnis mit `status` (`ok`/`warnung`/`fehler`),
   `zusammenfassung`, `details`, `messwerte`. Programme melden alternativ über
   Exitcode 0/1/2. Änderungen an diesem Vertrag müssen abwärtskompatibel sein
   und in README und CHANGELOG stehen.

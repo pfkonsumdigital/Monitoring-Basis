@@ -1,31 +1,32 @@
 # Änderungen
 
-## 0.20.0
+## 0.21.0
 
-Tickets direkt im Monitoring: Menüpunkt „Tickets“ mit Übersicht, Anlegen, Bearbeiten, Verlauf und zugeordneten E-Mails.
+Module können eine eigene Seite in der Oberfläche haben (Menü links). Grundlage für das Ticketmodul.
+
+Version 0.20.0 (Tickets direkt in der Basis) wurde zurückgezogen: Tickets kommen als eigenständiges Modul
+(`Monitoring-Modul-Tickets`). Wer 0.20.0 installiert hatte: `data\tickets.json` bleibt liegen und wird vom
+Ticketmodul beim ersten Start übernommen.
 
 ### Neu
 
-- **Menü links** (auf dem Handy als Leiste): „Übersicht“ (Module) und „Tickets“ mit der Zahl nicht erledigter Tickets. Ohne Ticket-Recht bleibt die Seite wie bisher.
-- **Ticketübersicht:** Nummer, Betreff, Status, Datum und Uhrzeit der letzten Änderung, E-Mails (Anzahl und Zeitpunkt der letzten). Sortiert nach der jüngsten Aktivität (Änderung oder eingegangene E-Mail), Filter nach Status. Klick oder Enter öffnet das Ticket; Direktlink `#tickets/IT-2026-055`.
-- **Ticket anlegen und bearbeiten:** Betreff, Beschreibung, Status (Offen, In Bearbeitung, Erledigt). Nummern `IT-<Jahr>-<Nr.>` im Anschluss an die bisherigen Nummern der IT-Assistenz.
-- **Verlauf** (dauerhaft in `data/tickets.json`): Anlage, Änderungen mit Bearbeiter und vorher/nachher, zugeordnete E-Mails mit Absender, Betreff und Text.
-- **Automatische Aktualisierung** im 10-Sekunden-Takt der Oberfläche: Änderungen aus anderen Sitzungen und neue E-Mails erscheinen ohne Neuladen in Übersicht und geöffnetem Ticket; eigene Eingaben werden dabei nicht überschrieben. Speichern auf veraltetem Stand wird abgelehnt (aktueller Stand wird gezeigt).
-- **E-Mail-Zuordnung:** Abruf des Posteingangs eines Postfachs (z. B. it@) alle 2 Minuten über Microsoft Graph mit einer **eigenen App-Registrierung** (getrennt von der App für die Warnmails, Anwendungsberechtigung Mail.Read); Zuordnung über die Ticketnummer im Betreff, jede Mail (Message-ID) nur einmal, nur lesend. **Einstellungen → Tickets**: Mandanten-ID, Anwendungs-ID, geheimer Schlüssel (DPAPI-verschlüsselt, nie angezeigt, aus Protokollen gefiltert), Postfach, Rückblick, „Jetzt abrufen“, letzter Abruf und Fehler (abgelaufener Schlüssel, fehlende Berechtigung).
-- **Rechte:** Feld „Tickets“ im Rechte-Editor (kein Zugriff / lesen / lesen, anlegen und bearbeiten), unabhängig vom Grundrecht der Module. Admins immer.
-- **Übernahme vorhandener Tickets:** `data/tickets-import.json` wird beim Start einmalig übernommen (bisherige Nummern, vorhandene bleiben unverändert).
-- API: `GET/POST /api/tickets`, `GET/POST /api/tickets/<Nummer>`, `GET/POST /api/tickets-postfach`, `POST /api/tickets-postfach/abrufen`; `/api/status` mit `tickets` (Recht).
+- **Eigene Seite eines Moduls:** `"seite": { "titel": "…", "port": … }` in `module.json` (nur eigenständige Module). Die Basis zeigt links einen Menüpunkt und leitet `/m/<id>/…` an den Webserver des Moduls auf 127.0.0.1 weiter – erst nach Anmeldung, Zwei-Faktor und Rechteprüfung. Das Modul erfährt Benutzer, Recht und Admin; ein Schlüssel aus `seite.schluessel` beweist, dass die Anfrage von der Basis kommt.
+- **Programm-Zugang:** Bei `"api": true` dürfen Programme `/m/<id>/api/…` mit `Authorization: Bearer …` ohne Anmeldung aufrufen; das Modul prüft den Schlüssel, die Basis sperrt eine Adresse nach 10 Fehlversuchen für 15 Minuten.
+- **Menü links** (Übersicht + Seiten der Module), nur wenn es mindestens eine Modulseite gibt; Direktlink `#m/<id>`. Auf dem Handy als Leiste oben.
+- **Ordner `daten`** im Modulordner bleibt bei Modul-Updates und „Zurück“ erhalten.
 
 ### Geändert
 
-- Die Modul-ID `basis-tickets` ist reserviert (Recht für die Tickets).
-- Architektur: Die Tickets sind auf Wunsch die einzige fachliche Funktion in der Basis (AGENTS.md, README).
+- Andockvertrag erweitert (abwärtskompatibel): `seite`, `api`, `seite.schluessel`, `daten\`. README, Abschnitt „Eigene Seite eines Moduls“.
+- Ändernde Anfragen an eine Modulseite brauchen „bedienen“; neue oder geänderte Module bekommen ihre Seite erst nach der Freigabe.
+
+### Entfernt
+
+- Tickets in der Basis aus 0.20.0 (Menüpunkt, Rechte-Eintrag „Tickets“, Einstellungen „Tickets“, `/api/tickets`).
 
 ### Prüfung
 
-- `npm test`: 200 Tests (davon 5 nur unter Windows), neu `tests/tickets.test.js`: Nummern, Verlauf mit vorher/nachher, Versionskonflikt, gleichzeitige Änderungen, Laden nach Neustart, beschädigte Datei, E-Mail-Zuordnung (Nummer im Betreff, doppelt, ohne/unbekannte Nummer), Sortierung nach Aktivität, Import (Datei beim Start, doppelt, fehlerhafte Einträge, nur Datum), Rechte unabhängig vom Grundrecht, Webserver je Recht (lesen/bearbeiten/kein), Stand für die Aktualisierung, Postfach-Abruf mit simuliertem Graph und eigener App (Mandant und Schlüssel der eigenen App, Schlüssel verschlüsselt und nie angezeigt, leeres Feld behält ihn, neuer Schlüssel → neues Token, Folgeseiten, eigene Mails, Überlappung, fehlende Berechtigung, ungültiges Token, abgelaufener Schlüssel).
-- Gegenproben (Mutationen): 16 von 16 erkannt (nach Schärfung zweier Tests).
-- Browsertest mit drei Sitzungen und simuliertem Microsoft 365 (PC hell/dunkel, Handy): Import von 55 Tickets, Sortierung, Filter, Postfach mit eigener App einrichten (Pflichtfelder, Schlüssel nicht zurückgegeben), Ticket-Recht vergeben, Testticket anlegen (sofort oben), Änderung durch anna in zweiter Sitzung erscheint im offenen Ticket nach 8 s, zugeordnete E-Mail erscheint nach 4 s, kein Doppel beim zweiten Abruf, Verlauf nach erneutem Öffnen, Neuladen und Neustart der Basis erhalten; 44 von 44 Prüfpunkten OK.
+- `npm test`, neu `tests/modulseiten.test.js`: Prüfung von `seite`/`api`, Pfadtricks, Weiterleitung mit Benutzerangaben, untergeschobene Kopfzeilen und Cookies verworfen, CSP der Basis, Umleitungen bleiben im Modul, „sehen“ darf nichts ändern, fremde Herkunft abgewiesen, ohne Recht 404, Programm-Zugang mit Bremse, Modul aus/ohne Schlüssel/ohne Freigabe, Ordner `daten` bei Update und „Zurück“; Oberflächentest Menü und Rahmen.
 
 ## 0.19.1
 
