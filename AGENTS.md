@@ -32,6 +32,8 @@
 
 - Die Basis (`basis/`, `oberflaeche/`) enthält keine Fachlogik. Fachliche
   Prüfungen gehören in eigenständige Module.
+  Ausnahme auf Wunsch des Nutzers (12.11.2026): die Tickets der IT
+  (`basis/tickets.js`, `basis/ticketpostfach.js`, Menüpunkt „Tickets“).
 - Module kennen nur den Andockvertrag: `module.json` (vom Modul),
   `einstellungen.json` (schreibt die Basis), `status.json` (schreibt ein
   eigenständiges Modul), `befehl.json` (Befehl der Basis zum Beenden, nur bei

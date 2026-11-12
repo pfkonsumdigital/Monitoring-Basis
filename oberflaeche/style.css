@@ -281,3 +281,67 @@ dialog.breit { width: min(960px, calc(100vw - 32px)); }
 .login-microsoft { display: block; text-align: center; padding: 9px; }
 .bv-rechte { border: 1px solid var(--rand); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
 .bv-rechte h3 { margin-top: 4px; }
+/* Navigation links (seit 0.20.0): Übersicht und Tickets */
+.rahmen { display: flex; align-items: flex-start; min-height: calc(100vh - 60px); }
+.rahmen > main { flex: 1; min-width: 0; }
+.seitenleiste { flex: none; width: 200px; position: sticky; top: 0; padding: 16px 12px; display: grid; gap: 2px; align-content: start; min-height: calc(100vh - 60px); border-right: 1px solid var(--rand); background: var(--flaeche); }
+.nav-gruppe { margin: 0 8px 6px; font-size: 0.78rem; font-weight: 600; color: var(--leise); text-transform: uppercase; letter-spacing: 0.04em; }
+.nav-punkt { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; color: var(--text); text-decoration: none; border: 1px solid transparent; }
+.nav-punkt:hover { background: var(--hintergrund); }
+.nav-punkt[aria-current] { background: var(--hintergrund); border-color: var(--rand); font-weight: 600; }
+.nav-punkt:focus-visible { outline: 2px solid var(--akzent); outline-offset: 1px; }
+.nav-zahl { font-size: 0.78rem; font-weight: 600; min-width: 1.6em; padding: 0 6px; border-radius: 999px; background: var(--neutral-flaeche); color: var(--text); text-align: center; }
+.nav-zahl:empty { display: none; }
+/* Tickets */
+.tickets-kopf { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 10px 16px; margin-bottom: 12px; }
+.tickets-kopf h2 { font-size: 1.05rem; margin-bottom: 2px; }
+.tickets-kopf h2 .leise { font-weight: 400; }
+.tickets-kopf p { margin: 0; }
+.tickets-werkzeuge { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tickets-werkzeuge select { font: inherit; padding: 6px 8px; border: 1px solid var(--rand); border-radius: 6px; background: var(--flaeche); color: var(--text); }
+.tabelle-rahmen { background: var(--flaeche); border: 1px solid var(--rand); border-radius: 8px; overflow-x: auto; }
+.tickets-tabelle { width: 100%; border-collapse: collapse; }
+.tickets-tabelle th { text-align: left; font-size: 0.78rem; font-weight: 600; color: var(--leise); text-transform: uppercase; letter-spacing: 0.04em; padding: 10px 12px; border-bottom: 1px solid var(--rand); background: var(--hintergrund); white-space: nowrap; }
+.tickets-tabelle td { padding: 10px 12px; border-bottom: 1px solid var(--rand); vertical-align: middle; }
+.tickets-tabelle tbody tr:last-child td { border-bottom: 0; }
+.tickets-tabelle tbody tr { cursor: pointer; }
+.tickets-tabelle tbody tr:hover, .tickets-tabelle tbody tr:focus-visible { background: var(--hintergrund); outline: none; }
+.tickets-tabelle tbody tr:focus-visible td:first-child { box-shadow: inset 3px 0 0 var(--akzent); }
+.ticket-nr { font-family: ui-monospace, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
+.ticket-betreff { overflow-wrap: anywhere; }
+.ticket-zeit { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ticket-mails { white-space: nowrap; }
+.ticket-status { display: inline-block; font-size: 0.8rem; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--rand); background: var(--neutral-flaeche); color: var(--text); white-space: nowrap; }
+.ticket-status[data-art="offen"] { background: var(--warnung-flaeche); color: var(--warnung); border-color: transparent; }
+.ticket-status[data-art="bearbeitung"] { background: var(--neutral-flaeche); color: var(--akzent); border-color: transparent; }
+.ticket-status[data-art="erledigt"] { background: var(--ok-flaeche); color: var(--ok); border-color: transparent; }
+#ticket textarea { font: inherit; padding: 7px 10px; border: 1px solid var(--rand); border-radius: 6px; background: var(--hintergrund); color: var(--text); width: 100%; resize: vertical; min-height: 8em; }
+#ticket input:disabled, #ticket select:disabled, #ticket textarea:disabled { opacity: 0.8; }
+.ticket-verlauf { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--rand); display: grid; gap: 12px; }
+.ticket-verlauf > li { position: relative; }
+.ticket-verlauf > li::before { content: ''; position: absolute; left: -20px; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--neutral); border: 2px solid var(--flaeche); }
+.ticket-verlauf > li[data-art="mail"]::before { background: var(--akzent); }
+.ticket-verlauf > li[data-art="geaendert"]::before { background: var(--warnung); }
+.ticket-verlauf p, .tv-aenderungen { margin: 2px 0 0; overflow-wrap: anywhere; }
+.tv-kopf { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.tv-kopf time { font-variant-numeric: tabular-nums; color: var(--leise); font-size: 0.9em; }
+.tv-aenderungen { padding-left: 18px; }
+.tv-vorher { text-decoration: line-through; color: var(--leise); }
+.ticket-verlauf pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 0.92em; margin: 4px 0; padding: 8px 10px; background: var(--hintergrund); border-radius: 6px; max-height: 18rem; overflow: auto; }
+.ticket-verlauf summary { cursor: pointer; }
+@media (max-width: 800px) {
+  .rahmen { display: block; }
+  .seitenleiste { position: static; width: auto; min-height: 0; display: flex; gap: 6px; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--rand); overflow-x: auto; }
+  .nav-gruppe { display: none; }
+}
+@media (max-width: 600px) {
+  .tabelle-rahmen { border: 0; background: transparent; }
+  .tickets-tabelle, .tickets-tabelle tbody { display: block; }
+  .tickets-tabelle thead { display: none; }
+  .tickets-tabelle tr { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; padding: 10px 12px; margin-bottom: 8px; background: var(--flaeche); border: 1px solid var(--rand); border-radius: 8px; }
+  .tickets-tabelle td { padding: 0; border: 0; }
+  .tickets-tabelle td.ticket-betreff { grid-column: 1 / -1; grid-row: 2; font-weight: 600; }
+  .tickets-tabelle td:nth-child(3) { grid-column: 3; grid-row: 1; }
+  .tickets-tabelle td:nth-child(4), .tickets-tabelle td:nth-child(5) { grid-column: 1 / -1; font-size: 0.88em; color: var(--leise); }
+  .tickets-tabelle td:nth-child(4)::before, .tickets-tabelle td:nth-child(5)::before { content: attr(data-label) ': '; }
+}

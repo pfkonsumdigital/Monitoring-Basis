@@ -1,5 +1,32 @@
 # Änderungen
 
+## 0.20.0
+
+Tickets direkt im Monitoring: Menüpunkt „Tickets“ mit Übersicht, Anlegen, Bearbeiten, Verlauf und zugeordneten E-Mails.
+
+### Neu
+
+- **Menü links** (auf dem Handy als Leiste): „Übersicht“ (Module) und „Tickets“ mit der Zahl nicht erledigter Tickets. Ohne Ticket-Recht bleibt die Seite wie bisher.
+- **Ticketübersicht:** Nummer, Betreff, Status, Datum und Uhrzeit der letzten Änderung, E-Mails (Anzahl und Zeitpunkt der letzten). Sortiert nach der jüngsten Aktivität (Änderung oder eingegangene E-Mail), Filter nach Status. Klick oder Enter öffnet das Ticket; Direktlink `#tickets/IT-2026-055`.
+- **Ticket anlegen und bearbeiten:** Betreff, Beschreibung, Status (Offen, In Bearbeitung, Erledigt). Nummern `IT-<Jahr>-<Nr.>` im Anschluss an die bisherigen Nummern der IT-Assistenz.
+- **Verlauf** (dauerhaft in `data/tickets.json`): Anlage, Änderungen mit Bearbeiter und vorher/nachher, zugeordnete E-Mails mit Absender, Betreff und Text.
+- **Automatische Aktualisierung** im 10-Sekunden-Takt der Oberfläche: Änderungen aus anderen Sitzungen und neue E-Mails erscheinen ohne Neuladen in Übersicht und geöffnetem Ticket; eigene Eingaben werden dabei nicht überschrieben. Speichern auf veraltetem Stand wird abgelehnt (aktueller Stand wird gezeigt).
+- **E-Mail-Zuordnung:** Abruf des Posteingangs eines Postfachs (z. B. it@) alle 2 Minuten über Microsoft Graph mit einer **eigenen App-Registrierung** (getrennt von der App für die Warnmails, Anwendungsberechtigung Mail.Read); Zuordnung über die Ticketnummer im Betreff, jede Mail (Message-ID) nur einmal, nur lesend. **Einstellungen → Tickets**: Mandanten-ID, Anwendungs-ID, geheimer Schlüssel (DPAPI-verschlüsselt, nie angezeigt, aus Protokollen gefiltert), Postfach, Rückblick, „Jetzt abrufen“, letzter Abruf und Fehler (abgelaufener Schlüssel, fehlende Berechtigung).
+- **Rechte:** Feld „Tickets“ im Rechte-Editor (kein Zugriff / lesen / lesen, anlegen und bearbeiten), unabhängig vom Grundrecht der Module. Admins immer.
+- **Übernahme vorhandener Tickets:** `data/tickets-import.json` wird beim Start einmalig übernommen (bisherige Nummern, vorhandene bleiben unverändert).
+- API: `GET/POST /api/tickets`, `GET/POST /api/tickets/<Nummer>`, `GET/POST /api/tickets-postfach`, `POST /api/tickets-postfach/abrufen`; `/api/status` mit `tickets` (Recht).
+
+### Geändert
+
+- Die Modul-ID `basis-tickets` ist reserviert (Recht für die Tickets).
+- Architektur: Die Tickets sind auf Wunsch die einzige fachliche Funktion in der Basis (AGENTS.md, README).
+
+### Prüfung
+
+- `npm test`: 200 Tests (davon 5 nur unter Windows), neu `tests/tickets.test.js`: Nummern, Verlauf mit vorher/nachher, Versionskonflikt, gleichzeitige Änderungen, Laden nach Neustart, beschädigte Datei, E-Mail-Zuordnung (Nummer im Betreff, doppelt, ohne/unbekannte Nummer), Sortierung nach Aktivität, Import (Datei beim Start, doppelt, fehlerhafte Einträge, nur Datum), Rechte unabhängig vom Grundrecht, Webserver je Recht (lesen/bearbeiten/kein), Stand für die Aktualisierung, Postfach-Abruf mit simuliertem Graph und eigener App (Mandant und Schlüssel der eigenen App, Schlüssel verschlüsselt und nie angezeigt, leeres Feld behält ihn, neuer Schlüssel → neues Token, Folgeseiten, eigene Mails, Überlappung, fehlende Berechtigung, ungültiges Token, abgelaufener Schlüssel).
+- Gegenproben (Mutationen): 16 von 16 erkannt (nach Schärfung zweier Tests).
+- Browsertest mit drei Sitzungen und simuliertem Microsoft 365 (PC hell/dunkel, Handy): Import von 55 Tickets, Sortierung, Filter, Postfach mit eigener App einrichten (Pflichtfelder, Schlüssel nicht zurückgegeben), Ticket-Recht vergeben, Testticket anlegen (sofort oben), Änderung durch anna in zweiter Sitzung erscheint im offenen Ticket nach 8 s, zugeordnete E-Mail erscheint nach 4 s, kein Doppel beim zweiten Abruf, Verlauf nach erneutem Öffnen, Neuladen und Neustart der Basis erhalten; 44 von 44 Prüfpunkten OK.
+
 ## 0.19.1
 
 Übersicht verständlicher: Die Zähler oben zeigen erkennbar den Status der Module.

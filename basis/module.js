@@ -12,6 +12,7 @@ export function pruefeModul(roh, ordnerName, modulOrdner) {
   const fehler = (text) => ({ fehler: `module.json: ${text}` });
   if (!roh || typeof roh !== 'object' || Array.isArray(roh)) return fehler('muss ein JSON-Objekt sein');
   if (!ID_MUSTER.test(ordnerName)) return fehler('Ordnername darf nur Kleinbuchstaben, Ziffern und Bindestriche enthalten');
+  if (ordnerName === 'basis-tickets') return fehler('Der Ordnername „basis-tickets“ ist für die Tickets der Basis reserviert');
   if (roh.id !== ordnerName) return fehler(`id muss dem Ordnernamen „${ordnerName}“ entsprechen`);
   if (!istText(roh.name) || roh.name.length > 100) return fehler('name fehlt oder ist länger als 100 Zeichen');
   if (roh.aktiv !== undefined && typeof roh.aktiv !== 'boolean') return fehler('aktiv muss true oder false sein');

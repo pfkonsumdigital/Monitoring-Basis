@@ -138,6 +138,7 @@ async function aktualisieren() {
     $('sys-konto').hidden = !k;
     if (k) $('sys-konto-text').textContent = kontoText(k);
     $('ber-sys').hidden = !k && !daten.neustartMoeglich && !daten.beendenMoeglich;
+    ticketRechtSetzen(daten.tickets ?? 'kein');
     const aktionen = [daten.neustartMoeglich && 'Neu starten', daten.beendenMoeglich && 'Beenden'].filter(Boolean).join(' oder ');
     bereichStatus('ber-sys', [k && `Konto ${kontoName}`, aktionen].filter(Boolean).join(' · '), !k ? '' : k.fehlt?.length ? 'fehler' : k.system || k.admin ? 'warnung' : '');
     letzteModule = daten.module;
@@ -792,6 +793,7 @@ function bvRechteOeffnen(name) {
   bvRechteName = name;
   $('bv-rechte-titel').textContent = b.admin ? `Microsoft-Adresse von ${name}` : `Rechte von ${name}`;
   $('bv-rechte-grund').value = b.rechte?.grund ?? 'bedienen';
+  $('bv-rechte-tickets').value = b.rechte?.module?.[TICKET_RECHT] ?? 'kein';
   $('bv-rechte-grund').closest('.felder').hidden = b.admin;
   $('bv-rechte-module').closest('.liste-rahmen').hidden = b.admin;
   $('bv-rechte-speichern').hidden = b.admin;
@@ -815,6 +817,7 @@ $('bv-rechte-schliessen').addEventListener('click', () => { $('bv-rechte').hidde
 $('bv-rechte-speichern').addEventListener('click', async () => {
   const name = bvRechteName;
   const module = Object.fromEntries([...$('bv-rechte-module').querySelectorAll('select')].filter((a) => a.value).map((a) => [a.dataset.modul, a.value]));
+  if ($('bv-rechte-tickets').value !== 'kein') module[TICKET_RECHT] = $('bv-rechte-tickets').value;
   if (await bvAktion(`/api/benutzer/${name}/rechte`, { grund: $('bv-rechte-grund').value, module }, [$('bv-rechte-speichern')], `Rechte von ${name} gespeichert – gilt sofort.`)) bvRechteOeffnen(name);
 });
 $('bv-ms-speichern').addEventListener('click', async () => {
@@ -1467,6 +1470,8 @@ nachfragen($('beenden-ja'), 'Wirklich beenden?', async () => {
   $('details').close();
   for (const id of ['einstellungen-oeffnen', 'meine-oeffnen', 'passwort-oeffnen', 'admin-hinweis']) $(id).hidden = true;
   for (const teil of document.querySelectorAll('main > :not(#beendet-seite)')) teil.hidden = true;
+  document.querySelector('.seitenleiste').hidden = true;
+  $('ticket').close();
   $('beendet-text').textContent = mitModulen ? 'Die eigenständigen Module wurden ebenfalls beendet (soweit sie das unterstützen).' : 'Eigenständige Module laufen weiter.';
   $('beendet-seite').hidden = false;
   document.title = 'Monitoring – beendet';
@@ -1481,7 +1486,7 @@ function sysOeffnen() {
   $('beenden-ja').disabled = false;
   return Promise.resolve();
 }
-const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-ms': msLaden, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sp': () => spLaden(), 'ber-sys': sysOeffnen };
+const BEREICHE = { 'ber-tls': () => tlsLaden(), 'ber-ben': benLaden, 'ber-bv': bvOeffnen, 'ber-ms': msLaden, 'ber-tk': tkLaden, 'ber-upd': updatesOeffnen, 'ber-prot': protokollLaden, 'ber-sp': () => spLaden(), 'ber-sys': sysOeffnen };
 const bereichLaden = (id) => BEREICHE[id]().catch((fehler) => { if (fehler.message !== 'abgemeldet') bereichStatus(id, KEINE_VERBINDUNG, 'fehler'); });
 
 for (const d of document.querySelectorAll('details.bereich')) {
@@ -1504,5 +1509,291 @@ $('einstellungen').addEventListener('close', () => clearTimeout(tlsTimer));
 
 $('details-schliessen').addEventListener('click', () => $('details').close());
 $('details').addEventListener('close', () => { offenesModul = null; clearTimeout(mupdTimer); });
+// ---- Tickets (seit 0.20.0) ----
+// Ansicht über das Menü links (#tickets). Aktualisierung über denselben 10-Sekunden-Takt wie die Übersicht:
+// /api/tickets?stand=N liefert nur bei Änderungen eine neue Liste (eigene, aus anderen Sitzungen, neue E-Mails).
+const TICKET_RECHT = 'basis-tickets';
+const TICKET_STATUS_ART = { Offen: 'offen', 'In Bearbeitung': 'bearbeitung', Erledigt: 'erledigt' };
+const FELD_TEXT = { betreff: 'Betreff', beschreibung: 'Beschreibung', status: 'Status' };
+let ticketRecht = 'kein';
+let ticketStand = null;
+let ticketListe = [];
+let offenesTicket = null; // { nummer, ticket } – null bei „Neues Ticket“ ohne Nummer
+let ticketNeu = false;
+
+function ansichtWaehlen() {
+  const ziel = location.hash.startsWith('#tickets') && ticketRecht !== 'kein' ? 'tickets' : 'uebersicht';
+  $('ansicht-uebersicht').hidden = ziel !== 'uebersicht';
+  $('ansicht-tickets').hidden = ziel !== 'tickets';
+  $('nav-uebersicht').toggleAttribute('aria-current', ziel === 'uebersicht');
+  $('nav-tickets').toggleAttribute('aria-current', ziel === 'tickets');
+  if (ziel === 'uebersicht') $('nav-uebersicht').setAttribute('aria-current', 'page');
+  else $('nav-tickets').setAttribute('aria-current', 'page');
+  // Direktlink auf ein Ticket: #tickets/IT-2026-055
+  const nummer = /^#tickets\/(IT-\d{4}-\d{3,5})$/.exec(location.hash)?.[1];
+  if (ziel === 'tickets' && nummer && offenesTicket?.nummer !== nummer) ticketOeffnen(nummer);
+  else if (!nummer && $('ticket').open && !ticketNeu) $('ticket').close();
+}
+
+function ticketRechtSetzen(recht) {
+  const vorher = ticketRecht;
+  ticketRecht = recht;
+  $('nav-tickets').hidden = recht === 'kein';
+  // Ohne Tickets gibt es nur die Übersicht – dann keine Leiste.
+  document.querySelector('.seitenleiste').hidden = recht === 'kein' || !$('beendet-seite').hidden;
+  $('ticket-neu').hidden = recht !== 'bedienen';
+  if (recht === 'kein') {
+    if (!$('ansicht-tickets').hidden) location.hash = '#uebersicht';
+    if ($('ticket').open) $('ticket').close();
+    return;
+  }
+  if (vorher === 'kein') ansichtWaehlen();
+  ticketsLaden(true);
+}
+
+async function ticketsLaden(hintergrund = false) {
+  let daten;
+  try {
+    const antwort = await api(`/api/tickets${ticketStand === null ? '' : `?stand=${ticketStand}`}`, hintergrund ? HINTERGRUND : {});
+    if (!antwort.ok) return;
+    daten = await antwort.json();
+  } catch { return; }
+  if (daten.unveraendert) return;
+  ticketStand = daten.stand;
+  ticketListe = daten.tickets;
+  ticketsZeigen();
+  // Geöffnetes Ticket nachladen: neue E-Mails oder Änderungen aus einer anderen Sitzung.
+  if ($('ticket').open && offenesTicket) ticketNachladen(offenesTicket.nummer);
+}
+
+const ticketDatum = (iso) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' });
+const ticketZeit = (iso) => (iso ? new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–');
+
+function ticketsZeigen() {
+  const filter = $('tickets-filter').value;
+  const sichtbar = ticketListe.filter((t) => !filter || (filter === 'nicht-erledigt' ? t.status !== 'Erledigt' : t.status === filter));
+  const offen = ticketListe.filter((t) => t.status !== 'Erledigt').length;
+  $('nav-tickets-zahl').textContent = offen ? String(offen) : '';
+  $('tickets-anzahl').textContent = `· ${ticketListe.length} ${ticketListe.length === 1 ? 'Ticket' : 'Tickets'}, ${offen} nicht erledigt`;
+  $('tickets-liste').replaceChildren(...sichtbar.map((t) => {
+    const pille = el('span', { className: 'ticket-status', textContent: t.status });
+    pille.dataset.art = TICKET_STATUS_ART[t.status] ?? '';
+    const mails = t.mails.anzahl
+      ? el('span', { className: 'ticket-mails', title: `${t.mails.anzahl} E-Mail${t.mails.anzahl === 1 ? '' : 's'} eingegangen, zuletzt ${ticketZeit(t.mails.letzte)}` },
+        el('strong', { textContent: `✉ ${t.mails.anzahl}` }), el('span', { className: 'leise', textContent: ` zuletzt ${ticketZeit(t.mails.letzte)}` }))
+      : el('span', { className: 'leise', textContent: 'keine' });
+    const zeile = el('tr', { tabIndex: 0, title: 'Ticket öffnen' },
+      el('td', { className: 'ticket-nr', textContent: t.nummer }),
+      el('td', { className: 'ticket-betreff', textContent: t.betreff }),
+      el('td', {}, pille),
+      el('td', { className: 'ticket-zeit', textContent: t.nurDatum ? ticketDatum(t.geaendert) : ticketZeit(t.geaendert), title: t.nurDatum ? 'Aus der bisherigen Ticketübersicht übernommen – nur das Datum ist bekannt.' : '' }),
+      el('td', {}, mails));
+    for (const [i, name] of ['Nr.', 'Betreff', 'Status', 'Letzte Änderung', 'E-Mails'].entries()) zeile.children[i].dataset.label = name;
+    zeile.dataset.nummer = t.nummer;
+    zeile.addEventListener('click', () => { location.hash = `#tickets/${t.nummer}`; });
+    zeile.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); location.hash = `#tickets/${t.nummer}`; } });
+    return zeile;
+  }));
+  $('tickets-leer').hidden = sichtbar.length > 0;
+  $('tickets-leer').textContent = ticketListe.length ? 'Keine Tickets mit diesem Status.' : 'Noch keine Tickets.';
+}
+$('tickets-filter').addEventListener('change', ticketsZeigen);
+
+const ticketMeldung = (text, art = '') => { $('ticket-meldung').textContent = text; $('ticket-meldung').dataset.art = art; };
+const ticketFormWerte = () => ({ betreff: $('ticket-betreff').value, beschreibung: $('ticket-beschreibung').value, status: $('ticket-status').value });
+// Hat der Benutzer im Formular etwas geändert, das noch nicht gespeichert ist?
+function ticketGeaendert() {
+  if (!offenesTicket?.ticket) return false;
+  const w = ticketFormWerte();
+  const t = offenesTicket.ticket;
+  return w.betreff.trim() !== t.betreff || w.beschreibung.replace(/\s+$/, '') !== t.beschreibung || w.status !== t.status;
+}
+
+function ticketFormFuellen(t) {
+  $('ticket-betreff').value = t.betreff;
+  $('ticket-beschreibung').value = t.beschreibung;
+  $('ticket-status').value = t.status;
+  for (const k of Object.keys(FELD_TEXT)) $(`ticket-${k}-fehler`).textContent = '';
+}
+
+function verlaufEintrag(v) {
+  const kopf = el('div', { className: 'tv-kopf' }, el('time', { dateTime: v.zeit, textContent: ticketZeit(v.zeit) }));
+  const inhalt = [];
+  if (v.art === 'erstellt' || v.art === 'import') {
+    kopf.append(el('strong', { textContent: v.art === 'erstellt' ? 'Ticket angelegt' : 'Übernommen' }), el('span', { className: 'leise', textContent: v.art === 'erstellt' ? `von ${v.von}` : `aus ${v.von}` }));
+    inhalt.push(el('p', { textContent: `Betreff: ${v.werte.betreff} · Status: ${v.werte.status}` }));
+    if (v.hinweis) inhalt.push(el('p', { className: 'leise', textContent: v.hinweis }));
+  } else if (v.art === 'geaendert') {
+    kopf.append(el('strong', { textContent: 'Geändert' }), el('span', { className: 'leise', textContent: `von ${v.von}` }));
+    inhalt.push(el('ul', { className: 'tv-aenderungen' }, ...v.aenderungen.map((a) => {
+      if (a.feld === 'beschreibung') {
+        return el('li', {}, el('details', {}, el('summary', { textContent: 'Beschreibung geändert (vorher/nachher anzeigen)' }),
+          el('p', { className: 'leise', textContent: 'Vorher:' }), el('pre', { textContent: a.vorher || '(leer)' }),
+          el('p', { className: 'leise', textContent: 'Nachher:' }), el('pre', { textContent: a.nachher || '(leer)' })));
+      }
+      return el('li', {}, `${FELD_TEXT[a.feld]}: `, el('span', { className: 'tv-vorher', textContent: a.vorher }), ' → ', el('strong', { textContent: a.nachher }));
+    })));
+  } else if (v.art === 'mail') {
+    kopf.append(el('strong', { textContent: 'E-Mail' }), el('span', { className: 'leise', textContent: `von ${v.mail.name ? `${v.mail.name} <${v.von}>` : v.von}` }));
+    inhalt.push(el('details', { className: 'tv-mail' }, el('summary', { textContent: v.mail.betreff || '(ohne Betreff)' }), el('pre', { textContent: v.mail.text || '(kein Text)' })));
+  }
+  const li = el('li', {}, kopf, ...inhalt);
+  li.dataset.art = v.art;
+  return li;
+}
+
+function ticketZeigen(t) {
+  offenesTicket = { nummer: t.nummer, ticket: t };
+  $('ticket-titel').textContent = `${t.nummer} · ${t.betreff}`;
+  $('ticket-info').textContent = `Angelegt ${ticketZeit(t.erstellt)} · letzte Änderung ${t.nurDatum ? ticketDatum(t.geaendert) : ticketZeit(t.geaendert)} · ${t.mails.anzahl ? `${t.mails.anzahl} E-Mail${t.mails.anzahl === 1 ? '' : 's'}, zuletzt ${ticketZeit(t.mails.letzte)}` : 'keine E-Mails'}`;
+  $('ticket-verlauf').replaceChildren(...t.verlauf.map(verlaufEintrag));
+  $('ticket-verlauf-rahmen').hidden = false;
+}
+
+function ticketBearbeitbar(ja) {
+  for (const id of ['ticket-betreff', 'ticket-beschreibung', 'ticket-status']) $(id).disabled = !ja;
+  $('ticket-speichern').hidden = !ja;
+}
+
+async function ticketOeffnen(nummer) {
+  ticketNeu = false;
+  $('ticket-hinweis').hidden = true;
+  ticketMeldung('Wird geladen …');
+  if (!$('ticket').open) $('ticket').showModal();
+  let antwort;
+  try { antwort = await api(`/api/tickets/${encodeURIComponent(nummer)}`); }
+  catch (fehler) { if (fehler.message !== 'abgemeldet') ticketMeldung(KEINE_VERBINDUNG, 'fehler'); return; }
+  if (!antwort.ok) { ticketMeldung('Ticket nicht gefunden.', 'fehler'); $('ticket-titel').textContent = nummer; return; }
+  const { ticket } = await antwort.json();
+  ticketFormFuellen(ticket);
+  ticketZeigen(ticket);
+  ticketBearbeitbar(ticketRecht === 'bedienen');
+  ticketMeldung('');
+}
+
+// Hintergrund: neue E-Mails oder fremde Änderungen ins offene Ticket übernehmen, ohne eigene Eingaben zu überschreiben.
+async function ticketNachladen(nummer) {
+  let antwort;
+  try { antwort = await api(`/api/tickets/${encodeURIComponent(nummer)}`, HINTERGRUND); } catch { return; }
+  if (!antwort.ok || offenesTicket?.nummer !== nummer) return;
+  const { ticket } = await antwort.json();
+  const alt = offenesTicket.ticket;
+  if (ticket.version !== alt.version) {
+    const letzte = [...ticket.verlauf].reverse().find((v) => v.art === 'geaendert');
+    if (ticketGeaendert()) {
+      $('ticket-hinweis').textContent = `${letzte?.von ?? 'Jemand'} hat dieses Ticket gerade geändert (${ticketZeit(ticket.geaendert)}, siehe Verlauf). Deine Eingaben sind noch nicht gespeichert – beim Speichern überschreiben sie die neuen Werte.`;
+      $('ticket-hinweis').hidden = false;
+      // Der neue Stand (samt Version) wird unten übernommen: Wer jetzt speichert, hat den Hinweis gesehen.
+    } else {
+      ticketFormFuellen(ticket);
+      $('ticket-hinweis').textContent = `Aktualisiert: ${letzte?.von ?? 'Jemand'} hat das Ticket um ${ticketZeit(ticket.geaendert)} geändert.`;
+      $('ticket-hinweis').hidden = false;
+    }
+  }
+  ticketZeigen(ticket);
+}
+
+$('ticket-neu').addEventListener('click', () => {
+  ticketNeu = true;
+  offenesTicket = null;
+  $('ticket-titel').textContent = 'Neues Ticket';
+  $('ticket-info').textContent = 'Die Nummer wird beim Speichern vergeben.';
+  $('ticket-hinweis').hidden = true;
+  ticketFormFuellen({ betreff: '', beschreibung: '', status: 'Offen' });
+  ticketBearbeitbar(true);
+  $('ticket-verlauf-rahmen').hidden = true;
+  ticketMeldung('');
+  $('ticket').showModal();
+  $('ticket-betreff').focus();
+});
+
+$('ticket-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const werte = ticketFormWerte();
+  const neu = ticketNeu;
+  if (!neu && !offenesTicket?.ticket) return;
+  ticketMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt([$('ticket-speichern')], ticketMeldung, async () => {
+    const antwort = await senden(neu ? '/api/tickets' : `/api/tickets/${encodeURIComponent(offenesTicket.nummer)}`, neu ? werte : { ...werte, version: offenesTicket.ticket.version });
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
+  for (const k of Object.keys(FELD_TEXT)) $(`ticket-${k}-fehler`).textContent = daten.feldfehler?.[k] ?? '';
+  if (antwort.status === 409 && daten.ticket) {
+    // Jemand anderes war schneller: neuen Stand zeigen, eigene Eingaben stehen lassen.
+    ticketZeigen(daten.ticket);
+    $('ticket-hinweis').textContent = 'Das Ticket wurde inzwischen von jemand anderem geändert (siehe Verlauf). Deine Eingaben sind noch da – prüfen und noch einmal speichern, um sie zu übernehmen.';
+    $('ticket-hinweis').hidden = false;
+    ticketMeldung(daten.fehler, 'fehler');
+    return;
+  }
+  if (!antwort.ok) { ticketMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
+  ticketNeu = false;
+  $('ticket-hinweis').hidden = true;
+  ticketFormFuellen(daten.ticket);
+  ticketZeigen(daten.ticket);
+  ticketMeldung(neu ? `Ticket ${daten.ticket.nummer} angelegt.` : 'Gespeichert.', 'ok');
+  if (neu) history.replaceState(null, '', `#tickets/${daten.ticket.nummer}`);
+  // Übersicht sofort auffrischen (eigene Änderung direkt sichtbar).
+  ticketStand = null;
+  ticketsLaden(true);
+});
+
+$('ticket-schliessen').addEventListener('click', () => $('ticket').close());
+$('ticket').addEventListener('close', () => {
+  offenesTicket = null;
+  ticketNeu = false;
+  if (location.hash.startsWith('#tickets/')) history.replaceState(null, '', '#tickets');
+});
+
+// ---- Einstellungen → Tickets (Postfach für die E-Mail-Zuordnung, nur Admins) ----
+const tkMeldung = (text, art = '') => { $('tk-meldung').textContent = text; $('tk-meldung').dataset.art = art; };
+const TK_FELDER = ['tenant_id', 'client_id', 'client_secret', 'postfach', 'rueckblick_tage'];
+function tkZeigen(d) {
+  $('tk-aktiv').checked = d.werte.aktiv;
+  for (const k of ['tenant_id', 'client_id', 'postfach', 'rueckblick_tage']) $(`tk-${k}`).value = d.werte[k];
+  $('tk-client_secret').value = '';
+  $('tk-client_secret').placeholder = d.werte.client_secret.gesetzt ? 'gesetzt' : '';
+  $('tk-letzter').textContent = d.zustand.letzterAbruf ? `${ticketZeit(d.zustand.letzterAbruf)}${d.zustand.letzterFehler ? ` – Fehler: ${d.zustand.letzterFehler}` : ' – OK'}` : 'noch nie';
+  $('tk-zugeordnet').textContent = `${d.zustand.zugeordnet} E-Mail${d.zustand.zugeordnet === 1 ? '' : 's'}`;
+  bereichStatus('ber-tk', !d.werte.aktiv ? 'E-Mail-Abruf aus' : d.zustand.letzterFehler ? 'Abruf fehlgeschlagen' : `Abruf aktiv (${d.werte.postfach})`, d.werte.aktiv && d.zustand.letzterFehler ? 'fehler' : '');
+}
+async function tkLaden() {
+  const antwort = await api('/api/tickets-postfach');
+  if (!antwort.ok) { bereichStatus('ber-tk', 'Konnte nicht geladen werden', 'fehler'); return; }
+  tkZeigen(await antwort.json());
+  tkMeldung('');
+}
+$('tk-formular').addEventListener('submit', async (ereignis) => {
+  ereignis.preventDefault();
+  const werte = { aktiv: $('tk-aktiv').checked, tenant_id: $('tk-tenant_id').value, client_id: $('tk-client_id').value, client_secret: $('tk-client_secret').value, postfach: $('tk-postfach').value, rueckblick_tage: Number($('tk-rueckblick_tage').value) };
+  tkMeldung('Wird gespeichert …');
+  const ergebnis = await gesperrt([$('tk-speichern'), $('tk-abrufen')], tkMeldung, async () => {
+    const antwort = await senden('/api/tickets-postfach', werte);
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
+  for (const k of TK_FELDER) $(`tk-${k}-fehler`).textContent = daten.feldfehler?.[k] ?? '';
+  if (!antwort.ok) { tkMeldung(daten.fehler ?? 'Speichern nicht möglich.', 'fehler'); return; }
+  tkZeigen(daten);
+  tkMeldung('Gespeichert.', 'ok');
+});
+$('tk-abrufen').addEventListener('click', async () => {
+  tkMeldung('E-Mails werden abgerufen …');
+  const ergebnis = await gesperrt([$('tk-speichern'), $('tk-abrufen')], tkMeldung, async () => {
+    const antwort = await senden('/api/tickets-postfach/abrufen', {});
+    return { antwort, daten: await antwort.json().catch(() => ({})) };
+  });
+  if (!ergebnis) return;
+  const { antwort, daten } = ergebnis;
+  if (daten.werte) tkZeigen(daten);
+  if (!antwort.ok) { tkMeldung(daten.fehler ?? 'Abruf nicht möglich.', 'fehler'); return; }
+  tkMeldung(`${daten.ergebnis.abgerufen} E-Mail${daten.ergebnis.abgerufen === 1 ? '' : 's'} geprüft, ${daten.ergebnis.zugeordnet} neu zugeordnet.`, 'ok');
+});
+
+window.addEventListener('hashchange', ansichtWaehlen);
+ansichtWaehlen();
 aktualisieren();
 const aktualisierer = setInterval(aktualisieren, 10_000);

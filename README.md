@@ -9,8 +9,10 @@ Erweiterbare Monitoring-Oberfläche für den Windows-Worker. Die Basis enthält
 4. Module über ein Formular einstellen, pausieren, beenden und aktualisieren
 5. Alles auf einer Webseite mit Anmeldung (Passwort und Zwei-Faktor oder Microsoft) und Rechten je Modul anzeigen
 6. Bei Problemen per Mail benachrichtigen (Microsoft 365)
+7. Tickets der IT führen (Menüpunkt „Tickets“, seit 0.20.0) – die einzige
+   fachliche Funktion in der Basis, auf Wunsch direkt im Monitoring statt als Modul
 
-Dieser Stand beschreibt **Version 0.19.1**. Was sich je Version geändert hat,
+Dieser Stand beschreibt **Version 0.20.0**. Was sich je Version geändert hat,
 steht in `CHANGELOG.md`.
 
 Alles Fachliche (FTP prüfen, Speicherplatz, Dienste, Dateien …) steckt in
@@ -910,6 +912,133 @@ Die Einstellungen liegen in `data/benachrichtigung.json`. Der Schlüssel wird in
 der Oberfläche nie angezeigt, aus Protokollen gefiltert und in der Datei
 verschlüsselt gespeichert.
 
+## Tickets
+
+Seit 0.20.0 hat die Oberfläche links ein Menü mit **Übersicht** (Module) und
+**Tickets**. Den Menüpunkt sieht nur, wer Tickets sehen darf; die Zahl daneben
+ist die Anzahl nicht erledigter Tickets. Auf dem Handy steht das Menü als Leiste
+unter der Kopfzeile.
+
+### Übersicht
+
+Je Ticket: **Nummer**, **Betreff**, **Status**, **Datum und Uhrzeit der letzten
+Änderung** und **E-Mails** (Anzahl und Zeitpunkt der letzten, sonst „keine“).
+Sortiert nach der jüngsten Aktivität – das ist die letzte Änderung am Ticket
+oder die letzte eingegangene E-Mail, je nachdem, was jünger ist. Darüber ein
+Filter nach Status. Ein Klick auf eine Zeile (oder Enter) öffnet das Ticket;
+die Adresse `…/#tickets/IT-2026-055` öffnet es direkt (zum Weitergeben).
+
+### Ticket öffnen, anlegen, bearbeiten
+
+- **Betreff**, **Status** (Offen, In Bearbeitung, Erledigt) und
+  **Beschreibung** lassen sich direkt im Ticket ändern; „Neues Ticket“ legt eins
+  an. Die Nummer vergibt die Basis: `IT-<Jahr>-<laufende Nummer>`, im Anschluss
+  an die höchste vorhandene Nummer des Jahres (die bisherigen Nummern der
+  IT-Assistenz laufen weiter).
+- **Verlauf** (chronologisch, dauerhaft gespeichert): Anlage, jede Änderung und
+  jede zugeordnete E-Mail – mit Datum, Uhrzeit und dem Bearbeiter bzw.
+  E-Mail-Absender. Bei Änderungen steht der alte und der neue Wert
+  („Status: Offen → In Bearbeitung“), bei der Beschreibung aufklappbar
+  vorher/nachher. E-Mails mit Betreff und Text (aufklappbar).
+- **Automatische Aktualisierung:** Eigene Änderungen sind nach dem Speichern
+  sofort sichtbar. Änderungen aus anderen Sitzungen und neu zugeordnete E-Mails
+  erscheinen ohne Neuladen in der Übersicht und im geöffneten Ticket – über
+  denselben 10-Sekunden-Takt wie die Modulübersicht (die Basis antwortet nur
+  bei Änderungen mit Daten). Hat man selbst gerade etwas eingetippt, bleibt die
+  Eingabe stehen und ein Hinweis nennt, wer zwischendurch geändert hat.
+- **Gleichzeitig bearbeitet:** Speichert jemand auf einem veralteten Stand,
+  lehnt die Basis ab, zeigt den aktuellen Stand und lässt die eigenen Eingaben
+  stehen – erneut speichern übernimmt sie bewusst.
+
+### Rechte
+
+Unter **Einstellungen → Benutzer → Rechte** gibt es das Feld **Tickets**: kein
+Zugriff (Standard), lesen, oder lesen, anlegen und bearbeiten. Es hängt **nicht**
+am Grundrecht der Module – Tickets sieht nur, wem ein Admin sie ausdrücklich
+freigibt (auch Benutzer aus der Zeit vor 0.19.0 nicht automatisch). Admins
+dürfen immer alles, auch von außerhalb des Firmennetzes (Tickets sind keine
+Admin-Funktion). Gespeichert wie ein Modulrecht unter der ID `basis-tickets`;
+ein Modul mit diesem Namen lehnt die Basis ab.
+
+### E-Mails zuordnen (Postfach it@)
+
+Die Basis ruft alle 2 Minuten den Posteingang eines Postfachs ab (z. B.
+`it@konsum-weimar.de`) und hängt jede Mail, deren Betreff eine Ticketnummer
+enthält (`IT-2026-055`, auch in „AW: … (IT-2026-055)“), an dieses Ticket. Jede
+Mail (Message-ID) erscheint nur einmal; Mails ohne Nummer oder mit unbekannter
+Nummer bleiben unberücksichtigt; Mails des Postfachs an sich selbst ebenso. Die
+Basis **liest nur** – nichts wird als gelesen markiert, verschoben oder
+gelöscht. Beim ersten Abruf (und nach einem Import) geht sie die eingestellte
+Zahl an Tagen zurück.
+
+Die Basis nutzt dafür eine **eigene App-Registrierung**, getrennt von der App für
+die Warnmails. Einrichten:
+
+1. **App registrieren:** Entra Admin Center → *App-Registrierungen* → *Neue
+   Registrierung*, z. B. „Monitoring-Modul Tickets“, nur Konten dieses
+   Verzeichnisses. Mandanten-ID (Verzeichnis-ID) und Anwendungs-ID notieren.
+2. **Geheimen Schlüssel anlegen:** *Zertifikate & Geheimnisse* → *Neuer
+   geheimer Clientschlüssel*, den **Wert** sofort kopieren, Ablaufdatum
+   notieren (vor Ablauf neuen anlegen und in der Basis eintragen).
+3. **Leserecht vergeben** – einer von zwei Wegen:
+   - **Nur im Webportal:** *API-Berechtigungen* → *Berechtigung hinzufügen* →
+     Microsoft Graph → *Anwendungsberechtigungen* → `Mail.Read` →
+     *Administratorzustimmung erteilen*. Einfach, aber die App darf dann **alle
+     Postfächer** lesen. Der Schlüssel liegt nur verschlüsselt auf dem Worker –
+     trotzdem: wer ihn hat, kann alle Mails lesen.
+   - **Beschränkt auf das Postfach (empfohlen):** In Entra **keine**
+     Zustimmung erteilen, stattdessen einmal in Exchange Online PowerShell
+     (`Connect-ExchangeOnline`; Objekt-ID aus *Unternehmensanwendungen*, nicht
+     aus App-Registrierungen):
+
+     ```powershell
+     New-ServicePrincipal -AppId <Anwendungs-ID> -ObjectId <Objekt-ID der Unternehmensanwendung> -DisplayName "Monitoring-Modul Tickets"
+     New-ManagementScope -Name "Monitoring-Ticketpostfach" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'it@konsum-weimar.de'"
+     New-ManagementRoleAssignment -App <Anwendungs-ID> -Role "Application Mail.Read" -CustomResourceScope "Monitoring-Ticketpostfach"
+     Test-ServicePrincipalAuthorization -Identity <Anwendungs-ID> -Resource it@konsum-weimar.de
+     ```
+
+     Bei „Application Mail.Read“ muss `InScope` `True` sein. Wurde vorher im
+     Webportal zugestimmt, die Zustimmung dort widerrufen – sonst bleibt der
+     Zugriff auf alle Postfächer. Änderungen wirken nach bis zu 2 Stunden.
+4. **Einstellungen → Tickets:** Mandanten-ID, Anwendungs-ID, Schlüssel,
+   Postfach, „E-Mails alle 2 Minuten abrufen“ anhaken, Rückblick in Tagen
+   (Standard 30), speichern, **„Jetzt abrufen“**. Die Statuszeile zeigt den
+   letzten Abruf und Fehler (z. B. abgelaufener Schlüssel, fehlende
+   Berechtigung) – derselbe Fehler steht nur einmal im Protokoll.
+
+Der Schlüssel wird nie angezeigt, aus Protokollen gefiltert und in
+`data\tickets-postfach.json` mit DPAPI verschlüsselt (`dpapi:v1:…`); ein leeres
+Feld behält den gespeicherten.
+
+### Vorhandene Tickets übernehmen
+
+Eine Datei `data\tickets-import.json` übernimmt die Basis beim nächsten Start
+einmalig und benennt sie danach in `tickets-import.json.uebernommen-<Datum>` um
+(Ergebnis im Protokoll). Vorhandene Nummern bleiben unverändert, ein zweiter
+Import schadet nicht.
+
+```json
+{ "quelle": "Ticketübersicht der IT-Assistenz (11.11.2026)",
+  "tickets": [ { "nummer": "IT-2026-055", "betreff": "Kein WLAN in der Filiale", "status": "Offen",
+                 "beschreibung": "…", "geaendert": "2026-11-10", "hinweis": "Status dort: Neu" } ] }
+```
+
+`status` ist Offen, In Bearbeitung oder Erledigt. `geaendert` als Datum
+(`JJJJ-MM-TT`, dann zeigt die Übersicht nur das Datum) oder mit Uhrzeit (ISO).
+`hinweis` steht im Verlauf beim Eintrag „Übernommen“.
+
+### Dateien
+
+| Datei | Inhalt |
+| --- | --- |
+| `data\tickets.json` | alle Tickets mit Verlauf und zugeordneten E-Mails (Text gekürzt auf 4000 Zeichen) |
+| `data\tickets-postfach.json` | Zugang der App für die Tickets (Schlüssel verschlüsselt), Postfach, Rückblick, letzter Abruf, letzter Fehler |
+
+Ist `tickets.json` beschädigt, startet die Basis nicht (statt mit einer leeren
+Liste weiterzumachen und beim nächsten Speichern alles zu überschreiben) – die
+Datei dann aus der Sicherung zurückholen. `data\` gehört in die Sicherung.
+
 ## Updates
 
 Admins finden die Updates unter **Einstellungen → Updates**. Ein Punkt am Knopf
@@ -1241,6 +1370,7 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
 | `config.json` | `tls.hetzner_token`, `tls.cloudflare_token`, `updates.github_token`, Schlüssel der Authenticator-Apps | `dpapi:v1:…` |
 | `data\github.json` | GitHub-Token aus der Oberfläche | `dpapi:v1:…` |
 | `data\benachrichtigung.json` | geheimer Schlüssel für den Mailversand | `dpapi:v1:…` |
+| `data\tickets-postfach.json` | geheimer Schlüssel der App für die Tickets (ab 0.20.0) | `dpapi:v1:…` |
 | `modules\<Modul>\einstellungen.json` | Passwortfelder, wenn das Modul es kann (z. B. FTP-Modul ab 2.2.0) | `dpapi:m1:…` |
 
 - **Umstellung automatisch:** Nach dem ersten Start von 0.12.0 – erst wenn die
