@@ -1,0 +1,17 @@
+# Dependabot schlägt einmal pro Woche Updates als Pull Request vor (npm, Go für Start.exe, GitHub Actions).
+# Nichts wird automatisch übernommen: Jeder Vorschlag läuft durch die Tests und wird von Hand geprüft.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: gomod
+    directory: /launcher
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

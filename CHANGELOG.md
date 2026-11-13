@@ -1,5 +1,26 @@
 # Änderungen
 
+## 0.21.1
+
+Ergebnis der Code-Prüfung vom 12.11.2026: Fehlerbehebungen und Absicherung.
+
+### Behoben
+
+- **Modulseiten – zu große Anfragen:** Anfragen über 5 MB ohne Längenangabe (chunked) bekommen jetzt 413 „Die Anfrage ist zu groß“. Bisher kam 502 „Das Modul läuft gerade nicht“, und im Protokoll stand fälschlich „Modulseite nicht erreichbar“.
+- **Modulseiten – Abbruch:** Bricht der Browser oder ein Programm eine Anfrage ab, bricht die Basis auch die Anfrage an das Modul ab, statt sie weiterlaufen zu lassen.
+- **Einstellungen der Module:** Textfelder sind einzeilig. Zeilenumbrüche und andere Steuerzeichen werden abgelehnt (Umbrüche am Rand werden wie Leerzeichen entfernt). Ein eingefügter Umbruch im FTP-Ordnerpfad hätte sonst im WinSCP-Skript als eigener Befehl landen können (siehe auch FTP-Modul 2.3.1). Passwortfelder sind unverändert.
+- **node-forge** (über acme-client) von 1.4.2 auf 1.4.3: vier mittlere Sicherheitswarnungen. Die betroffenen Funktionen nutzt die Basis nicht.
+
+### Neu
+
+- **`programm_zugang`** in `config.json`: Programm-Zugang zu Modul-APIs (`/m/<id>/api/…` mit Schlüssel) standardmäßig nur aus den `admin_netze` (Firmennetz/VPN). Von außen: 403 und einmal am Tag je Adresse eine Warnung im Protokoll. `"ueberall"` erlaubt den Zugang wie bisher von jeder Adresse.
+- **Prüfungen auf GitHub:** ESLint (`npm run lint`) und `npm audit` für ausgelieferte Pakete laufen bei jedem Push; Dependabot schlägt wöchentlich Updates für npm, Go und GitHub Actions vor.
+
+### Prüfung
+
+- `npm test` mit neuen Tests: Programm-Zugang nur aus erlaubten Netzen (403, Protokoll einmal je Adresse), 413 ohne Längenangabe ohne falsche Meldung, Abbruch der Anfrage ans Modul, Textfelder mit Umbruch/Tabulator (auch in Listen), Passwörter unverändert, `programm_zugang` in `config.json`.
+- `npm run lint` ohne Befund, `npm audit --omit=dev` ohne Befund.
+
 ## 0.21.0
 
 Module können eine eigene Seite in der Oberfläche haben (Menü links). Grundlage für das Ticketmodul.

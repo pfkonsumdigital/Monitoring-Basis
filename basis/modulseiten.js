@@ -5,7 +5,8 @@
 // Datei „seite.schluessel“, die das Modul beim Start in seinen Ordner schreibt (x-monitoring-schluessel).
 // Ohne diesen Schlüssel lehnt das Modul jede Anfrage ab; so kommt niemand an der Basis vorbei.
 // Programme (z. B. Claude) rufen /m/<id>/api/… mit „Authorization: Bearer <Schlüssel des Moduls>“ ohne Anmeldung
-// auf, wenn das Modul „api“: true angibt. Den Schlüssel prüft das Modul; die Basis bremst Fehlversuche.
+// auf, wenn das Modul „api“: true angibt. Den Schlüssel prüft das Modul; die Basis bremst Fehlversuche und lässt
+// Programme standardmäßig nur aus den admin_netze zu (config.json: programm_zugang, seit 0.21.1).
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -45,6 +46,7 @@ export class Modulseiten {
     this.schluesselCache = new Map();
     this.fehlversuche = new Map();
     this.nichtErreichbar = new Set();
+    this.gemeldetVonAussen = new Set();
   }
 
   // Modul mit eigener Seite – nur fehlerfrei und freigegeben.
@@ -83,6 +85,16 @@ export class Modulseiten {
     if (neu.anzahl === FEHLVERSUCHE) melde(this.log, 'warnung', 'Modulseiten', `Programm-Zugang zu ${m.name}: ${FEHLVERSUCHE} abgewiesene Schlüssel von ${adresse} – Adresse für 15 Minuten gesperrt.`);
   }
 
+  // Programm-Anfrage von außerhalb der erlaubten Netze: einmal je Adresse und Tag ins Protokoll.
+  vonAussen(adresse, m) {
+    const tag = Math.floor(this.jetzt() / 86_400_000);
+    const schluessel = `${adresse}|${tag}`;
+    if (this.gemeldetVonAussen.has(schluessel)) return;
+    if (this.gemeldetVonAussen.size >= 1000) this.gemeldetVonAussen.clear();
+    this.gemeldetVonAussen.add(schluessel);
+    melde(this.log, 'warnung', 'Modulseiten', `Programm-Zugang zu ${m.name} von ${adresse} abgelehnt: nur aus dem Firmennetz/VPN erlaubt (programm_zugang in config.json).`);
+  }
+
   // Leitet die Anfrage an das Modul weiter. benutzer: { name, recht, admin } oder null (Programm-Zugang).
   async weiterleiten(req, res, m, { rest, suche = '', benutzer = null, sicherheit = {} }) {
     const fehlerAntwort = (status, text) => {
@@ -113,6 +125,7 @@ export class Modulseiten {
 
     return new Promise((fertig) => {
       let erledigt = false;
+      let zuGross = false;
       const ende = () => { if (!erledigt) { erledigt = true; fertig(); } };
       const ziel = this.anfrage({ host: '127.0.0.1', port: m.seite.port, method: req.method, path: rest + suche, headers: kopf, timeout: this.zeitlimitMs }, (antwort) => {
         if (this.nichtErreichbar.delete(m.id)) this.log(`Modulseite ${m.name} ist wieder erreichbar.`);
@@ -131,6 +144,7 @@ export class Modulseiten {
       ziel.on('timeout', () => ziel.destroy(Object.assign(new Error('Zeitlimit'), { code: 'ZEITLIMIT' })));
       ziel.on('error', (fehler) => {
         if (res.headersSent) { res.destroy(); return ende(); }
+        if (zuGross) return ende();
         if (fehler.code === 'ZEITLIMIT') fehlerAntwort(504, `${m.seite.titel}: Das Modul antwortet nicht.`);
         else {
           if (!this.nichtErreichbar.has(m.id)) {
@@ -143,12 +157,22 @@ export class Modulseiten {
       });
       let gelesen = 0;
       req.on('data', (stueck) => {
+        if (zuGross) return;
         gelesen += stueck.length;
-        if (gelesen > MAX_KOERPER) { ziel.destroy(); req.destroy(); return; }
+        // Zu groß (auch ohne Content-Length): Weiterleitung abbrechen, Rest verwerfen, 413 antworten.
+        if (gelesen > MAX_KOERPER) {
+          zuGross = true;
+          if (!res.headersSent) fehlerAntwort(413, 'Die Anfrage ist zu groß.');
+          ziel.destroy();
+          ende();
+          return;
+        }
         ziel.write(stueck);
       });
-      req.on('end', () => ziel.end());
+      req.on('end', () => { if (!zuGross) ziel.end(); });
       req.on('error', () => ziel.destroy());
+      // Bricht der Browser (oder das Programm) ab, braucht das Modul nicht weiterzuarbeiten.
+      res.on('close', () => { if (!res.writableFinished) ziel.destroy(); ende(); });
     });
   }
 }

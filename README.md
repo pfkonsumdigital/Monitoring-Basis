@@ -248,6 +248,7 @@ Zwei-Faktor) nicht kennen.
 | `sitzung_leerlauf_minuten` | Abmeldung nach so vielen Minuten ohne Aktion (das automatische Nachladen zählt nicht) | `30` |
 | `weitere_hostnamen` | weitere Namen oder IP-Adressen, unter denen die Oberfläche aufgerufen wird, z. B. `["we-vmworker-22.konsum-weimar.local"]` (höchstens 20). Ohne Eintrag erlaubt: `hostname`, der Rechnername, `localhost` und die IP-Adressen des Workers. Anfragen an andere Namen beantwortet die Basis mit „Unbekannter Host-Name“ (Schutz vor DNS-Rebinding). | `[]` |
 | `admin_netze` | Netze, aus denen Admin-Funktionen und das Einrichten der Zwei-Faktor-Anmeldung erlaubt sind (Firmennetz und VPN), z. B. `["192.168.100.0/24", "192.168.10.0/24", "127.0.0.0/8", "::1/128"]`; `["*"]` = überall | alle privaten Adressen |
+| `programm_zugang` | Von wo Programme Modul-APIs mit Schlüssel aufrufen dürfen (`/m/<id>/api/…`, siehe „Eigene Seite eines Moduls“): `"intern"` = nur aus `admin_netze`, `"ueberall"` = von jeder Adresse, die die Basis erreicht. Seit 0.21.1. | `"intern"` |
 | `tls` | `{"modus": "aus"}` für internen Betrieb ohne Zertifikat, `"letsencrypt"` oder `"dateien"`, siehe „HTTPS & Domain“. Wird am einfachsten in der Oberfläche eingerichtet. | – |
 | `benutzer` | wird unter **Einstellungen → Benutzer** oder mit `--benutzer-anlegen` gepflegt; `"admin": true` = Admin; `zwei_faktor` legt die Basis beim Einrichten selbst an | – |
 | `updates` | optional, nur nötig für einen Token oder ein anderes Repo direkt in `config.json` (siehe „Updates“); sonst den Token in der Oberfläche eintragen | – |
@@ -612,7 +613,14 @@ das Ticketmodul. Es betreibt dafür einen kleinen Webserver **nur auf
   `/m/<id>/api/…` mit `Authorization: Bearer <Schlüssel>` **ohne Anmeldung**
   auf. Die Schlüssel verwaltet und prüft das Modul (Antwort 401 bei falschem
   Schlüssel). Nach 10 abgewiesenen Schlüsseln sperrt die Basis die Adresse für
-  15 Minuten und schreibt eine Warnung ins Protokoll.
+  15 Minuten und schreibt eine Warnung ins Protokoll. Seit 0.21.1 nur aus den
+  `admin_netze` (Firmennetz/VPN); von anderen Adressen kommt 403 und einmal am
+  Tag je Adresse eine Warnung. Für Programme außerhalb (z. B. in der Cloud)
+  `"programm_zugang": "ueberall"` in `config.json` setzen – dann schützt nur
+  noch der Schlüssel.
+- **Grenzen:** Anfragen über 5 MB beantwortet die Basis mit 413, auch ohne
+  Längenangabe. Bricht der Browser eine Anfrage ab, bricht die Basis auch die
+  Anfrage an das Modul ab.
 - **Erst nach der Freigabe:** Ein neues oder geändertes Modul bekommt seinen
   Menüpunkt und seine Weiterleitung erst, wenn ein Admin es freigegeben hat.
 - **Modul aus:** Statt einer Fehlerseite erscheint „Das Modul läuft gerade
@@ -627,7 +635,7 @@ das Ticketmodul. Es betreibt dafür einen kleinen Webserver **nur auf
 | --- | --- |
 | `schluessel` | Name in `einstellungen.json` (Kleinbuchstaben, Ziffern, `_`) |
 | `bezeichnung`, `beschreibung` | Beschriftung und Hilfetext im Formular |
-| `typ` | `text`, `zahl` (mit `min`, `max`, `ganzzahl`), `schalter`, `auswahl` (mit `optionen`), `passwort`, `datum` (Wert `JJJJ-MM-TT`), `liste` (mit `spalten`, siehe unten) |
+| `typ` | `text` (einzeilig: Leerzeichen am Rand werden entfernt, Zeilenumbrüche und andere Steuerzeichen abgelehnt, seit 0.21.1), `zahl` (mit `min`, `max`, `ganzzahl`), `schalter`, `auswahl` (mit `optionen`), `passwort`, `datum` (Wert `JJJJ-MM-TT`), `liste` (mit `spalten`, siehe unten) |
 | `pflicht` | Feld muss ausgefüllt sein |
 | `standard` | Wert, solange nichts gespeichert ist (nicht bei Passwörtern) |
 
@@ -1360,6 +1368,9 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
   vor der Basis, sieht sie dessen (interne) Adresse – dann `admin_netze` auf das
   echte Firmen- und VPN-Netz beschränken, ohne die Adresse des Proxys. Eine
   Portweiterleitung (DNAT) der Securepoint behält die echte Adresse.
+- **Programm-Zugang zu Modul-APIs** nur aus dem Firmennetz/VPN
+  (`programm_zugang`, Standard `"intern"`), mit Bremse nach 10 falschen
+  Schlüsseln.
 - Sitzungen enden nach 30 Minuten ohne Aktion und spätestens nach 8 Stunden
   (einstellbar). Sie liegen im Speicher; nach einem Neustart der Basis ist eine
   erneute Anmeldung nötig.
@@ -1382,7 +1393,11 @@ Ab 0.12.0 speichert die Basis alle Geheimnisse mit der Windows-Datenschutz-API
 ```sh
 npm ci
 npm test
+npm run lint      # ESLint; läuft auch in den GitHub-Tests, dazu npm audit
 ```
+
+Dependabot schlägt wöchentlich Updates für npm, Go (Start.exe) und GitHub Actions
+als Pull Request vor; übernommen wird nur, was die Tests besteht und geprüft ist.
 
 Die Tests prüfen u. a. Modulprüfung, Ausführung (Exitcodes, JSON, Zeitlimit,
 Abstürze), Plugins, Zeitplan, Speicher, Anmeldung mit Zwei-Faktor und Sperren,

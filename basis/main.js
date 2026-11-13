@@ -136,6 +136,8 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   });
   await module.start();
   const adminNetz = adminNetzPruefer(konfig.adminNetze);
+  // Programm-Zugang zu Modul-APIs: Standard nur aus dem Firmennetz/VPN (wie Admin-Funktionen).
+  const programmNetz = konfig.programmZugang === 'ueberall' ? () => true : adminNetz;
   const sicherheit = new Sicherheitsmeldungen({ datenOrdner: konfig.datenOrdner, benachrichtigung, log });
   await sicherheit.laden();
   const anmeldung = new Anmeldung({
@@ -185,7 +187,7 @@ async function starten(konfig, configDatei, protokoll, tresor) {
   const intern = konfig.tls.modus === 'aus';
   // Anmeldung mit Microsoft braucht HTTPS unter dem eingerichteten Namen (Rückkehr-Adresse in Entra).
   const microsoftAdresse = !intern && konfig.hostname ? `https://${konfig.hostname}${konfig.port === 443 ? '' : `:${konfig.port}`}` : null;
-  const anwendung = erstelleAnwendung({ microsoft, microsoftAdresse, module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
+  const anwendung = erstelleAnwendung({ microsoft, microsoftAdresse, module, modulupdates, speicherbelegung, benachrichtigung, benutzerverwaltung, domain, anmeldung, updates, protokoll, neustart: updates.viaStarter ? neustarten : null, beenden: (wunsch) => beenden(wunsch), sitzungMs: konfig.sitzungMs, verschluesselt: !intern, nurIntern: intern, adminNetz, programmNetz, hostname: konfig.hostname, weitereHosts: konfig.weitereHostnamen, konto, log });
   try { server = await starteServer({ anwendung, tls, host: konfig.host, port: konfig.port }); }
   catch (fehler) {
     throw new BasisFehler(fehler.code === 'EADDRINUSE' ? `Port ${konfig.port} ist bereits belegt.` : fehler.code === 'EACCES' ? `Keine Berechtigung für Port ${konfig.port}.` : `Server konnte nicht starten (${fehler.code || fehler.message}).`);

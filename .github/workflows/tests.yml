@@ -1,6 +1,6 @@
 name: Tests
 
-# Prüft jeden Push auf main und jeden Pull Request: Basis (npm test) und Start.exe (go test).
+# Prüft jeden Push auf main und jeden Pull Request: Basis (npm test, ESLint, npm audit) und Start.exe (go test).
 # Releases baut weiterhin nur „Release bauen“ bei einem Tag vX.Y.Z.
 on:
   push:
@@ -21,6 +21,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Code prüfen (ESLint)
+        run: npm run lint
+      - name: Bekannte Sicherheitslücken in Abhängigkeiten (nur was ausgeliefert wird)
+        run: npm audit --omit=dev --audit-level=moderate
       - name: Start.exe testen
         working-directory: launcher
         run: go test ./...

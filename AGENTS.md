@@ -11,7 +11,7 @@
   welche Fehler behoben wurden. Relevante Prüfungen im Committext nennen.
 - `CHANGELOG.md` bei jedem Update ergänzen. Neue Funktionen, Änderungen und
   Fehlerbehebungen klar unterscheiden; die Benutzerdokumentation aktuell halten.
-- Bei Programmänderungen `npm test` ausführen, bei Änderungen in `launcher/`
+- Bei Programmänderungen `npm test` und `npm run lint` ausführen, bei Änderungen in `launcher/`
   zusätzlich `go test ./...` und einen Windows-Build (`GOOS=windows`).
 - Versionsschema 0.Y.Z: neue Funktionen erhöhen Y (0.6.0), reine
   Fehlerbehebungen erhöhen Z (0.5.1, 0.5.2).

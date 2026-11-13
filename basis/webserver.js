@@ -138,8 +138,9 @@ function ohneFehlerausgabe(e) {
 // verschluesselt=false: Betrieb per HTTP im internen Netz (tls.modus "aus"). Dann kein Secure-Cookie und kein HSTS,
 // und mit nurIntern werden Anfragen von außerhalb privater Netze abgewiesen.
 // adminNetz(adresse): true, wenn Admin-Funktionen von dieser Adresse erlaubt sind (Firmennetz/VPN, siehe admin_netze).
+// programmNetz(adresse): true, wenn Programme von dort Modul-APIs mit Schlüssel aufrufen dürfen (programm_zugang).
 // microsoft: MicrosoftAnmeldung (oder null); microsoftAdresse: öffentliche Adresse der Oberfläche (https://name:port), nur bei HTTPS.
-export function erstelleAnwendung({ microsoft = null, microsoftAdresse = null, module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, modulseiten = null, log = () => {} }) {
+export function erstelleAnwendung({ microsoft = null, microsoftAdresse = null, module, modulupdates = null, speicherbelegung = null, benachrichtigung = null, benutzerverwaltung = null, domain = null, anmeldung, updates, protokoll, neustart, beenden = null, sitzungMs, verschluesselt = true, nurIntern = false, adminNetz = () => true, programmNetz = () => true, hostname = null, weitereHosts = [], adressen = eigeneAdressen, konto = null, modulseiten = null, log = () => {} }) {
   const schema = verschluesselt ? 'https' : 'http';
   const sicher = verschluesselt ? ' Secure;' : '';
   // Fremde Seiten dürfen keine Aktionen auslösen: Origin muss passen, falls der Browser ihn sendet.
@@ -313,6 +314,10 @@ export function erstelleAnwendung({ microsoft = null, microsoftAdresse = null, m
       if (istProgrammAnfrage(req, mw)) {
         const m = seiten.modul(mw.id);
         if (!m?.api) return json(res, 404, { fehler: 'Unbekannt.' });
+        if (!programmNetz(req.socket.remoteAddress)) {
+          seiten.vonAussen(req.socket.remoteAddress, m);
+          return json(res, 403, { fehler: 'Programm-Zugang nur aus dem Firmennetz oder über VPN (admin_netze). Freigeben für alle Netze: "programm_zugang": "ueberall" in config.json.' });
+        }
         if (seiten.gesperrt(req.socket.remoteAddress)) return json(res, 429, { fehler: 'Zu viele abgewiesene Schlüssel. Bitte 15 Minuten warten.' });
         return seiten.weiterleiten(req, res, m, { rest: mw.rest, suche: url.search, sicherheit: SEITE_SICHERHEIT });
       }

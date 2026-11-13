@@ -48,6 +48,10 @@ export function pruefeKonfiguration(roh, basisOrdner) {
   const leerlauf = roh.sitzung_leerlauf_minuten ?? 30;
   if (typeof leerlauf !== 'number' || !(leerlauf >= 5) || leerlauf > 1440) throw new BasisFehler('sitzung_leerlauf_minuten muss zwischen 5 und 1440 liegen.');
   const adminNetze = adminNetzePruefen(roh.admin_netze);
+  // Programm-Zugang zu den APIs der Module (/m/<id>/api/… mit Schlüssel, seit 0.21.1): „intern“ = nur aus den
+  // admin_netze (Standard), „ueberall“ = von jeder Adresse, die die Basis erreicht.
+  const programmZugang = roh.programm_zugang ?? 'intern';
+  if (!['intern', 'ueberall'].includes(programmZugang)) throw new BasisFehler('programm_zugang muss "intern" oder "ueberall" sein.');
 
   const tls = roh.tls;
   if (!tls || !['letsencrypt', 'dateien', 'aus'].includes(tls.modus)) throw new BasisFehler('tls.modus muss "letsencrypt", "dateien" oder "aus" sein.');
@@ -119,6 +123,7 @@ export function pruefeKonfiguration(roh, basisOrdner) {
     sitzungMs: stunden * 3_600_000,
     leerlaufMs: leerlauf * 60_000,
     adminNetze,
+    programmZugang,
     tls: tlsGeprueft,
     benutzer,
     updates,

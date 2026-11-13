@@ -29,7 +29,10 @@ function anfrage(port, methode, weg, { kopf = {}, koerper } = {}) {
 // Testmodul mit eigenem Webserver: merkt sich jede Anfrage, antwortet je nach Pfad.
 async function testModulServer() {
   const anfragen = [];
+  const abgebrochen = [];
   const server = http.createServer((req, res) => {
+    // Antwortet nie – für den Abbruch durch den Browser.
+    if (req.url.startsWith('/langsam')) { res.on('close', () => abgebrochen.push(req.url)); return; }
     let koerper = '';
     req.on('data', (t) => { koerper += t; });
     req.on('end', () => {
@@ -45,10 +48,10 @@ async function testModulServer() {
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  return { server, anfragen, port: server.address().port };
+  return { server, anfragen, abgebrochen, port: server.address().port };
 }
 
-async function aufbau({ freigabeNoetig = () => false, ohneSchluessel = false } = {}) {
+async function aufbau({ freigabeNoetig = () => false, ohneSchluessel = false, programmNetz } = {}) {
   const ordner = await mkdtemp(path.join(tmpdir(), 'mb-seiten-'));
   const mod = await testModulServer();
   const tickets = { id: 'tickets', name: 'Tickets', typ: 'eigenstaendig', ordner: path.join(ordner, 'tickets'), aktiv: true, seite: { titel: 'Tickets', port: mod.port }, api: true };
@@ -72,7 +75,7 @@ async function aufbau({ freigabeNoetig = () => false, ohneSchluessel = false } =
     sitzungMs: 60_000,
   });
   const meldungen = [];
-  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, log: (m) => meldungen.push(String(m)) }), tls: null, host: '127.0.0.1', port: 0 });
+  const server = await starteServer({ anwendung: erstelleAnwendung({ module, anmeldung, sitzungMs: 60_000, verschluesselt: false, ...(programmNetz ? { programmNetz } : {}), log: (m) => meldungen.push(String(m)) }), tls: null, host: '127.0.0.1', port: 0 });
   const { port } = server.address();
   const login = async (name) => {
     const r = await anfrage(port, 'POST', '/login', { kopf: { 'content-type': 'application/x-www-form-urlencoded' }, koerper: `benutzer=${name}&passwort=geheim-geheim` });
@@ -80,7 +83,9 @@ async function aufbau({ freigabeNoetig = () => false, ohneSchluessel = false } =
   };
   const ende = async () => {
     server.close();
+    server.closeAllConnections?.();
     mod.server.close();
+    mod.server.closeAllConnections?.();
     await rm(ordner, { recursive: true, force: true });
   };
   return { port, mod, login, ende, meldungen, tickets };
@@ -259,5 +264,56 @@ test('Modul-Update: Ordner „daten“ wandert in die eingesetzte Version', asyn
     assert.equal(await readFile(path.join(ordner, 'daten', 'tickets.json'), 'utf8'), '{"tickets":[1]}');
   } finally {
     await rm(wurzel, { recursive: true, force: true });
+  }
+});
+
+test('Modulseiten: Programm-Zugang nur aus erlaubten Netzen (programm_zugang)', async () => {
+  const u = await aufbau({ programmNetz: (a) => a === '10.0.0.1' });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const r = await anfrage(u.port, 'GET', '/m/tickets/api/tickets', { kopf: { authorization: 'Bearer richtig' } });
+      assert.equal(r.status, 403);
+      assert.match(JSON.parse(r.text).fehler, /nur aus dem Firmennetz.*programm_zugang/);
+    }
+    assert.equal(u.mod.anfragen.length, 0, 'Modul bekommt nichts');
+    assert.equal(u.meldungen.filter((m) => /Programm-Zugang zu Tickets von .* abgelehnt/.test(m)).length, 1, 'einmal je Adresse und Tag');
+    // Angemeldete Benutzer betrifft das nicht.
+    const anna = await u.login('anna');
+    assert.equal((await anfrage(u.port, 'GET', '/m/tickets/seite', { kopf: anna })).status, 200);
+  } finally {
+    await u.ende();
+  }
+});
+
+test('Modulseiten: zu große Anfrage ohne Längenangabe → 413; Abbruch des Browsers bricht die Anfrage ans Modul ab', async () => {
+  const u = await aufbau();
+  try {
+    const bob = await u.login('bob');
+    // Chunked (ohne Content-Length), über 5 MB.
+    const r = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: u.port, method: 'POST', path: '/m/tickets/api/x', headers: { ...bob, 'content-type': 'application/json', 'transfer-encoding': 'chunked' } }, (res) => {
+        let t = ''; res.on('data', (d) => { t += d; }); res.on('end', () => resolve({ status: res.statusCode, text: t }));
+      });
+      req.on('error', reject);
+      const stueck = 'x'.repeat(256 * 1024);
+      let n = 0;
+      const schreiben = () => { while (n < 24) { n += 1; if (!req.write(stueck)) return req.once('drain', schreiben); } req.end(); };
+      schreiben();
+    });
+    assert.equal(r.status, 413);
+    assert.match(r.text, /zu groß/);
+    assert.ok(!u.meldungen.some((m) => /nicht erreichbar/.test(m)), 'keine falsche Meldung „Modul nicht erreichbar“');
+
+    // Browser bricht ab, während das Modul noch rechnet.
+    const req = http.request({ host: '127.0.0.1', port: u.port, method: 'GET', path: '/m/tickets/langsam', headers: bob });
+    req.on('error', () => {});
+    req.end();
+    const warte = async (b) => { for (let i = 0; i < 100 && !b(); i++) await new Promise((x) => setTimeout(x, 20)); };
+    await new Promise((x) => setTimeout(x, 100));
+    req.destroy();
+    await warte(() => u.mod.abgebrochen.length);
+    assert.deepEqual(u.mod.abgebrochen, ['/langsam']);
+  } finally {
+    await u.ende();
   }
 });

@@ -15,6 +15,8 @@ const MAX_ZEILEN = 200;
 const SCHLUESSEL = /^[a-z][a-z0-9_]{0,63}$/;
 const istText = (w) => typeof w === 'string' && w.trim() !== '';
 const MAX_TEXT = 2000;
+// eslint-disable-next-line no-control-regex
+const STEUERZEICHEN = /[\u0000-\u001f\u007f]/;
 
 // Prüft die Feldliste aus module.json. Liefert { felder } oder { fehler }.
 // spalten: Spalten eines Listenfelds (gleiche Regeln, aber ohne Passwort und ohne verschachtelte Listen).
@@ -76,10 +78,16 @@ export function pruefeWert(feld, wert) {
       return { wert: wert.trim() };
     }
     case 'liste': return pruefeListe(feld, wert);
-    case 'text':
+    case 'text': {
+      // Einzeilig: Zeilenumbrüche und Steuerzeichen könnten in Skripten der Module (z. B. WinSCP) als eigene Befehle landen.
+      if (typeof wert !== 'string' || wert.length > MAX_TEXT) return { fehler: 'ungültiger Text' };
+      const w = wert.trim();
+      if (STEUERZEICHEN.test(w)) return { fehler: 'darf keinen Zeilenumbruch und keine Steuerzeichen (z. B. Tabulator) enthalten' };
+      return { wert: w };
+    }
     case 'passwort':
       if (typeof wert !== 'string' || wert.length > MAX_TEXT || /[\0]/.test(wert)) return { fehler: 'ungültiger Text' };
-      return { wert: feld.typ === 'text' ? wert.trim() : wert };
+      return { wert };
     case 'zahl': {
       const z = typeof wert === 'number' ? wert : typeof wert === 'string' && wert.trim() !== '' ? Number(wert.replace(',', '.')) : NaN;
       if (!Number.isFinite(z)) return { fehler: 'keine gültige Zahl' };

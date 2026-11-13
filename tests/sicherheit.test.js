@@ -115,6 +115,10 @@ test('Konfiguration: Standard 8 h / 30 min, Admin-Netze prüfen', () => {
   assert.throws(() => pruefeKonfiguration({ tls: { modus: 'aus' }, admin_netze: ['10.0.0.0/33'] }, '/app'), /kein gültiges Netz/);
   assert.throws(() => pruefeKonfiguration({ tls: { modus: 'aus' }, admin_netze: [] }, '/app'), /muss eine Liste/);
   assert.throws(() => pruefeKonfiguration({ tls: { modus: 'aus' }, sitzung_leerlauf_minuten: 1 }, '/app'), /zwischen 5 und 1440/);
+  // Programm-Zugang zu Modul-APIs (seit 0.21.1): Standard nur intern.
+  assert.equal(k.programmZugang, 'intern');
+  assert.equal(pruefeKonfiguration({ tls: { modus: 'aus' }, programm_zugang: 'ueberall' }, '/app').programmZugang, 'ueberall');
+  assert.throws(() => pruefeKonfiguration({ tls: { modus: 'aus' }, programm_zugang: 'alle' }, '/app'), /programm_zugang/);
 });
 
 test('Sicherheitsmeldungen: Sperre und Admin von neuer Adresse per Mail, gedrosselt; bekannte Adressen gespeichert', async () => {

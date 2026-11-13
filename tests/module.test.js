@@ -45,6 +45,12 @@ test('Einstellungswerte: Zahl, Auswahl, Schalter, Text', () => {
   assert.match(pruefeWert({ typ: 'auswahl', optionen: [{ wert: 'a' }] }, 'b').fehler, /Auswahl/);
   assert.match(pruefeWert({ typ: 'schalter' }, 'ja').fehler, /ja oder nein/);
   assert.deepEqual(pruefeWert({ typ: 'text' }, '  ftp.firma.de '), { wert: 'ftp.firma.de' });
+  // Einzeilig (seit 0.21.1): Umbrüche am Rand werden entfernt, im Text abgelehnt; Passwörter dürfen alles außer \0.
+  assert.deepEqual(pruefeWert({ typ: 'text' }, 'files\r\n'), { wert: 'files' });
+  assert.match(pruefeWert({ typ: 'text' }, '/export\r\nrm /export/*').fehler, /Zeilenumbruch/);
+  assert.match(pruefeWert({ typ: 'text' }, 'a\tb').fehler, /Steuerzeichen/);
+  assert.match(pruefeWert({ typ: 'liste', maxZeilen: 5, spalten: [{ schluessel: 'pfad', bezeichnung: 'Ordner', typ: 'text' }] }, [{ pfad: 'a\nb' }]).fehler, /Zeile 1, Ordner: darf keinen Zeilenumbruch/);
+  assert.deepEqual(pruefeWert({ typ: 'passwort' }, 'p\tw '), { wert: 'p\tw ' });
 });
 
 test('Einstellungen speichern: Pflichtfelder, Passwort bleibt verborgen und unverändert, unbekannte Felder', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "monitoring-basis",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": true,
   "description": "Erweiterbare Monitoring-Basis: HTTPS-Oberfläche, Zeitplan und andockbare Module",
   "type": "module",
@@ -9,10 +9,16 @@
   },
   "scripts": {
     "start": "node basis/main.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint ."
   },
   "dependencies": {
     "acme-client": "5.4.0",
     "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "globals": "15.15.0"
   }
 }
