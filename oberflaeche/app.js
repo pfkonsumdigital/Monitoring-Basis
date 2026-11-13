@@ -1538,6 +1538,8 @@ function ansichtWaehlen() {
   if (!$('beendet-seite').hidden) return;
   $('ansicht-uebersicht').hidden = Boolean(seite);
   $('ansicht-modul').hidden = !seite;
+  // Modulseiten nutzen die ganze Breite (die Übersicht bleibt auf 1200 px begrenzt).
+  document.querySelector('.rahmen > main').classList.toggle('volle-breite', Boolean(seite));
   aktuell($('nav-uebersicht'), !seite);
   for (const a of $('nav-module').children) aktuell(a, a.dataset.modul === seite?.id);
   // Einmal geladen bleibt die Seite im Rahmen (auch beim Wechsel zur Übersicht) – sie aktualisiert sich selbst.

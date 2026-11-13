@@ -1,5 +1,15 @@
 # Änderungen
 
+## 0.21.2
+
+### Geändert
+
+- **Modulseiten in voller Breite:** Seiten der Module (z. B. „Tickets“) nutzen jetzt die ganze Bildschirmbreite neben dem Menü. Bisher waren sie wie die Übersicht auf 1200 px begrenzt – auf großen Bildschirmen blieb links und rechts viel Platz frei. Die Übersicht mit den Kacheln bleibt unverändert.
+
+### Prüfung
+
+- Modulseite eingebettet bei 1920, 1366, 1024 und 800 px Breite geprüft; Wechsel Übersicht ↔ Modulseite setzt die Breite jeweils richtig.
+
 ## 0.21.1
 
 Ergebnis der Code-Prüfung vom 12.11.2026: Fehlerbehebungen und Absicherung.

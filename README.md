@@ -587,7 +587,8 @@ das Ticketmodul. Es betreibt dafür einen kleinen Webserver **nur auf
 
 - **Menü links:** Für jedes freigegebene Modul mit Seite erscheint links ein
   Menüpunkt (nur für Benutzer mit mindestens „sehen“ auf diesem Modul). Die
-  Seite läuft im Inhaltsbereich, das Menü bleibt. Ohne solche Module gibt es
+  Seite läuft im Inhaltsbereich in voller Breite (seit 0.21.2), das Menü bleibt.
+  Die Seite sollte sich selbst an die Breite anpassen. Ohne solche Module gibt es
   kein Menü. Direktlink: `https://…/#m/tickets`.
 - **Alles über die Basis:** Die Basis leitet `/m/<id>/…` an
   `http://127.0.0.1:<port>/…` weiter – erst nach Anmeldung, Zwei-Faktor und
